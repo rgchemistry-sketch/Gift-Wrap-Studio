@@ -1,0 +1,19 @@
+import { Link } from 'react-router-dom';
+import Button from 'react-bootstrap/Button';
+import Col from 'react-bootstrap/Col';
+import Container from 'react-bootstrap/Container';
+import Row from 'react-bootstrap/Row';
+import Icon from '../components/Icon';
+import SmartImage from '../components/SmartImage';
+
+export default function StoryPage() {
+  return (
+    <>
+      <section className="story-hero"><Container fluid="xl"><p className="eyebrow">The heart behind the studio</p><h1>Creativity met patience.<br /><em>A keepsake was born.</em></h1><div className="story-hero__image"><SmartImage src="/assets/hero-resin-studio.webp" alt="Gift N Wrap resin artist at the studio table" fallbackLabel="Gift N Wrap Studio" /></div></Container></section>
+      <section className="page-section story-origin"><Container fluid="xl"><Row className="gy-5"><Col lg={4}><p className="eyebrow">Our beginning</p><h2>Built by hand, grown by word of mouth.</h2></Col><Col lg={{span:6,offset:1}}><p className="story-lede">Gift N Wrap Studio was born from a passion for art and creativity. What started as a small handmade venture has grown into a trusted studio for premium resin craftsmanship.</p><p>We believe every gift tells a story. That belief shapes how we listen, design and finish: each creation is individually composed rather than mass-produced, so it can belong wholly to the memory behind it.</p><blockquote>Create meaningful gifts that last forever.</blockquote></Col></Row></Container></section>
+      <section className="story-values"><Container fluid="xl"><div className="story-values__intro"><p className="eyebrow light-eyebrow">What guides our hands</p><h2>Luxury, with a human fingerprint.</h2></div><div className="story-values__grid">{[['01','Creativity with purpose','Every colour, flower and fleck earns its place in the composition.'],['02','Quality without shortcuts','Premium resin, high-quality pigments, UV-resistant coating and professional finishing.'],['03','Service that stays personal','Fast, thoughtful communication from first question to safe doorstep delivery.'],['04','Craft that honours material','Small-batch making encourages care, considered use and lasting value.']].map(([n,t,p])=><article key={n}><span>{n}</span><h3>{t}</h3><p>{p}</p></article>)}</div></Container></section>
+      <section className="page-section story-vision"><Container fluid="xl"><Row className="align-items-center gy-5"><Col lg={6}><div className="story-vision__images"><SmartImage src="/assets/serving-collection.webp" alt="Handcrafted resin serving collection" fallbackLabel="Made one at a time" /><SmartImage src="/assets/wedding-keepsake.webp" alt="A resin keepsake with preserved flowers" fallbackLabel="Memories in art" /></div></Col><Col lg={{span:5,offset:1}}><p className="eyebrow">Our vision</p><h2>To become India’s most trusted handmade resin gifting brand.</h2><p>We want personalized gifting to feel artistic, lasting and deeply cared for—offering luxurious creations that preserve memories beautifully.</p><div className="vision-points"><span><Icon name="check" /> Premium handmade resin products</span><span><Icon name="check" /> Exceptional customer satisfaction</span><span><Icon name="check" /> Sustainable handmade craftsmanship</span><span><Icon name="check" /> Emotions turned into everlasting art</span></div><Button as={Link} to="/shop" className="button-burgundy">See what we’re making <Icon name="arrow" /></Button></Col></Row></Container></section>
+      <section className="story-commitment"><Container fluid="xl"><Icon name="spark" size={30} /><p>Every handmade piece reflects our dedication to creativity, quality and customer happiness.</p><h2>We don’t just make resin products—<em>we preserve memories in art.</em></h2><Link to="/custom-order" className="text-link text-link--light">Tell us your story <Icon name="arrow" /></Link></Container></section>
+    </>
+  );
+}

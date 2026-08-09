@@ -1,0 +1,16 @@
+{
+  "name": "Gift N Wrap Studio",
+  "short_name": "Gift N Wrap",
+  "description": "Handmade resin art and personalized gifts, delivered across India.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fffaf3",
+  "theme_color": "#173f35",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

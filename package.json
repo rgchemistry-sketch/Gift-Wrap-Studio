@@ -1,0 +1,51 @@
+{
+  "name": "gift-n-wrap-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Gift N Wrap Studio storefront and order management application",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c yellow,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:client": "vite",
+    "dev:server": "node --watch server/dev.js",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node server/dev.js",
+    "lint": "eslint . --max-warnings=0",
+    "test": "node --test",
+    "check": "npm run lint && npm test && npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bootstrap": "^5.3.8",
+    "cloudinary": "^2.10.0",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
+    "google-auth-library": "^11.0.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.9.1",
+    "react": "^19.2.8",
+    "react-bootstrap": "^2.10.10",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitejs/plugin-react": "^6.0.5",
+    "concurrently": "^10.0.4",
+    "eslint": "^10.8.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.9.0",
+    "supertest": "^7.2.2",
+    "vite": "^8.2.1"
+  }
+}
