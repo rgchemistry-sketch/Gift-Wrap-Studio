@@ -10,7 +10,9 @@
     "dev:server": "node --watch server/dev.js",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server/dev.js",
+    "prestart": "npm run build",
+    "start": "node server/dev.js --serve-client",
+    "start:api": "node server/dev.js",
     "lint": "eslint . --max-warnings=0",
     "test": "node --test",
     "check": "npm run lint && npm test && npm run build"

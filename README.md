@@ -26,7 +26,15 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-The storefront opens at `http://localhost:5173`; Vite proxies `/api` to the Express server at `http://localhost:4000`.
+Open the storefront at the URL printed by Vite (normally `http://localhost:5173`; Vite may select the next free port). Vite proxies `/api` to the Express server at `http://localhost:4000`; port 4000 is API-only during `npm run dev`.
+
+To run the built storefront and API together on one port, use:
+
+```powershell
+npm start
+```
+
+The `prestart` script builds the client, then Express serves the complete app at `http://localhost:4000`. Use `npm run start:api` only when an API-only process is intentional.
 
 With `VITE_ENABLE_DEMO_AUTH=true` and `ALLOW_DEMO_AUTH=true`, the sign-in dialog exposes clearly labelled buyer/admin preview accounts. The API rejects this endpoint in production regardless of the flag. To create preview orders without Atlas, also set `ALLOW_MEMORY_WRITES=true`; keep it `false` in production.
 

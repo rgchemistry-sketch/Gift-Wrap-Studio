@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { beforeEach, test } from "node:test";
 import request from "supertest";
 
@@ -13,12 +16,43 @@ process.env.CLOUDINARY_UPLOAD_PRESET = "test-locked-preset";
 process.env.UPLOAD_SIGNATURES_PER_HOUR = "20";
 delete process.env.MONGODB_URI;
 
-const [{ default: app }, { resetMemoryStore }] = await Promise.all([
+const [{ default: app }, { resetMemoryStore }, { createWebApp }] = await Promise.all([
   import("../app.js"),
   import("../lib/memory-store.js"),
+  import("../web-app.js"),
 ]);
 
 beforeEach(() => resetMemoryStore());
+
+test("the single-process web app serves the SPA without swallowing API 404s", async (context) => {
+  const clientDirectory = await mkdtemp(path.join(tmpdir(), "gift-n-wrap-client-"));
+  context.after(() => rm(clientDirectory, { recursive: true, force: true }));
+  await mkdir(path.join(clientDirectory, "assets"));
+  await writeFile(
+    path.join(clientDirectory, "index.html"),
+    '<!doctype html><html><body><div id="root">Gift N Wrap</div></body></html>',
+  );
+  await writeFile(path.join(clientDirectory, "assets", "app.js"), "export default true;");
+
+  const webApp = createWebApp({ apiApp: app, clientDirectory });
+  const root = await request(webApp).get("/").expect(200).expect("Content-Type", /html/);
+  assert.match(root.text, /Gift N Wrap/);
+
+  const clientRoute = await request(webApp)
+    .get("/shop")
+    .expect(200)
+    .expect("Cache-Control", "no-cache");
+  assert.equal(clientRoute.text, root.text);
+
+  await request(webApp)
+    .get("/assets/app.js")
+    .expect(200)
+    .expect("Cache-Control", /max-age=31536000, immutable/);
+
+  const missingApiRoute = await request(webApp).get("/api/does-not-exist").expect(404);
+  assert.equal(missingApiRoute.body.error.code, "ROUTE_NOT_FOUND");
+  assert.ok(missingApiRoute.body.error.requestId);
+});
 
 test("health reports the non-durable demo fallback without Atlas", async () => {
   const response = await request(app).get("/api/health").expect(200);
