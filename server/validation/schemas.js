@@ -40,6 +40,23 @@ const relativeOrAbsoluteUrl = z
     },
     "Enter an HTTP(S) URL or a site-relative path",
   );
+const relativeOrHttpsUrl = z
+  .string()
+  .trim()
+  .max(1_000)
+  .refine(
+    (value) => {
+      if (value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\")) {
+        return true;
+      }
+      try {
+        return new URL(value).protocol === "https:";
+      } catch {
+        return false;
+      }
+    },
+    "Enter an HTTPS URL or a site-relative path",
+  );
 const optionalBlank = (schema) => z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
 
 export const googleLoginSchema = z
@@ -73,9 +90,40 @@ export const slugParamsSchema = z
 
 const imageSchema = z
   .object({
-    url: relativeOrAbsoluteUrl,
-    publicId: z.string().trim().max(300).default(""),
+    url: relativeOrHttpsUrl,
+    publicId: z
+      .string()
+      .trim()
+      .max(300)
+      .regex(/^[A-Za-z0-9_/-]*$/, "Enter a valid Cloudinary public ID")
+      .default(""),
     alt: z.string().trim().max(160).default(""),
+  })
+  .strict();
+
+const skuSchema = z
+  .string()
+  .trim()
+  .max(80)
+  .transform((value) => value.toUpperCase())
+  .refine(
+    (value) => value === "" || /^[A-Z0-9][A-Z0-9._/-]*$/.test(value),
+    "Use letters, numbers, dots, dashes, underscores or slashes",
+  );
+
+const productVariantSchema = z
+  .object({
+    name: text(1, 100),
+    sku: skuSchema.default(""),
+    price: z.preprocess(
+      (value) => (value === "" ? null : value),
+      numberInput(z.number().int().min(0).max(10_000_000).nullable()),
+    ).default(null),
+    inventory: z.preprocess(
+      (value) => (value === "" ? null : value),
+      numberInput(z.number().int().min(0).max(1_000_000).nullable()),
+    ).default(null),
+    active: z.boolean().default(true),
   })
   .strict();
 
@@ -85,6 +133,7 @@ const productUpdateFields = {
   category: text(2, 80),
   shortDescription: text(10, 240),
   description: z.string().trim().max(4_000),
+  sku: skuSchema,
   price: integerInput({ min: 0, max: 10_000_000 }),
   compareAtPrice: z.preprocess(
     (value) => (value === "" ? null : value),
@@ -93,6 +142,7 @@ const productUpdateFields = {
   images: z.array(imageSchema).max(10),
   tags: z.array(text(1, 50)).max(30),
   customizationOptions: z.array(text(1, 100)).max(30),
+  variants: z.array(productVariantSchema).max(100),
   featured: z.boolean(),
   active: z.boolean(),
   madeToOrder: z.boolean(),
@@ -105,10 +155,12 @@ export const createProductSchema = z
   .object({
     ...productUpdateFields,
     description: productUpdateFields.description.default(""),
+    sku: productUpdateFields.sku.default(""),
     compareAtPrice: productUpdateFields.compareAtPrice.default(null),
     images: productUpdateFields.images.default([]),
     tags: productUpdateFields.tags.default([]),
     customizationOptions: productUpdateFields.customizationOptions.default([]),
+    variants: productUpdateFields.variants.default([]),
     featured: productUpdateFields.featured.default(false),
     active: productUpdateFields.active.default(true),
     madeToOrder: productUpdateFields.madeToOrder.default(true),
@@ -116,7 +168,20 @@ export const createProductSchema = z
     inventory: productUpdateFields.inventory.default(null),
     sortOrder: productUpdateFields.sortOrder.default(0),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.compareAtPrice != null && value.compareAtPrice < value.price) {
+      context.addIssue({
+        code: "custom",
+        path: ["compareAtPrice"],
+        message: "Compare-at price must be at least the selling price",
+      });
+    }
+    const skus = [value.sku, ...value.variants.map((variant) => variant.sku)].filter(Boolean);
+    if (new Set(skus).size !== skus.length) {
+      context.addIssue({ code: "custom", path: ["variants"], message: "Product SKUs must be unique" });
+    }
+  });
 
 export const updateProductSchema = z
   .object(
@@ -125,9 +190,110 @@ export const updateProductSchema = z
     ),
   )
   .strict()
-  .refine((value) => Object.keys(value).length > 0, "Provide at least one field to update");
+  .refine((value) => Object.keys(value).length > 0, "Provide at least one field to update")
+  .superRefine((value, context) => {
+    const skus = [value.sku, ...(value.variants || []).map((variant) => variant.sku)].filter(Boolean);
+    if (new Set(skus).size !== skus.length) {
+      context.addIssue({ code: "custom", path: ["variants"], message: "Product SKUs must be unique" });
+    }
+    if (
+      value.price !== undefined &&
+      value.compareAtPrice != null &&
+      value.compareAtPrice < value.price
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["compareAtPrice"],
+        message: "Compare-at price must be at least the selling price",
+      });
+    }
+  });
 
 export const idParamsSchema = z.object({ id: text(1, 100) }).strict();
+
+const relativeOrHttpsUrlOrBlank = z.union([z.literal(""), relativeOrHttpsUrl]);
+const emailOrBlank = z.union([z.literal(""), email]);
+const phoneOrBlank = z.union([z.literal(""), phone]);
+const instagramOrBlank = z.string().trim().max(200).refine((value) => {
+  if (!value) return true;
+  if (/^@[A-Za-z0-9._]{1,30}$/.test(value)) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && /(^|\.)instagram\.com$/i.test(url.hostname);
+  } catch {
+    return false;
+  }
+}, "Enter an @handle or an HTTPS Instagram URL");
+
+const leadTimesSettingsSchema = z
+  .object({
+    ready: text(2, 120).optional(),
+    custom: text(2, 120).optional(),
+  })
+  .strict();
+
+const offerSettingsSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    eyebrow: text(1, 80).optional(),
+    title: text(2, 140).optional(),
+    body: text(2, 300).optional(),
+    code: z.string().trim().toUpperCase().regex(/^[A-Z0-9_-]{2,40}$/).optional(),
+    percent: integerInput({ min: 0, max: 100 }).optional(),
+    maxDiscount: integerInput({ min: 0, max: 100_000 }).optional(),
+    delaySeconds: integerInput({ min: 0, max: 60 }).optional(),
+  })
+  .strict();
+
+const shippingSettingsSchema = z
+  .object({
+    flatFee: integerInput({ min: 0, max: 10_000 }).optional(),
+    freeThreshold: integerInput({ min: 0, max: 1_000_000 }).optional(),
+    bulkThreshold: integerInput({ min: 2, max: 100 }).optional(),
+  })
+  .strict();
+
+const announcementSettingsSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    text: z.string().trim().max(160).optional(),
+    linkLabel: z.string().trim().max(40).optional(),
+    linkUrl: relativeOrHttpsUrlOrBlank.optional(),
+  })
+  .strict();
+
+const contactSettingsSchema = z
+  .object({
+    email: emailOrBlank.optional(),
+    phone: phoneOrBlank.optional(),
+    instagram: instagramOrBlank.optional(),
+  })
+  .strict();
+
+export const studioSettingsSchema = z
+  .object({
+    leadTimes: leadTimesSettingsSchema.optional(),
+    offer: offerSettingsSchema.optional(),
+    shipping: shippingSettingsSchema.optional(),
+    announcement: announcementSettingsSchema.optional(),
+    contact: contactSettingsSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      Object.values(value).some((group) => group && Object.keys(group).length > 0),
+    "Provide at least one setting to update",
+  );
+
+export const adminUserQuerySchema = z
+  .object({
+    search: optionalBlank(text(1, 100)),
+    role: z.enum(["buyer", "admin"]).optional(),
+    phoneVerified: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
+    page: integerInput({ min: 1, max: 10_000 }).default(1),
+    limit: integerInput({ min: 1, max: 50 }).default(20),
+  })
+  .strict();
 
 const orderItemSchema = z
   .object({
@@ -258,6 +424,6 @@ export const contactStatusSchema = z
 
 export const uploadSignatureSchema = z
   .object({
-    purpose: z.enum(["custom-inquiries", "orders", "profiles"]).default("custom-inquiries"),
+    purpose: z.enum(["custom-inquiries", "orders", "profiles", "products"]).default("custom-inquiries"),
   })
   .strict();

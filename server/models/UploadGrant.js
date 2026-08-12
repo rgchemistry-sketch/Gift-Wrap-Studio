@@ -5,7 +5,11 @@ const uploadGrantSchema = new mongoose.Schema(
   {
     publicId: { type: String, required: true, unique: true, index: true },
     userId: { type: String, required: true, index: true },
-    purpose: { type: String, required: true, enum: ["custom-inquiries", "orders", "profiles"] },
+    purpose: {
+      type: String,
+      required: true,
+      enum: ["custom-inquiries", "orders", "profiles", "products"],
+    },
     expiresAt: { type: Date, required: true, expires: 0 },
   },
   { timestamps: true, toJSON: jsonTransform, toObject: jsonTransform },

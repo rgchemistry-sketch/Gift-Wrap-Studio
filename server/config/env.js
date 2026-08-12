@@ -46,6 +46,15 @@ export const env = Object.freeze({
     ? String(process.env.COOKIE_SAME_SITE || "lax").toLowerCase()
     : "lax",
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID?.trim() || "",
+  twilioApiKeySid: process.env.TWILIO_API_KEY_SID?.trim() || "",
+  twilioApiKeySecret: process.env.TWILIO_API_KEY_SECRET?.trim() || "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN?.trim() || "",
+  twilioVerifyServiceSid: process.env.TWILIO_VERIFY_SERVICE_SID?.trim() || "",
+  phoneAuthChallengeMinutes: asInteger(process.env.PHONE_AUTH_CHALLENGE_MINUTES, 10, {
+    min: 2,
+    max: 30,
+  }),
   adminEmail:
     process.env.ADMIN_EMAIL?.trim().toLowerCase() ||
     (allowDemoAuth ? "admin@giftnwrap.local" : ""),
@@ -80,5 +89,19 @@ export const env = Object.freeze({
     max: 200,
   }),
 });
+
+export const phoneAuthStatus = () => {
+  const configured = Boolean(
+    env.twilioVerifyServiceSid &&
+      ((env.twilioAccountSid && env.twilioAuthToken) ||
+        (env.twilioApiKeySid && env.twilioApiKeySecret)),
+  );
+  return {
+    provider: "twilio-verify",
+    enabled: configured,
+    configured,
+    country: "IN",
+  };
+};
 
 export const missingConfig = (...keys) => keys.filter((key) => !env[key]);

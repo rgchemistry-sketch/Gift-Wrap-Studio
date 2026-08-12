@@ -6,16 +6,23 @@ import {
   archiveProduct,
   createProduct,
   getDashboardStats,
+  getProductForAdmin,
+  getRegisteredUserDetail,
+  getRegisteredUserMetrics,
+  getStudioSettings,
   listAllOrders,
   listAllProductsForAdmin,
   listContacts,
   listCustomInquiries,
+  listRegisteredUsers,
   updateContact,
   updateCustomInquiry,
   updateOrderStatus,
   updateProduct,
+  updateStudioSettings,
 } from "../services/store.js";
 import {
+  adminUserQuerySchema,
   contactStatusSchema,
   createProductSchema,
   idParamsSchema,
@@ -23,6 +30,7 @@ import {
   inquiryStatusSchema,
   orderQuerySchema,
   orderStatusSchema,
+  studioSettingsSchema,
   updateProductSchema,
 } from "../validation/schemas.js";
 
@@ -51,6 +59,14 @@ adminRouter.post(
   }),
 );
 
+adminRouter.get(
+  "/products/:id",
+  validate({ params: idParamsSchema }),
+  asyncHandler(async (request, response) => {
+    response.json({ data: await getProductForAdmin(request.validated.params.id) });
+  }),
+);
+
 adminRouter.patch(
   "/products/:id",
   validate({ params: idParamsSchema, body: updateProductSchema }),
@@ -66,6 +82,67 @@ adminRouter.delete(
   validate({ params: idParamsSchema }),
   asyncHandler(async (request, response) => {
     response.json({ data: await archiveProduct(request.validated.params.id) });
+  }),
+);
+
+adminRouter.get(
+  "/settings",
+  asyncHandler(async (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ data: await getStudioSettings() });
+  }),
+);
+
+adminRouter.put(
+  "/settings",
+  validate({ body: studioSettingsSchema }),
+  asyncHandler(async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      data: await updateStudioSettings(request.validated.body, request.user.email),
+    });
+  }),
+);
+
+adminRouter.get(
+  "/users",
+  validate({ query: adminUserQuerySchema }),
+  asyncHandler(async (request, response) => {
+    const result = await listRegisteredUsers(request.validated.query);
+    const metrics = await getRegisteredUserMetrics();
+    response.json({
+      data: result.items,
+      metrics,
+      pagination: {
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        pages: result.totalPages,
+        totalPages: result.totalPages,
+      },
+      meta: {
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        totalPages: result.totalPages,
+        metrics,
+      },
+    });
+  }),
+);
+
+adminRouter.get(
+  "/users/metrics",
+  asyncHandler(async (_request, response) => {
+    response.json({ data: await getRegisteredUserMetrics() });
+  }),
+);
+
+adminRouter.get(
+  "/users/:id",
+  validate({ params: idParamsSchema }),
+  asyncHandler(async (request, response) => {
+    response.json({ data: await getRegisteredUserDetail(request.validated.params.id) });
   }),
 );
 

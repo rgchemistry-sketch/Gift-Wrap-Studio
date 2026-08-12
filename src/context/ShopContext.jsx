@@ -1,8 +1,11 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { api } from '../api/client';
 
 const ShopContext = createContext(null);
 const CART_KEY = 'gnw-cart';
 const WISHLIST_KEY = 'gnw-wishlist';
+const OFFER_CLAIMED_KEY = 'gnw-first-offer-claimed';
+const OFFER_CODE_KEY = 'gnw-first-offer-code';
 
 function readStorage(key, fallback) {
   try {
@@ -25,6 +28,25 @@ export function ShopProvider({ children }) {
   const [cart, setCart] = useState(() => readStorage(CART_KEY, []));
   const [wishlist, setWishlist] = useState(() => readStorage(WISHLIST_KEY, []));
   const [toasts, setToasts] = useState([]);
+  const [studioSettings, setStudioSettings] = useState(null);
+  const [welcomeOffer, setWelcomeOffer] = useState(null);
+  const [claimedOfferCode, setClaimedOfferCode] = useState(
+    () => window.sessionStorage.getItem(OFFER_CODE_KEY) || '',
+  );
+
+  useEffect(() => {
+    let active = true;
+    Promise.allSettled([api.getPublicSettings(), api.getWelcomeOffer()]).then(([settingsResult, offerResult]) => {
+      if (!active) return;
+      if (settingsResult.status === 'fulfilled') {
+        setStudioSettings(settingsResult.value.data || settingsResult.value);
+      }
+      if (offerResult.status === 'fulfilled') {
+        setWelcomeOffer(offerResult.value.data || offerResult.value);
+      }
+    });
+    return () => { active = false; };
+  }, []);
 
   const persistCart = useCallback((next) => {
     setCart(next);
@@ -39,6 +61,14 @@ export function ShopProvider({ children }) {
 
   const dismissToast = useCallback((id) => {
     setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  const claimWelcomeOffer = useCallback((code) => {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    if (!normalizedCode) return;
+    window.sessionStorage.setItem(OFFER_CLAIMED_KEY, 'true');
+    window.sessionStorage.setItem(OFFER_CODE_KEY, normalizedCode);
+    setClaimedOfferCode(normalizedCode);
   }, []);
 
   const addToCart = useCallback(
@@ -114,6 +144,9 @@ export function ShopProvider({ children }) {
       cart,
       wishlist,
       toasts,
+      studioSettings,
+      welcomeOffer,
+      claimedOfferCode,
       cartCount,
       subtotal,
       addToCart,
@@ -123,11 +156,15 @@ export function ShopProvider({ children }) {
       toggleWishlist,
       notify,
       dismissToast,
+      claimWelcomeOffer,
     }),
     [
       cart,
       wishlist,
       toasts,
+      studioSettings,
+      welcomeOffer,
+      claimedOfferCode,
       cartCount,
       subtotal,
       addToCart,
@@ -137,6 +174,7 @@ export function ShopProvider({ children }) {
       toggleWishlist,
       notify,
       dismissToast,
+      claimWelcomeOffer,
     ],
   );
 

@@ -9,6 +9,9 @@ Required for production authentication:
 - `MONGODB_URI` and optionally `MONGODB_DATABASE` (defaults to `gift_n_wrap`)
 - `JWT_SECRET` (at least 32 random characters in production)
 - `GOOGLE_CLIENT_ID`
+- Twilio Verify for phone OTP: `TWILIO_VERIFY_SERVICE_SID` plus exactly one credential option:
+  `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`, or `TWILIO_API_KEY_SID` +
+  `TWILIO_API_KEY_SECRET` (preferred in production)
 - `ADMIN_EMAIL` (the only email that receives the `admin` role)
 - `CLIENT_ORIGINS` (comma-separated origins when the frontend and API are on different hosts)
 
@@ -25,6 +28,7 @@ Optional tuning:
 
 - `PORT=4000`
 - `AUTH_COOKIE_DAYS=7`, `COOKIE_SAME_SITE=lax`, `AUTH_COOKIE_NAME=gnw_session`
+- `PHONE_AUTH_CHALLENGE_MINUTES=10` (2–30 minutes; challenges are single-use and allow five checks)
 - `FLAT_SHIPPING_FEE=99`, `FREE_SHIPPING_THRESHOLD=2000`, `BULK_ORDER_THRESHOLD=10`
 - `WELCOME_COUPON_CODE=FIRST10`, `WELCOME_DISCOUNT_PERCENT=10`, `WELCOME_DISCOUNT_MAX=500`
 - `ALLOW_DEMO_AUTH=true` enables `POST /api/auth/demo` only outside production. Never enable this on a public production deployment.
@@ -43,7 +47,14 @@ Public:
 - `GET /api/health`
 - `GET /api/products`, `GET /api/products/categories`, `GET /api/products/:slug`
 - `GET /api/offers/welcome`
-- `POST /api/auth/google` with `{ credential }`; `GET /api/auth/me`; `POST /api/auth/logout`
+- `GET /api/auth/phone/status`
+- `POST /api/auth/phone/start` with `{ credential, email, phone, intent: "login" | "signup" }`, then
+  `POST /api/auth/phone/verify` with `{ challengeId, code }`. Google verifies the email first; a
+  normal session is issued only after Twilio Verify approves the SMS code. Indian mobile numbers
+  are normalized to E.164 and are masked in API responses.
+- `POST /api/auth/google` is retained only for deployments where phone OTP has not been activated;
+  once Twilio Verify is configured it cannot bypass phone verification. Existing sessions continue
+  through `GET /api/auth/me`; `POST /api/auth/logout` clears them.
 - `POST /api/custom-inquiries`; authenticated buyers can also use `GET /api/custom-inquiries/mine`
 - `POST /api/contact`
 

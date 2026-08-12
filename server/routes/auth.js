@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
-import { env } from "../config/env.js";
+import { env, phoneAuthStatus } from "../config/env.js";
+import { conflict } from "../lib/errors.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { authenticate } from "../middleware/auth.js";
 import { rateLimitHandler } from "../middleware/rate-limit.js";
@@ -30,6 +31,9 @@ authRouter.post(
   loginLimiter,
   validate({ body: googleLoginSchema }),
   asyncHandler(async (request, response) => {
+    if (phoneAuthStatus().configured) {
+      throw conflict("Phone verification is required. Continue with the secure phone sign-in flow");
+    }
     const credential = request.validated.body.credential || request.validated.body.idToken;
     const profile = await verifyGoogleCredential(credential);
     const user = await upsertGoogleUser(profile);

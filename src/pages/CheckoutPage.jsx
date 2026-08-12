@@ -48,7 +48,7 @@ const emptyForm = {
 };
 
 export default function CheckoutPage() {
-  const { cart, subtotal, clearCart } = useShop();
+  const { cart, subtotal, clearCart, claimedOfferCode, welcomeOffer, studioSettings } = useShop();
   const { user, openAuth } = useAuth();
   const [form, setForm] = useState(() => ({ ...emptyForm, ...(readDraft() || {}) }));
   const [validated, setValidated] = useState(false);
@@ -72,8 +72,12 @@ export default function CheckoutPage() {
   }, [form]);
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
-  const offerClaimed = window.sessionStorage.getItem('gnw-first-offer-claimed') === 'true';
-  const itemOfferEligible = !cart.some((line) => line.product.category === 'Corporate gifts' || line.quantity >= 10);
+  const offerCode = claimedOfferCode || (window.sessionStorage.getItem('gnw-first-offer-claimed') === 'true' ? welcomeOffer?.code || 'FIRST10' : '');
+  const bulkThreshold = Number(welcomeOffer?.bulkOrderThreshold || studioSettings?.shipping?.bulkThreshold || 10);
+  const offerClaimed = Boolean(offerCode && (welcomeOffer?.enabled ?? true));
+  const itemOfferEligible = !cart.some((line) =>
+    String(line.product.category || '').toLowerCase().includes('corporate') || line.quantity >= bulkThreshold,
+  );
 
   const submit = async (event) => {
     event.preventDefault();
@@ -86,7 +90,7 @@ export default function CheckoutPage() {
       return;
     }
     if (!user) {
-      openAuth('Sign in with Google to securely attach your details and submit this order request. Your form has been saved.');
+      openAuth('Verify your Google email and mobile number to securely attach these details and submit your order request. Your form has been saved.');
       return;
     }
     const pendingUpload = cart.find((line) => line.customization?.media?.pending);
@@ -119,7 +123,7 @@ export default function CheckoutPage() {
           `Preferred contact: ${form.contactPreference}`,
           form.notes,
         ].filter(Boolean).join('\n'),
-        couponCode: offerClaimed && itemOfferEligible ? 'FIRST10' : undefined,
+        couponCode: offerClaimed && itemOfferEligible ? offerCode : undefined,
         paymentMethod: 'manual_confirmation',
       };
       const result = await api.submitOrderRequest(payload, idempotencyKey);
@@ -195,7 +199,7 @@ export default function CheckoutPage() {
                   <Col xs={12}><Form.Group controlId="checkout-notes"><Form.Label>Delivery or gift notes <small>optional</small></Form.Label><Form.Control as="textarea" rows={4} maxLength={500} value={form.notes} onChange={(event) => update('notes', event.target.value)} placeholder="Anything the studio should know about the occasion or delivery?" /></Form.Group></Col>
                 </Row>
               </fieldset>
-              {!user && <Alert variant="info" className="soft-alert sign-in-reminder"><Icon name="lock" /> You’ll be asked to sign in with Google when you send this request. Your form is saved on this device.</Alert>}
+              {!user && <Alert variant="info" className="soft-alert sign-in-reminder"><Icon name="lock" /> You’ll be asked to verify your Google email and mobile number when you send this request. Your form is saved on this device.</Alert>}
               <Button type="submit" className="button-burgundy checkout-submit" disabled={submitting}>{submitting ? <><Spinner size="sm" /> Sending securely…</> : <>Send order request <Icon name="arrow" /></>}</Button>
               <p className="checkout-submit-note">By sending, you are requesting a studio review—not completing a purchase or payment.</p>
             </Form>
@@ -206,7 +210,7 @@ export default function CheckoutPage() {
               {cart.map((line) => (
                 <div className="checkout-mini-line" key={line.lineId}><div><SmartImage src={line.product.image} alt="" fallbackLabel={line.product.category} /><span>{line.quantity}</span></div><p><strong>{line.product.title}</strong><small>{line.customization?.name ? `For ${line.customization.name}` : line.product.category}</small></p><b>{formatCurrency((line.product.price + (line.customizationFee || 0)) * line.quantity)}</b></div>
               ))}
-              <dl><div><dt>Item total</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed after address review</dd></div><div><dt>Offer</dt><dd>{offerClaimed ? (itemOfferEligible ? 'FIRST10 · first-order check pending' : 'Not available on bulk/corporate pieces') : '—'}</dd></div><div className="summary-total"><dt>Current estimate</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
+              <dl><div><dt>Item total</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed after address review</dd></div><div><dt>Offer</dt><dd>{offerClaimed ? (itemOfferEligible ? `${offerCode} · first-order check pending` : 'Not available on bulk/corporate pieces') : '—'}</dd></div><div className="summary-total"><dt>Current estimate</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
               <div className="checkout-summary__note"><Icon name="spark" /><p><strong>What happens next?</strong><small>The studio reviews your design notes, confirms the final total and shares payment instructions personally.</small></p></div>
             </aside>
           </Col>

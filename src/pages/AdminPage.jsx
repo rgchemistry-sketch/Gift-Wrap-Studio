@@ -9,13 +9,16 @@ import Table from 'react-bootstrap/Table';
 import { Link, useNavigate } from 'react-router-dom';
 import Icon from '../components/Icon';
 import SmartImage from '../components/SmartImage';
+import ProductManager from '../components/admin/ProductManager';
+import SettingsEditor from '../components/admin/SettingsEditor';
+import UsersManager from '../components/admin/UsersManager';
 import { api } from '../api/client';
 import { demoProducts, formatCurrency, normalizeProduct } from '../data/catalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 
 const demoSummary = {
-  metrics: { ordersPending: 8, activeCustomRequests: 5, monthlyRevenue: 48750, products: 28 },
+  metrics: { ordersPending: 8, activeCustomRequests: 5, monthlyRevenue: 48750, products: 28, registeredUsers: 2 },
   recentOrders: [
     { id: 'preview-1', orderNumber: 'GNW-PREVIEW-01', customer: { name: 'Preview buyer' }, status: 'placed', total: 2199, createdAt: new Date().toISOString(), items: [{ name: 'Memory Photo Frame' }] },
     { id: 'preview-2', orderNumber: 'GNW-PREVIEW-02', customer: { name: 'Preview buyer' }, status: 'in_progress', total: 4299, createdAt: new Date(Date.now() - 86400000).toISOString(), items: [{ name: 'Geode Wall Clock' }] },
@@ -35,6 +38,7 @@ const adminNav = [
   ['products', 'bag', 'Products'],
   ['requests', 'heart', 'Custom requests'],
   ['messages', 'mail', 'Messages'],
+  ['users', 'user', 'Registered users'],
   ['settings', 'shield', 'Studio settings'],
 ];
 
@@ -72,10 +76,12 @@ export default function AdminPage() {
       const messages = listFrom(contactsResult, ['contacts', 'messages', 'items']);
       setSummary({
         metrics: {
-          products: Number(dashboard.products || productsList.length),
-          totalOrders: Number(dashboard.orders || recentOrders.length),
-          activeCustomRequests: Number(dashboard.newInquiries || 0),
-          newMessages: Number(dashboard.newMessages || 0),
+          products: Number(dashboard.products ?? productsList.length),
+          totalOrders: Number(dashboard.orders ?? recentOrders.length),
+          activeCustomRequests: Number(dashboard.newInquiries ?? 0),
+          newMessages: Number(dashboard.newMessages ?? 0),
+          registeredUsers: Number(dashboard.users ?? dashboard.registeredUsers ?? dashboard.userCount ?? 0),
+          newUsersThisMonth: Number(dashboard.newUsersThisMonth ?? 0),
         },
         productsList,
         recentOrders,
@@ -124,16 +130,17 @@ export default function AdminPage() {
       {preview&&<Alert variant="warning" className="soft-alert admin-preview-alert"><strong>Studio preview:</strong> {error} Changes are disabled until the admin service reconnects. <button type="button" className="plain-link" onClick={load}>Retry</button></Alert>}
       <div className="admin-layout">
         <aside className="admin-sidebar"><nav aria-label="Admin sections">{adminNav.map(([key,icon,label])=><button type="button" key={key} className={section===key?'is-active':''} onClick={()=>setSection(key)}><Icon name={icon}/><span>{label}</span>{key==='orders'&&Number(summary?.metrics?.ordersPending||summary?.counts?.pendingOrders)>0&&<Badge pill>{summary?.metrics?.ordersPending||summary?.counts?.pendingOrders}</Badge>}</button>)}</nav><div className="admin-sidebar__note"><Icon name="shield"/><p><strong>Admin protected</strong><small>Role checks are also enforced by the server.</small></p></div></aside>
-        <main className="admin-content">
+        <div className="admin-content">
           {loading?<div className="account-loading"><Spinner/><span>Opening the studio desk…</span></div>:!summary?<Alert variant="danger" className="soft-alert"><strong>The live admin workspace could not load.</strong> {error} <button type="button" className="plain-link" onClick={load}>Retry</button></Alert>:<>
             {section==='dashboard'&&<Dashboard summary={summary} setSection={setSection}/>}
             {section==='orders'&&<Orders summary={summary} preview={preview} updateStatus={updateStatus}/>}
-            {section==='products'&&<Products summary={summary} preview={preview}/>}
+            {section==='products'&&<ProductManager products={summary.productsList} preview={preview} notify={notify} onRefresh={load}/>}
             {section==='requests'&&<Requests summary={summary} preview={preview} updateInquiryStatus={updateInquiryStatus}/>}
             {section==='messages'&&<Messages summary={summary} preview={preview} updateMessageStatus={updateMessageStatus}/>}
-            {section==='settings'&&<Settings preview={preview} notify={notify}/>}
+            {section==='users'&&<UsersManager dashboardMetrics={summary.metrics}/>}
+            {section==='settings'&&<SettingsEditor preview={preview} notify={notify}/>}
           </>}
-        </main>
+        </div>
       </div>
     </Container>
   </section>;
@@ -141,7 +148,7 @@ export default function AdminPage() {
 
 function Dashboard({summary,setSection}){
   const metrics=summary.metrics||summary.counts||{};
-  const cards=[['Total orders',metrics.totalOrders??metrics.ordersPending??metrics.pendingOrders??0,'package','orders'],['New custom requests',metrics.activeCustomRequests??metrics.inquiries??0,'heart','requests'],['New messages',metrics.newMessages??0,'mail','messages'],['Published pieces',metrics.products??metrics.productCount??0,'bag','products']];
+  const cards=[['Total orders',metrics.totalOrders??metrics.ordersPending??metrics.pendingOrders??0,'package','orders'],['New custom requests',metrics.activeCustomRequests??metrics.inquiries??0,'heart','requests'],['New messages',metrics.newMessages??0,'mail','messages'],['Published pieces',metrics.products??metrics.productCount??0,'bag','products'],['Registered users',metrics.registeredUsers??metrics.users??metrics.userCount??0,'user','users']];
   return <><div className="admin-section-head"><div><p className="eyebrow">Today in the studio</p><h2>Overview</h2></div><span>{new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</span></div><div className="admin-metrics">{cards.map(([label,value,icon,target])=><button type="button" onClick={()=>setSection(target)} key={label}><span><Icon name={icon}/></span><p><small>{label}</small><strong>{value}</strong></p><Icon name="arrow"/></button>)}</div><div className="admin-dashboard-grid"><div className="admin-panel"><div className="admin-panel__head"><div><p className="eyebrow">Recent activity</p><h3>Orders needing attention</h3></div><button type="button" className="plain-link" onClick={()=>setSection('orders')}>View all</button></div><MiniOrders orders={summary.recentOrders||summary.orders||[]}/></div><div className="admin-panel"><div className="admin-panel__head"><div><p className="eyebrow">Inventory</p><h3>Low stock pieces</h3></div><button type="button" className="plain-link" onClick={()=>setSection('products')}>Manage</button></div><div className="low-stock-list">{(summary.lowStock||summary.lowStockProducts||[]).slice(0,4).map(raw=>{const product=normalizeProduct(raw);return <div key={product.id}><SmartImage src={product.image} alt="" fallbackLabel={product.category}/><p><strong>{product.title}</strong><small>{raw.stock??raw.inventory??0} remaining</small></p><span>{raw.stock??raw.inventory??0}</span></div>})}</div></div></div></>;
 }
 
@@ -157,7 +164,7 @@ function Orders({summary,preview,updateStatus}){
   return <><div className="admin-section-head"><div><p className="eyebrow">Fulfilment</p><h2>Orders</h2></div><div className="admin-search"><Icon name="search"/><input type="search" value={query} onChange={(event)=>setQuery(event.target.value)} placeholder="Search order or buyer" aria-label="Search orders"/></div></div><div className="admin-panel admin-table-panel">{filteredOrders.length?<Table responsive hover className="admin-table"><thead><tr><th>Order</th><th>Buyer</th><th>Placed</th><th>Amount</th><th>Status</th></tr></thead><tbody>{filteredOrders.map(order=><tr key={order.id||order._id||order.orderNumber}><td><strong>{order.orderNumber||String(order.id||order._id).slice(-6).toUpperCase()}</strong><small>{order.items?.length||0} pieces</small></td><td>{order.buyerName||order.customer?.name||order.user?.name||order.buyerEmail||'Buyer'}</td><td>{order.createdAt?new Date(order.createdAt).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—'}</td><td>{order.total?formatCurrency(order.total):'Pending'}</td><td><Form.Select size="sm" value={order.status||'placed'} disabled={preview} onChange={event=>updateStatus(order.id||order._id,event.target.value)} aria-label={`Status for ${order.orderNumber||'order'}`}><option value="placed">Placed</option><option value="confirmed">Confirmed</option><option value="in_progress">In progress</option><option value="ready">Ready</option><option value="shipped">Shipped</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option></Form.Select></td></tr>)}</tbody></Table>:<AdminEmpty text={query?'No orders match that search.':'No orders have been placed yet.'}/>}</div></>;
 }
 
-function Products({summary}){
+function _LegacyProducts({summary}){
   const rawProducts = Array.isArray(summary.productsList) ? summary.productsList : Array.isArray(summary.lowStock) ? summary.lowStock : demoProducts;
   const products=rawProducts.slice(0,12).map(normalizeProduct);
   return <><div className="admin-section-head"><div><p className="eyebrow">Catalogue</p><h2>Products</h2></div><span className="admin-readonly-note"><Icon name="lock" size={14}/> Catalogue editing is API-managed in this release</span></div><div className="admin-product-grid">{products.map(product=><article key={product.id}><SmartImage src={product.image} alt="" fallbackLabel={product.category}/><div><span className={product.inStock?'in-stock':'out-stock'}>{product.inStock?'Published':'Unavailable'}</span><h3>{product.title}</h3><p>{product.category} · {formatCurrency(product.price)}</p><span className="admin-item-readonly">Read-only overview</span></div></article>)}</div></>;
@@ -172,7 +179,5 @@ function Messages({summary,preview,updateMessageStatus}){
   const messages = summary.messages || [];
   return <><div className="admin-section-head"><div><p className="eyebrow">Studio inbox</p><h2>Contact messages</h2></div></div><div className="admin-panel admin-table-panel">{messages.length?<Table responsive hover className="admin-table"><thead><tr><th>From</th><th>Subject</th><th>Message</th><th>Received</th><th>Status</th></tr></thead><tbody>{messages.map(message=><tr key={message.id||message._id}><td><strong>{message.name}</strong><small>{message.email}</small></td><td>{message.subject||'Studio question'}</td><td className="admin-message-cell">{message.message}</td><td>{message.createdAt?new Date(message.createdAt).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—'}</td><td><Form.Select size="sm" value={message.status||'new'} disabled={preview} onChange={(event)=>updateMessageStatus(message.id||message._id,event.target.value)} aria-label={`Status for message from ${message.name}`}><option value="new">New</option><option value="read">Read</option><option value="replied">Replied</option><option value="archived">Archived</option></Form.Select></td></tr>)}</tbody></Table>:<AdminEmpty text="No contact messages yet."/>}</div></>;
 }
-
-function Settings(){return <><div className="admin-section-head"><div><p className="eyebrow">Studio controls</p><h2>Settings</h2></div></div><div className="admin-settings"><Alert variant="info" className="soft-alert"><Icon name="shield"/> Operational settings are environment-managed in this release. The values below are shown for reference and cannot be changed here.</Alert><section className="admin-panel"><h3>Order timing</h3><p>Shown to buyers before they send a request.</p><div className="admin-setting-row"><Form.Group><Form.Label>Ready pieces</Form.Label><Form.Control defaultValue="3–10 business days" disabled/></Form.Group><Form.Group><Form.Label>Custom pieces</Form.Label><Form.Control defaultValue="5–15 business days" disabled/></Form.Group></div></section><section className="admin-panel"><h3>First-order offer</h3><p>Eligibility is checked by the server before the final total.</p><div className="admin-setting-row"><Form.Group><Form.Label>Offer code</Form.Label><Form.Control defaultValue="FIRST10" disabled/></Form.Group><Form.Group><Form.Label>Discount</Form.Label><Form.Control defaultValue="10%" disabled/></Form.Group></div></section></div></>}
 
 function AdminEmpty({text}){return <div className="admin-empty"><Icon name="spark"/><p>{text}</p></div>}

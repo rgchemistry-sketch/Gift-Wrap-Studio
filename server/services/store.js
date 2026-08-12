@@ -15,6 +15,7 @@ import { Contact } from "../models/Contact.js";
 import { CustomInquiry } from "../models/CustomInquiry.js";
 import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
+import { StudioSettings } from "../models/StudioSettings.js";
 import { User } from "../models/User.js";
 import { UploadGrant, UploadQuota } from "../models/UploadGrant.js";
 
@@ -162,8 +163,79 @@ export const listAllProductsForAdmin = async () => {
   return records.map(plain);
 };
 
+export const getProductForAdmin = async (id) => {
+  const mode = await ensureCatalogSeeded();
+  const record =
+    mode === "mongodb"
+      ? mongoose.isValidObjectId(id)
+        ? await Product.findById(id)
+        : undefined
+      : memoryStore.get("products", id);
+  if (!record) throw notFound("Product");
+  return plain(record);
+};
+
+const productSkus = (product) =>
+  [product.sku, ...(product.variants || []).map((variant) => variant.sku)].filter(Boolean);
+
+const assertProductInvariants = (product) => {
+  if (product.compareAtPrice != null && product.compareAtPrice < product.price) {
+    throw badRequest("Compare-at price must be at least the selling price", [
+      { field: "compareAtPrice" },
+    ]);
+  }
+  const skus = productSkus(product);
+  if (new Set(skus).size !== skus.length) {
+    throw conflict("Every SKU in a product must be unique", [{ field: "variants" }]);
+  }
+  for (const [index, image] of (product.images || []).entries()) {
+    if (!image.publicId) continue;
+    let imageUrl;
+    try {
+      imageUrl = new URL(image.url);
+    } catch {
+      throw badRequest("Cloudinary product images require an HTTPS URL", [
+        { field: `images.${index}.url` },
+      ]);
+    }
+    const expectedPrefix = env.cloudinaryCloudName
+      ? `/image/upload/`
+      : "/image/upload/";
+    if (
+      imageUrl.protocol !== "https:" ||
+      imageUrl.hostname.toLowerCase() !== "res.cloudinary.com" ||
+      (env.cloudinaryCloudName && !imageUrl.pathname.startsWith(`/${env.cloudinaryCloudName}${expectedPrefix}`))
+    ) {
+      throw badRequest("Product image public IDs must belong to the configured Cloudinary account", [
+        { field: `images.${index}` },
+      ]);
+    }
+  }
+};
+
+const assertProductSkusAvailable = async (candidate, mode, excludedId) => {
+  const skus = productSkus(candidate);
+  if (!skus.length) return;
+  const duplicate =
+    mode === "mongodb"
+      ? await Product.findOne({
+          ...(excludedId ? { _id: { $ne: excludedId } } : {}),
+          $or: [{ sku: { $in: skus } }, { "variants.sku": { $in: skus } }],
+        }).select("_id")
+      : memoryStore.findOne(
+          "products",
+          (product) =>
+            product.id !== excludedId && productSkus(product).some((sku) => skus.includes(sku)),
+        );
+  if (duplicate) {
+    throw conflict("A product or variant already uses one of these SKUs", [{ field: "sku" }]);
+  }
+};
+
 export const createProduct = async (input) => {
   const mode = assertWritable(await ensureCatalogSeeded());
+  assertProductInvariants(input);
+  await assertProductSkusAvailable(input, mode);
   if (mode === "mongodb") return plain(await Product.create(input));
   if (memoryStore.findOne("products", (product) => product.slug === input.slug)) {
     throw conflict("A product with this slug already exists", [{ field: "slug" }]);
@@ -173,9 +245,15 @@ export const createProduct = async (input) => {
 
 export const updateProduct = async (id, input) => {
   const mode = assertWritable(await ensureCatalogSeeded());
+  const changes = input.active === true ? { ...input, archivedAt: null } : input;
   if (mode === "mongodb") {
     if (!mongoose.isValidObjectId(id)) throw notFound("Product");
-    const record = await Product.findByIdAndUpdate(id, { $set: input }, { new: true, runValidators: true });
+    const existing = plain(await Product.findById(id));
+    if (!existing) throw notFound("Product");
+    const candidate = { ...existing, ...changes };
+    assertProductInvariants(candidate);
+    await assertProductSkusAvailable(candidate, mode, new mongoose.Types.ObjectId(id));
+    const record = await Product.findByIdAndUpdate(id, { $set: changes }, { new: true, runValidators: true });
     if (!record) throw notFound("Product");
     return plain(record);
   }
@@ -185,14 +263,20 @@ export const updateProduct = async (id, input) => {
   ) {
     throw conflict("A product with this slug already exists", [{ field: "slug" }]);
   }
-  const record = memoryStore.update("products", id, input);
+  const existing = memoryStore.get("products", id);
+  if (!existing) throw notFound("Product");
+  const candidate = { ...existing, ...changes };
+  assertProductInvariants(candidate);
+  await assertProductSkusAvailable(candidate, mode, id);
+  const record = memoryStore.update("products", id, changes);
   if (!record) throw notFound("Product");
   return record;
 };
 
-export const archiveProduct = async (id) => updateProduct(id, { active: false });
+export const archiveProduct = async (id) =>
+  updateProduct(id, { active: false, archivedAt: new Date() });
 
-export const upsertGoogleUser = async ({ googleSub, email, name, avatar }) => {
+export const upsertGoogleUser = async ({ googleSub, email, name, avatar, phone, phoneVerifiedAt }) => {
   const mode = assertWritable(await connectDatabase());
   const normalizedEmail = email.toLowerCase();
   const role = env.adminEmail && normalizedEmail === env.adminEmail ? "admin" : "buyer";
@@ -212,6 +296,7 @@ export const upsertGoogleUser = async ({ googleSub, email, name, avatar }) => {
         avatar: avatar || "",
         role,
         lastLoginAt: new Date(),
+        ...(phone ? { phone, phoneVerifiedAt: phoneVerifiedAt || new Date() } : {}),
       });
       await record.save();
     } else {
@@ -222,6 +307,7 @@ export const upsertGoogleUser = async ({ googleSub, email, name, avatar }) => {
         avatar: avatar || "",
         role,
         lastLoginAt: new Date(),
+        ...(phone ? { phone, phoneVerifiedAt: phoneVerifiedAt || new Date() } : {}),
       });
     }
     return plain(record);
@@ -241,9 +327,28 @@ export const upsertGoogleUser = async ({ googleSub, email, name, avatar }) => {
     avatar: avatar || "",
     role,
     lastLoginAt: new Date(),
+    ...(phone ? { phone, phoneVerifiedAt: phoneVerifiedAt || new Date() } : {}),
   };
   record = record ? memoryStore.update("users", record.id, changes) : memoryStore.create("users", changes);
   return record;
+};
+
+export const findUserByGoogleIdentity = async ({ googleSub, email }) => {
+  const mode = await connectDatabase();
+  const normalizedEmail = email.toLowerCase();
+  if (mode === "mongodb") {
+    return plain(await User.findOne({ $or: [{ googleSub }, { email: normalizedEmail }] }));
+  }
+  return memoryStore.findOne(
+    "users",
+    (user) => user.googleSub === googleSub || user.email === normalizedEmail,
+  );
+};
+
+export const findUserByPhone = async (phone) => {
+  const mode = await connectDatabase();
+  if (mode === "mongodb") return plain(await User.findOne({ phone }));
+  return memoryStore.findOne("users", (user) => user.phone === phone);
 };
 
 export const getUserById = async (id) => {
@@ -253,6 +358,99 @@ export const getUserById = async (id) => {
     return plain(await User.findById(id));
   }
   return memoryStore.get("users", id);
+};
+
+const defaultStudioSettings = () => ({
+  leadTimes: {
+    ready: "3–10 business days",
+    custom: "5–15 business days",
+  },
+  offer: {
+    enabled: env.welcomeDiscountPercent > 0,
+    eyebrow: "A little welcome gift",
+    title: "Make your first story together.",
+    body: "Enjoy a thoughtful saving on your first Gift N Wrap Studio order.",
+    code: env.welcomeCouponCode,
+    percent: env.welcomeDiscountPercent,
+    maxDiscount: env.welcomeDiscountMax,
+    delaySeconds: 5,
+  },
+  shipping: {
+    flatFee: env.flatShippingFee,
+    freeThreshold: env.freeShippingThreshold,
+    bulkThreshold: env.bulkOrderThreshold,
+  },
+  announcement: {
+    enabled: true,
+    text: "Every piece handmade with care",
+    linkLabel: "PAN India delivery",
+    linkUrl: "/shop",
+  },
+  contact: {
+    email: "info@giftnwrapstudio.com",
+    phone: "+919588281126",
+    instagram: "@giftnwrapstudio",
+  },
+});
+
+const mergeStudioSettings = (current = {}, changes = {}) => {
+  const defaults = defaultStudioSettings();
+  return Object.fromEntries(
+    Object.entries(defaults).map(([group, fallback]) => [
+      group,
+      { ...fallback, ...(current[group] || {}), ...(changes[group] || {}) },
+    ]),
+  );
+};
+
+const publicStudioSettings = (record) => {
+  const settings = mergeStudioSettings(record);
+  let instagramHandle = settings.contact.instagram.startsWith("@")
+    ? settings.contact.instagram
+    : "";
+  if (!instagramHandle && settings.contact.instagram.startsWith("https://")) {
+    try {
+      const [username] = new URL(settings.contact.instagram).pathname.split("/").filter(Boolean);
+      if (username) instagramHandle = `@${username}`;
+    } catch {
+      instagramHandle = "";
+    }
+  }
+  settings.contact.instagramHandle = instagramHandle;
+  settings.contact.instagramUrl = settings.contact.instagram.startsWith("https://")
+    ? settings.contact.instagram
+    : settings.contact.instagram
+      ? `https://www.instagram.com/${settings.contact.instagram.replace(/^@/, "")}`
+      : "";
+  return settings;
+};
+
+export const getStudioSettings = async (selectedMode) => {
+  const mode = selectedMode || (await connectDatabase());
+  const record =
+    mode === "mongodb"
+      ? plain(await StudioSettings.findById("studio"))
+      : memoryStore.get("studioSettings", "studio");
+  return publicStudioSettings(record || {});
+};
+
+export const updateStudioSettings = async (input, updatedBy) => {
+  const mode = assertWritable(await connectDatabase());
+  const current = await getStudioSettings(mode);
+  const settings = mergeStudioSettings(current, input);
+  if (mode === "mongodb") {
+    const record = await StudioSettings.findByIdAndUpdate(
+      "studio",
+      { $set: { ...settings, updatedBy } },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+    );
+    return publicStudioSettings(plain(record));
+  }
+  const existing = memoryStore.get("studioSettings", "studio");
+  const record = existing
+    ? memoryStore.update("studioSettings", "studio", { ...settings, updatedBy })
+    : memoryStore.create("studioSettings", { ...settings, updatedBy }, "studio");
+  return publicStudioSettings(record);
 };
 
 const findProductForOrder = async ({ productId, slug }, selectedMode) => {
@@ -394,6 +592,7 @@ const assertMatchingReplay = (order, requestHash) => {
 
 export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) => {
   const mode = assertWritable(await ensureCatalogSeeded());
+  const studioSettings = await getStudioSettings(mode);
   const idempotencyHash = idempotencyKey ? hashOrderRequest(input) : "";
   const replay = await findIdempotentOrder(buyer.id, idempotencyKey, mode);
   if (replay) {
@@ -432,11 +631,16 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
   }
 
   const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const shippingFee = subtotal >= env.freeShippingThreshold ? 0 : env.flatShippingFee;
+  const shippingFee =
+    subtotal >= studioSettings.shipping.freeThreshold ? 0 : studioSettings.shipping.flatFee;
   let discount = 0;
 
   if (input.couponCode) {
-    if (input.couponCode !== env.welcomeCouponCode || env.welcomeDiscountPercent === 0) {
+    if (
+      !studioSettings.offer.enabled ||
+      input.couponCode !== studioSettings.offer.code ||
+      studioSettings.offer.percent === 0
+    ) {
       throw badRequest("This coupon code is not valid");
     }
     const quantityByProduct = items.reduce((totals, item) => {
@@ -447,16 +651,16 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
       item.category.trim().toLowerCase().includes("corporate"),
     );
     const hasBulkItem = [...quantityByProduct.values()].some(
-      (quantity) => quantity >= env.bulkOrderThreshold,
+      (quantity) => quantity >= studioSettings.shipping.bulkThreshold,
     );
     if (hasCorporateItem || hasBulkItem) {
       throw badRequest(
-        `The welcome offer is not available for corporate gifts or quantities of ${env.bulkOrderThreshold} or more`,
+        `The welcome offer is not available for corporate gifts or quantities of ${studioSettings.shipping.bulkThreshold} or more`,
       );
     }
     discount = Math.min(
-      Math.round((subtotal * env.welcomeDiscountPercent) / 100),
-      env.welcomeDiscountMax,
+      Math.round((subtotal * studioSettings.offer.percent) / 100),
+      studioSettings.offer.maxDiscount,
     );
   }
 
@@ -765,22 +969,274 @@ export const listContacts = (query) => listInbox("contacts", Contact, query);
 export const updateContact = (id, input) =>
   updateInbox("contacts", Contact, id, input, "Contact message");
 
+const maskPhone = (phone) => {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  const local = digits.length > 10 ? digits.slice(-10) : digits;
+  return `+91 ••••••${local.slice(-4)}`;
+};
+
+const adminUserView = (record, relationship = {}) => {
+  const user = plain(record);
+  if (!user) return user;
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    avatar: user.avatar || "",
+    role: user.role,
+    phone: maskPhone(user.phone),
+    phoneVerified: Boolean(user.phoneVerifiedAt),
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    ordersCount: relationship.ordersCount || 0,
+    totalSpent: relationship.totalSpent || 0,
+    customRequestsCount: relationship.customRequestsCount || 0,
+  };
+};
+
+export const listRegisteredUsers = async ({ search, role, phoneVerified, page, limit }) => {
+  const mode = await connectDatabase();
+  if (mode === "mongodb") {
+    const query = {};
+    if (role) query.role = role;
+    if (phoneVerified === true) query.phoneVerifiedAt = { $ne: null };
+    if (phoneVerified === false) {
+      query.$or = [{ phoneVerifiedAt: null }, { phoneVerifiedAt: { $exists: false } }];
+    }
+    if (search) {
+      const pattern = new RegExp(escapeRegExp(search), "i");
+      const searchFields = [{ name: pattern }, { email: pattern }, { phone: pattern }];
+      if (query.$or) query.$and = [{ $or: query.$or }, { $or: searchFields }];
+      else query.$or = searchFields;
+    }
+    const [records, total] = await Promise.all([
+      User.find(query)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      User.countDocuments(query),
+    ]);
+    const userIds = records.map((record) => String(record._id));
+    const [orderMetrics, inquiryMetrics] = userIds.length
+      ? await Promise.all([
+          Order.aggregate([
+            { $match: { buyerId: { $in: userIds }, status: { $ne: "cancelled" } } },
+            {
+              $group: {
+                _id: "$buyerId",
+                ordersCount: { $sum: 1 },
+                totalSpent: { $sum: "$total" },
+              },
+            },
+          ]),
+          CustomInquiry.aggregate([
+            { $match: { userId: { $in: userIds } } },
+            { $group: { _id: "$userId", customRequestsCount: { $sum: 1 } } },
+          ]),
+        ])
+      : [[], []];
+    const relationships = new Map(
+      orderMetrics.map((item) => [String(item._id), { ...item }]),
+    );
+    inquiryMetrics.forEach((item) => {
+      relationships.set(String(item._id), {
+        ...(relationships.get(String(item._id)) || {}),
+        customRequestsCount: item.customRequestsCount,
+      });
+    });
+    return paginate(
+      records.map((record) => adminUserView(record, relationships.get(String(record._id)))),
+      page,
+      limit,
+      total,
+    );
+  }
+
+  const needle = search?.toLowerCase();
+  const records = memoryStore
+    .all("users")
+    .filter((user) => !role || user.role === role)
+    .filter(
+      (user) => phoneVerified === undefined || Boolean(user.phoneVerifiedAt) === phoneVerified,
+    )
+    .filter(
+      (user) =>
+        !needle ||
+        [user.name, user.email, user.phone].filter(Boolean).join(" ").toLowerCase().includes(needle),
+    )
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return paginate(
+    slicePage(records, page, limit).map((user) => {
+      const orders = memoryStore.find(
+        "orders",
+        (order) => order.buyerId === user.id && order.status !== "cancelled",
+      );
+      return adminUserView(user, {
+        ordersCount: orders.length,
+        totalSpent: orders.reduce((total, order) => total + order.total, 0),
+        customRequestsCount: memoryStore.count(
+          "customInquiries",
+          (inquiry) => inquiry.userId === user.id,
+        ),
+      });
+    }),
+    page,
+    limit,
+    records.length,
+  );
+};
+
+export const getRegisteredUserMetrics = async (selectedMode) => {
+  const mode = selectedMode || (await connectDatabase());
+  const now = new Date();
+  const monthStartedAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1_000);
+  if (mode === "mongodb") {
+    const [
+      total,
+      buyers,
+      admins,
+      phoneVerified,
+      signupsLast7Days,
+      signupsLast30Days,
+      newThisMonth,
+      repeatCustomerRows,
+    ] =
+      await Promise.all([
+        User.countDocuments({}),
+        User.countDocuments({ role: "buyer" }),
+        User.countDocuments({ role: "admin" }),
+        User.countDocuments({ phoneVerifiedAt: { $ne: null } }),
+        User.countDocuments({ createdAt: { $gte: sevenDaysAgo } }),
+        User.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
+        User.countDocuments({ createdAt: { $gte: monthStartedAt } }),
+        Order.aggregate([
+          { $match: { status: { $ne: "cancelled" } } },
+          { $group: { _id: "$buyerId", ordersCount: { $sum: 1 } } },
+          { $match: { ordersCount: { $gte: 2 } } },
+          { $count: "total" },
+        ]),
+      ]);
+    return {
+      total,
+      buyers,
+      admins,
+      phoneVerified,
+      signupsLast7Days,
+      signupsLast30Days,
+      newThisMonth,
+      repeatCustomers: repeatCustomerRows[0]?.total || 0,
+    };
+  }
+  const users = memoryStore.all("users");
+  return {
+    total: users.length,
+    buyers: users.filter((user) => user.role === "buyer").length,
+    admins: users.filter((user) => user.role === "admin").length,
+    phoneVerified: users.filter((user) => user.phoneVerifiedAt).length,
+    signupsLast7Days: users.filter((user) => new Date(user.createdAt) >= sevenDaysAgo).length,
+    signupsLast30Days: users.filter((user) => new Date(user.createdAt) >= thirtyDaysAgo).length,
+    newThisMonth: users.filter((user) => new Date(user.createdAt) >= monthStartedAt).length,
+    repeatCustomers: users.filter(
+      (user) =>
+        memoryStore.count(
+          "orders",
+          (order) => order.buyerId === user.id && order.status !== "cancelled",
+        ) >= 2,
+    ).length,
+  };
+};
+
+export const getRegisteredUserDetail = async (id) => {
+  const mode = await connectDatabase();
+  const record =
+    mode === "mongodb"
+      ? mongoose.isValidObjectId(id)
+        ? await User.findById(id)
+        : undefined
+      : memoryStore.get("users", id);
+  if (!record) throw notFound("User");
+
+  if (mode === "mongodb") {
+    const [orderMetrics = { totalOrders: 0, lifetimeValue: 0 }, inquiryCount, recentOrders] =
+      await Promise.all([
+        Order.aggregate([
+          { $match: { buyerId: id, status: { $ne: "cancelled" } } },
+          {
+            $group: {
+              _id: null,
+              totalOrders: { $sum: 1 },
+              lifetimeValue: { $sum: "$total" },
+            },
+          },
+        ]).then((records) => records[0]),
+        CustomInquiry.countDocuments({ userId: id }),
+        Order.find({ buyerId: id }).sort({ createdAt: -1 }).limit(5),
+      ]);
+    return {
+      ...adminUserView(record),
+      metrics: {
+        totalOrders: orderMetrics.totalOrders || 0,
+        lifetimeValue: orderMetrics.lifetimeValue || 0,
+        customInquiries: inquiryCount,
+      },
+      recentOrders: recentOrders.map(publicOrder),
+    };
+  }
+
+  const orders = memoryStore
+    .find("orders", (order) => order.buyerId === id)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const billableOrders = orders.filter((order) => order.status !== "cancelled");
+  return {
+    ...adminUserView(record),
+    metrics: {
+      totalOrders: billableOrders.length,
+      lifetimeValue: billableOrders.reduce((total, order) => total + order.total, 0),
+      customInquiries: memoryStore.count(
+        "customInquiries",
+        (inquiry) => inquiry.userId === id,
+      ),
+    },
+    recentOrders: orders.slice(0, 5).map(publicOrder),
+  };
+};
+
 export const getDashboardStats = async () => {
   const mode = await ensureCatalogSeeded();
   if (mode === "mongodb") {
-    const [products, orders, newInquiries, newMessages] = await Promise.all([
+    const [products, orders, newInquiries, newMessages, userMetrics] = await Promise.all([
       Product.countDocuments({ active: true }),
       Order.countDocuments({}),
       CustomInquiry.countDocuments({ status: "new" }),
       Contact.countDocuments({ status: "new" }),
+      getRegisteredUserMetrics(mode),
     ]);
-    return { products, orders, newInquiries, newMessages };
+    return {
+      products,
+      orders,
+      newInquiries,
+      newMessages,
+      users: userMetrics.total,
+      registeredUsers: userMetrics.buyers,
+      verifiedPhoneUsers: userMetrics.phoneVerified,
+      signupsLast30Days: userMetrics.signupsLast30Days,
+      newUsersThisMonth: userMetrics.newThisMonth,
+    };
   }
+  const userMetrics = await getRegisteredUserMetrics(mode);
   return {
     products: memoryStore.count("products", (product) => product.active),
     orders: memoryStore.count("orders"),
     newInquiries: memoryStore.count("customInquiries", (inquiry) => inquiry.status === "new"),
     newMessages: memoryStore.count("contacts", (contact) => contact.status === "new"),
+    users: userMetrics.total,
+    registeredUsers: userMetrics.buyers,
+    verifiedPhoneUsers: userMetrics.phoneVerified,
+    signupsLast30Days: userMetrics.signupsLast30Days,
+    newUsersThisMonth: userMetrics.newThisMonth,
   };
 };
 

@@ -21,6 +21,8 @@ export function AuthProvider({ children }) {
   const [authIntent, setAuthIntent] = useState('login');
   const [authenticating, setAuthenticating] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [phoneAuthStatus, setPhoneAuthStatus] = useState({ loading: true, enabled: false, error: false });
+  const [phoneChallenge, setPhoneChallenge] = useState(null);
 
   const cacheUser = useCallback((nextUser) => {
     setUser(nextUser);
@@ -52,6 +54,23 @@ export function AuthProvider({ children }) {
     };
   }, [cacheUser, cachedUser]);
 
+  const refreshPhoneAuthStatus = useCallback(async () => {
+    setPhoneAuthStatus((current) => ({ ...current, loading: true, error: false }));
+    try {
+      const result = await api.getPhoneAuthStatus();
+      const status = result.data || result;
+      setPhoneAuthStatus({ loading: false, enabled: Boolean(status.enabled), error: false, ...status });
+      return status;
+    } catch (error) {
+      setPhoneAuthStatus({ loading: false, enabled: false, error: true });
+      throw error;
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshPhoneAuthStatus().catch(() => {});
+  }, [refreshPhoneAuthStatus]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authState = params.get('auth');
@@ -64,12 +83,14 @@ export function AuthProvider({ children }) {
   const openAuth = useCallback((message = '', intent = 'login') => {
     setAuthMessage(message);
     setAuthIntent(intent === 'signup' ? 'signup' : 'login');
+    setPhoneChallenge(null);
     setAuthModalOpen(true);
   }, []);
 
   const closeAuth = useCallback(() => {
     setAuthModalOpen(false);
     setAuthMessage('');
+    setPhoneChallenge(null);
   }, []);
 
   const authenticateGoogle = useCallback(async (credential) => {
@@ -89,6 +110,51 @@ export function AuthProvider({ children }) {
       setAuthenticating(false);
     }
   }, [cacheUser]);
+
+  const startPhoneAuthentication = useCallback(async ({ credential, email, phone, intent }) => {
+    setAuthMessage('');
+    setAuthenticating(true);
+    try {
+      const result = await api.startPhoneAuthentication({ credential, email, phone, intent });
+      const challenge = result.data || result;
+      if (!challenge?.challengeId) throw new Error('The verification challenge could not be started.');
+      setPhoneChallenge(challenge);
+      return challenge;
+    } catch (error) {
+      setAuthMessage(error.message || 'The verification code could not be sent. Please try again.');
+      throw error;
+    } finally {
+      setAuthenticating(false);
+    }
+  }, []);
+
+  const verifyPhoneAuthentication = useCallback(async (code) => {
+    if (!phoneChallenge?.challengeId) throw new Error('Request a new verification code first.');
+    setAuthMessage('');
+    setAuthenticating(true);
+    try {
+      const result = await api.verifyPhoneAuthentication({
+        challengeId: phoneChallenge.challengeId,
+        code,
+      });
+      const nextUser = result.user || result.data?.user || null;
+      if (!nextUser) throw new Error('No user was returned');
+      cacheUser(nextUser);
+      setPhoneChallenge(null);
+      setAuthModalOpen(false);
+      return nextUser;
+    } catch (error) {
+      setAuthMessage(error.message || 'That verification code could not be confirmed.');
+      throw error;
+    } finally {
+      setAuthenticating(false);
+    }
+  }, [cacheUser, phoneChallenge]);
+
+  const resetPhoneChallenge = useCallback(() => {
+    setPhoneChallenge(null);
+    setAuthMessage('');
+  }, []);
 
   const authenticateDemo = useCallback(async (role = 'buyer') => {
     setAuthMessage('');
@@ -128,14 +194,20 @@ export function AuthProvider({ children }) {
       authIntent,
       authenticating,
       signingOut,
+      phoneAuthStatus,
+      phoneChallenge,
+      refreshPhoneAuthStatus,
       openAuth,
       closeAuth,
       authenticateGoogle,
+      startPhoneAuthentication,
+      verifyPhoneAuthentication,
+      resetPhoneChallenge,
       authenticateDemo,
       signOut,
       setUser: cacheUser,
     }),
-    [user, loading, authModalOpen, authMessage, authIntent, authenticating, signingOut, openAuth, closeAuth, authenticateGoogle, authenticateDemo, signOut, cacheUser],
+    [user, loading, authModalOpen, authMessage, authIntent, authenticating, signingOut, phoneAuthStatus, phoneChallenge, refreshPhoneAuthStatus, openAuth, closeAuth, authenticateGoogle, startPhoneAuthentication, verifyPhoneAuthentication, resetPhoneChallenge, authenticateDemo, signOut, cacheUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

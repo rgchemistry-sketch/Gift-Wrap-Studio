@@ -39,6 +39,8 @@ const resolveUser = async (request, { required }) => {
     name: storedUser?.name || payload.name || email.split("@")[0],
     avatar: storedUser?.avatar || payload.avatar || "",
     role,
+    phone: storedUser?.phone || "",
+    phoneVerifiedAt: storedUser?.phoneVerifiedAt || null,
   };
 };
 

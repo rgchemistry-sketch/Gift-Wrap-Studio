@@ -7,6 +7,8 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, index: true, lowercase: true, trim: true },
     name: { type: String, required: true, trim: true, maxlength: 100 },
     avatar: { type: String, default: "", trim: true },
+    phone: { type: String, sparse: true, unique: true, index: true, trim: true },
+    phoneVerifiedAt: { type: Date },
     role: { type: String, enum: ["buyer", "admin"], default: "buyer", index: true },
     lastLoginAt: { type: Date, default: Date.now },
   },

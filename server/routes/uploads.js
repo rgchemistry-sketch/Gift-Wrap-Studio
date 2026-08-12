@@ -5,7 +5,7 @@ import { rateLimit } from "express-rate-limit";
 import { env } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { configurationError } from "../lib/errors.js";
-import { authenticate } from "../middleware/auth.js";
+import { authenticate, requireAdmin } from "../middleware/auth.js";
 import { rateLimitHandler } from "../middleware/rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import { reserveUploadGrant } from "../services/store.js";
@@ -23,11 +23,17 @@ const uploadSignatureLimiter = rateLimit({
   handler: rateLimitHandler("Too many upload requests. Please try again later"),
 });
 
+const protectProductUploads = (request, response, next) =>
+  request.validated.body.purpose === "products"
+    ? requireAdmin(request, response, next)
+    : next();
+
 uploadsRouter.post(
   "/signature",
   authenticate,
   uploadSignatureLimiter,
   validate({ body: uploadSignatureSchema }),
+  protectProductUploads,
   asyncHandler(async (request, response) => {
     const missing = [
       ["CLOUDINARY_CLOUD_NAME", env.cloudinaryCloudName],

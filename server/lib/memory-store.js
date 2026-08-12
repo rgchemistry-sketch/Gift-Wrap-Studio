@@ -8,6 +8,7 @@ const collections = {
   contacts: new Map(),
   uploadGrants: new Map(),
   uploadQuotas: new Map(),
+  studioSettings: new Map(),
 };
 
 const clone = (value) => (value == null ? value : structuredClone(value));

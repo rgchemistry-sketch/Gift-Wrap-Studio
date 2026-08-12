@@ -23,6 +23,13 @@ const navItems = [
   ['Our story', '/our-story'],
 ];
 
+function formatPhoneLabel(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  const local = digits.length > 10 ? digits.slice(-10) : digits;
+  if (local.length !== 10) return value;
+  return `+91 ${local.slice(0, 5)} ${local.slice(5)}`;
+}
+
 function Brand() {
   return (
     <Link to="/" className="brand" aria-label="Gift N Wrap Studio home">
@@ -41,8 +48,16 @@ export default function Layout() {
   const [query, setQuery] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
-  const { cartCount, notify } = useShop();
+  const { cartCount, notify, studioSettings } = useShop();
   const { user, openAuth, signOut, signingOut } = useAuth();
+  const announcement = studioSettings?.announcement || {};
+  const contact = studioSettings?.contact || {};
+  const announcementEnabled = announcement.enabled ?? true;
+  const announcementText = announcement.text || studioSettings?.announcementText || 'Every piece handmade with care';
+  const announcementLinkLabel = announcement.linkLabel || studioSettings?.announcementLinkLabel || 'PAN India delivery';
+  const announcementLinkUrl = announcement.linkUrl || studioSettings?.announcementLinkUrl || '/shop';
+  const contactPhone = contact.phone || studioSettings?.contactPhone || '+919588281126';
+  const contactPhoneLabel = contact.phoneLabel || studioSettings?.contactPhoneLabel || formatPhoneLabel(contactPhone);
 
   const handleSignOut = async () => {
     try {
@@ -68,12 +83,12 @@ export default function Layout() {
 
   return (
     <div className="site-shell">
-      <div className="announcement-bar">
+      {announcementEnabled && <div className="announcement-bar">
         <Container fluid="xl" className="announcement-bar__inner">
-          <span><Icon name="spark" size={14} /> Every piece handmade with care</span>
-          <Link to="/shop">PAN India delivery <Icon name="arrow" size={14} /></Link>
+          <span><Icon name="spark" size={14} /> {announcementText}</span>
+          {announcementLinkLabel && (announcementLinkUrl.startsWith('/') ? <Link to={announcementLinkUrl}>{announcementLinkLabel} <Icon name="arrow" size={14} /></Link> : <a href={announcementLinkUrl} target="_blank" rel="noreferrer">{announcementLinkLabel} <Icon name="arrow" size={14} /></a>)}
         </Container>
-      </div>
+      </div>}
 
       <header className="site-header">
         <Container fluid="xl">
@@ -155,7 +170,7 @@ export default function Layout() {
           </nav>
           <div className="mobile-menu__footer">
             {user ? <><button type="button" className="plain-link" onClick={() => navigate('/account')}><Icon name="user" /> My account</button>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => navigate('/admin')}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="close" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></> : <><button type="button" className="plain-link" onClick={() => openAuth('', 'login')}><Icon name="user" /> Log in</button><button type="button" className="plain-link" onClick={() => openAuth('', 'signup')}><Icon name="spark" /> Create account</button></>}
-            <a href="tel:+919588281126"><Icon name="phone" /> 95882 81126</a>
+            <a href={`tel:${contactPhone.replace(/[^+\d]/g, '')}`}><Icon name="phone" /> {contactPhoneLabel}</a>
           </div>
         </Offcanvas.Body>
       </Offcanvas>
@@ -164,7 +179,7 @@ export default function Layout() {
         <Outlet />
       </main>
 
-      <Footer />
+      <Footer settings={studioSettings} />
       <AuthModal />
       <OfferPopup />
       <ToastStack />
@@ -172,7 +187,13 @@ export default function Layout() {
   );
 }
 
-function Footer() {
+function Footer({ settings }) {
+  const contact = settings?.contact || {};
+  const phone = contact.phone || settings?.contactPhone || '+919588281126';
+  const phoneLabel = contact.phoneLabel || settings?.contactPhoneLabel || formatPhoneLabel(phone);
+  const email = contact.email || settings?.contactEmail || 'info@giftnwrapstudio.com';
+  const instagramUrl = contact.instagramUrl || settings?.instagramUrl || 'https://www.instagram.com/giftnwrapstudio';
+  const instagramHandle = contact.instagramHandle || settings?.instagramHandle || '@giftnwrapstudio';
   return (
     <footer className="site-footer">
       <div className="footer-marquee" aria-hidden="true">
@@ -183,7 +204,7 @@ function Footer() {
           <div className="footer-intro">
             <Brand />
             <p>We preserve names, flowers, photographs and stories in thoughtful resin art—one handmade piece at a time.</p>
-            <a href="https://www.instagram.com/giftnwrapstudio" target="_blank" rel="noreferrer" className="social-link"><Icon name="instagram" /> @giftnwrapstudio</a>
+            <a href={instagramUrl} target="_blank" rel="noreferrer" className="social-link"><Icon name="instagram" /> {instagramHandle}</a>
           </div>
           <div>
             <p className="footer-heading">Explore</p>
@@ -201,8 +222,8 @@ function Footer() {
           </div>
           <div className="footer-contact">
             <p className="footer-heading">Visit & contact</p>
-            <a href="tel:+919588281126"><Icon name="phone" /> +91 95882 81126</a>
-            <a href="mailto:info@giftnwrapstudio.com"><Icon name="mail" /> info@giftnwrapstudio.com</a>
+            <a href={`tel:${phone.replace(/[^+\d]/g, '')}`}><Icon name="phone" /> {phoneLabel}</a>
+            <a href={`mailto:${email}`}><Icon name="mail" /> {email}</a>
             <a href="https://maps.app.goo.gl/Tfcr1XpcvsaZqgJ28?g_st=iw" target="_blank" rel="noreferrer"><Icon name="map" /> Open studio location</a>
           </div>
         </div>

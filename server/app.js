@@ -5,7 +5,7 @@ import cors from "cors";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { connectDatabase, databaseStatus } from "./config/database.js";
-import { env } from "./config/env.js";
+import { env, phoneAuthStatus } from "./config/env.js";
 import { asyncHandler } from "./lib/async-handler.js";
 import { errorHandler, notFoundHandler, requestId } from "./middleware/errors.js";
 import { isOriginAllowed, requireTrustedOrigin } from "./middleware/origin.js";
@@ -15,8 +15,10 @@ import { authRouter } from "./routes/auth.js";
 import { contactRouter } from "./routes/contact.js";
 import { inquiriesRouter } from "./routes/inquiries.js";
 import { offersRouter } from "./routes/offers.js";
+import { phoneAuthRouter } from "./routes/phone-auth.js";
 import { ordersRouter } from "./routes/orders.js";
 import { productsRouter } from "./routes/products.js";
+import { settingsRouter } from "./routes/settings.js";
 import { uploadsRouter } from "./routes/uploads.js";
 
 const app = express();
@@ -32,7 +34,7 @@ app.use(
     callback(null, {
       origin: allowed ? origin || true : false,
       credentials: true,
-      methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "Idempotency-Key"],
       maxAge: 86_400,
     });
@@ -83,6 +85,7 @@ app.get(
         status: degraded ? "degraded" : "ok",
         persistence,
         writable: persistence.mode === "mongodb" || env.allowMemoryWrites,
+        phoneAuth: phoneAuthStatus(),
         timestamp: new Date().toISOString(),
       },
     });
@@ -90,7 +93,9 @@ app.get(
 );
 
 app.use("/api/auth", authRouter);
+app.use("/api/auth/phone", phoneAuthRouter);
 app.use("/api/products", productsRouter);
+app.use("/api/settings", settingsRouter);
 app.use("/api/offers", offersRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/custom-inquiries", inquiriesRouter);

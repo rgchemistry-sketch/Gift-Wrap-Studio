@@ -229,7 +229,9 @@ h1 em, h2 em { color: var(--rose); font-style: normal; }
 .modal-content { border: 0; border-radius: var(--radius-md); background: var(--paper); box-shadow: var(--shadow-lg); }
 .modal-close { position: absolute; top: .8rem; right: .8rem; z-index: 2; }
 .auth-dialog { max-width: 470px; }
+.auth-dialog--form { max-width: 560px; }
 .auth-dialog .modal-body { padding: 3rem; text-align: center; }
+.auth-dialog--form .modal-body { padding: 2.4rem 3rem 2.6rem; }
 .auth-modal__mark { display: inline-flex; width: 4rem; height: 4rem; align-items: center; justify-content: center; margin-bottom: 1.5rem; color: var(--gold-light); border-radius: 47% 53% 43% 57%; background: var(--burgundy); transform: rotate(-4deg); }
 .auth-dialog h2 { margin-bottom: 1rem; font-size: 2rem; }
 .auth-dialog .muted-copy { margin-bottom: 1.5rem; }
@@ -237,8 +239,30 @@ h1 em, h2 em { color: var(--rose); font-style: normal; }
 .google-signin-target { display: flex; width: 100%; align-items: center; justify-content: center; }
 .google-signin-slot iframe { max-width: 100% !important; }
 .google-signin-slot.is-busy { pointer-events: none; opacity: .65; }
+.google-signin-slot.is-disabled { pointer-events: none; opacity: .42; filter: grayscale(.75); }
 .google-button-placeholder { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; color: var(--muted); border: 1px solid var(--line); border-radius: .25rem; }
 .privacy-note { margin: 1rem 0 0; color: var(--muted); font-size: .76rem; line-height: 1.45; }
+.privacy-note .icon { margin-right: .25rem; color: var(--forest); vertical-align: -.15rem; }
+.auth-mode-tabs { display: grid; max-width: 310px; grid-template-columns: 1fr 1fr; gap: .25rem; margin: 0 auto 1.65rem; padding: .25rem; border: 1px solid var(--line); border-radius: 999px; background: var(--ivory-deep); }
+.auth-mode-tabs button { min-height: 2.25rem; padding: .4rem .75rem; color: var(--muted); border: 0; border-radius: 999px; background: transparent; font-size: .74rem; font-weight: 800; }
+.auth-mode-tabs button.is-active { color: var(--ivory); background: var(--forest-dark); box-shadow: 0 4px 12px rgba(21,55,46,.18); }
+.auth-details-form { display: grid; grid-template-columns: 1.15fr .85fr; gap: .8rem; margin-top: .4rem; text-align: left; }
+.auth-details-form .form-label,.auth-otp .form-label { margin-bottom: .35rem; font-size: .68rem; font-weight: 800; letter-spacing: .04em; }
+.auth-details-form .form-label small { color: var(--muted); font-size: .58rem; font-weight: 600; }
+.auth-details-form .form-control { min-height: 3rem; border-color: var(--line-strong); background: rgba(255,250,243,.7); }
+.auth-phone-field { display: flex; align-items: stretch; }
+.auth-phone-field > span { display: flex; align-items: center; padding: 0 .65rem; color: var(--forest); border: 1px solid var(--line-strong); border-right: 0; background: var(--ivory-deep); font-size: .72rem; font-weight: 800; }
+.auth-phone-field .form-control { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.auth-details-form .form-text { display: block; margin-top: .35rem; font-size: .62rem; line-height: 1.35; }
+.auth-service-note { display: flex; align-items: flex-start; gap: .45rem; margin-bottom: .9rem; padding: .7rem .8rem; font-size: .72rem; }
+.auth-service-note .icon { flex: 0 0 auto; }
+.auth-form-hint { margin: -.45rem 0 .75rem; color: var(--muted); font-size: .65rem; }
+.auth-otp { max-width: 380px; margin: 0 auto; }
+.auth-otp .form-label { display: block; text-align: left; }
+.auth-otp__input { min-height: 4rem; margin-bottom: 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.65rem; font-weight: 800; letter-spacing: .55em; text-align: center; }
+.auth-otp .btn { min-height: 3rem; }
+.auth-otp__actions { display: flex; justify-content: space-between; gap: 1rem; margin-top: 1rem; }
+.auth-otp__actions button { font-size: .7rem; }
 .demo-auth { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .demo-auth > span { display: block; margin-bottom: .6rem; color: var(--muted); font-size: .65rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 .demo-auth > div { display: flex; justify-content: center; gap: .55rem; }

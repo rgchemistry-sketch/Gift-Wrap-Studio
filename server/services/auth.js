@@ -78,4 +78,6 @@ export const publicUser = (user) => ({
   name: user.name,
   avatar: user.avatar || "",
   role: user.role,
+  phoneMasked: user.phone ? `+91 •••••• ${user.phone.slice(-4)}` : "",
+  phoneVerified: Boolean(user.phoneVerifiedAt),
 });

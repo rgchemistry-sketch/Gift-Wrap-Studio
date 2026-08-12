@@ -11,8 +11,12 @@ import { demoProducts, formatCurrency } from '../data/catalog';
 import { useShop } from '../context/ShopContext';
 
 export default function CartPage() {
-  const { cart, subtotal, updateQuantity, removeFromCart } = useShop();
-  const claimedOffer = window.sessionStorage.getItem('gnw-first-offer-claimed') === 'true';
+  const { cart, subtotal, updateQuantity, removeFromCart, claimedOfferCode, welcomeOffer, studioSettings } = useShop();
+  const claimedOffer = claimedOfferCode || (window.sessionStorage.getItem('gnw-first-offer-claimed') === 'true' ? welcomeOffer?.code || 'FIRST10' : '');
+  const contactPhone = studioSettings?.contact?.phone || '+919588281126';
+  const contactDigits = String(contactPhone).replace(/\D/g, '');
+  const contactLocal = contactDigits.length > 10 ? contactDigits.slice(-10) : contactDigits;
+  const contactLabel = contactLocal.length === 10 ? `${contactLocal.slice(0, 5)} ${contactLocal.slice(5)}` : contactPhone;
 
   if (!cart.length) {
     return (
@@ -66,11 +70,11 @@ export default function CartPage() {
             <aside className="order-summary">
               <p className="eyebrow">Order estimate</p>
               <h2>Your summary</h2>
-              {claimedOffer && <Alert variant="success" className="offer-claimed"><Icon name="spark" /> FIRST10 saved. Eligibility will be checked before final confirmation.</Alert>}
+              {claimedOffer && <Alert variant="success" className="offer-claimed"><Icon name="spark" /> {claimedOffer} saved. Eligibility will be checked before final confirmation.</Alert>}
               <dl><div><dt>Pieces ({cart.reduce((count, line) => count + line.quantity, 0)})</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed by studio</dd></div><div className="summary-total"><dt>Current item total</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
               <Button as={Link} to="/checkout" className="button-burgundy w-100">Continue to order request <Icon name="arrow" /></Button>
               <p className="summary-note"><Icon name="lock" size={14} /> No payment is taken on this page. The studio confirms customization, delivery and final amount first.</p>
-              <div className="summary-contact"><p>Need help with your design?</p><a href="tel:+919588281126">Call the studio · 95882 81126</a></div>
+              <div className="summary-contact"><p>Need help with your design?</p><a href={`tel:${contactPhone.replace(/[^+\d]/g, '')}`}>Call the studio · {contactLabel}</a></div>
             </aside>
           </Col>
         </Row>
