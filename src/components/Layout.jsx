@@ -7,6 +7,7 @@ import Form from 'react-bootstrap/Form';
 import Nav from 'react-bootstrap/Nav';
 import Navbar from 'react-bootstrap/Navbar';
 import Offcanvas from 'react-bootstrap/Offcanvas';
+import Dropdown from 'react-bootstrap/Dropdown';
 import Icon from './Icon';
 import AuthModal from './AuthModal';
 import OfferPopup from './OfferPopup';
@@ -40,8 +41,18 @@ export default function Layout() {
   const [query, setQuery] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
-  const { cartCount } = useShop();
-  const { user, openAuth } = useAuth();
+  const { cartCount, notify } = useShop();
+  const { user, openAuth, signOut, signingOut } = useAuth();
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      navigate('/');
+    } catch {
+      navigate('/account');
+      notify('Sign out could not be confirmed. Please try again.', 'error');
+    }
+  };
 
   useEffect(() => {
     setMenuOpen(false);
@@ -80,14 +91,26 @@ export default function Layout() {
               <button className="icon-button" type="button" onClick={() => setSearchOpen((value) => !value)} aria-label="Search products" aria-expanded={searchOpen}>
                 <Icon name="search" />
               </button>
-              <button
-                className="icon-button d-none d-sm-inline-flex"
-                type="button"
-                onClick={() => (user ? navigate('/account') : openAuth())}
-                aria-label={user ? 'Open account' : 'Sign in'}
-              >
-                <Icon name="user" />
-              </button>
+              {user ? (
+                <Dropdown align="end" className="account-menu d-none d-sm-block">
+                  <Dropdown.Toggle className="account-menu__toggle" aria-label={`Account menu for ${user.name || user.email}`}>
+                    {user.avatar ? <img src={user.avatar} alt="" referrerPolicy="no-referrer" /> : <Icon name="user" />}
+                    <span>{user.name?.split(' ')[0] || 'Account'}</span>
+                  </Dropdown.Toggle>
+                  <Dropdown.Menu>
+                    <div className="account-menu__identity"><strong>{user.name || 'Gift N Wrap account'}</strong><small>{user.email}</small></div>
+                    <Dropdown.Item onClick={() => navigate('/account')}>My account</Dropdown.Item>
+                    {user.role === 'admin' && <Dropdown.Item onClick={() => navigate('/admin')}>Admin dashboard</Dropdown.Item>}
+                    <Dropdown.Divider />
+                    <Dropdown.Item onClick={handleSignOut} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out'}</Dropdown.Item>
+                  </Dropdown.Menu>
+                </Dropdown>
+              ) : (
+                <div className="auth-entry d-none d-sm-flex">
+                  <button type="button" onClick={() => openAuth('', 'login')}>Log in</button>
+                  <button type="button" className="auth-entry__signup" onClick={() => openAuth('', 'signup')}>Sign up</button>
+                </div>
+              )}
               <Link to="/cart" className="icon-button cart-tool" aria-label={`Shopping bag with ${cartCount} items`}>
                 <Icon name="bag" />
                 {cartCount > 0 && <Badge pill>{cartCount > 9 ? '9+' : cartCount}</Badge>}
@@ -131,9 +154,7 @@ export default function Layout() {
             </NavLink>
           </nav>
           <div className="mobile-menu__footer">
-            <button type="button" className="plain-link" onClick={() => (user ? navigate('/account') : openAuth())}>
-              <Icon name="user" /> {user ? 'My account' : 'Sign in with Google'}
-            </button>
+            {user ? <><button type="button" className="plain-link" onClick={() => navigate('/account')}><Icon name="user" /> My account</button>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => navigate('/admin')}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="close" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></> : <><button type="button" className="plain-link" onClick={() => openAuth('', 'login')}><Icon name="user" /> Log in</button><button type="button" className="plain-link" onClick={() => openAuth('', 'signup')}><Icon name="spark" /> Create account</button></>}
             <a href="tel:+919588281126"><Icon name="phone" /> 95882 81126</a>
           </div>
         </Offcanvas.Body>

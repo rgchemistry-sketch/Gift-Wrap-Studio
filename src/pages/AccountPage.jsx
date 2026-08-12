@@ -64,7 +64,7 @@ export default function AccountPage() {
     return (
       <Container className="account-signin page-section">
         <div className="account-signin__visual"><span>G<span>·</span>W</span><i aria-hidden="true">✦</i></div>
-        <div><p className="eyebrow">Your studio account</p><h1>Every thoughtful detail, remembered.</h1><p>Sign in to keep customization details together and follow your handmade order from studio review to delivery.</p><ul className="check-list"><li><Icon name="check" /> Secure Google sign-in</li><li><Icon name="check" /> Order and request updates</li><li><Icon name="check" /> Your bag and saved pieces stay on this device</li></ul><Button className="button-burgundy" onClick={() => openAuth()}>Continue with Google <Icon name="arrow" /></Button><p className="privacy-note">Your shopping bag is already saved on this device.</p></div>
+        <div><p className="eyebrow">Your studio account</p><h1>Every thoughtful detail, remembered.</h1><p>Log in or create an account with Google to keep customization details together and follow your handmade order from studio review to delivery.</p><ul className="check-list"><li><Icon name="check" /> Secure Google account</li><li><Icon name="check" /> Order and request updates</li><li><Icon name="check" /> Your bag and saved pieces stay on this device</li></ul><div className="account-signin__actions"><Button className="button-burgundy" onClick={() => openAuth('', 'signup')}>Create account <Icon name="arrow" /></Button><Button variant="outline-dark" onClick={() => openAuth('', 'login')}>Log in</Button></div><p className="privacy-note">One verified Google account works for both signup and future login.</p></div>
       </Container>
     );
   }
@@ -73,8 +73,12 @@ export default function AccountPage() {
   const latestOrder = orders[0];
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate('/');
+    try {
+      await signOut();
+      navigate('/');
+    } catch (requestError) {
+      setError(requestError.message);
+    }
   };
 
   return (

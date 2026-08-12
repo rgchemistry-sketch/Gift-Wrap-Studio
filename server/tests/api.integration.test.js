@@ -160,6 +160,19 @@ test("demo buyer auth, server-priced first order, and one-time offer work togeth
   assert.equal(repeated.body.error.code, "CONFLICT");
 });
 
+test("logout clears the session and protected account access", async () => {
+  const buyer = request.agent(app);
+  await buyer.post("/api/auth/demo").send({ role: "buyer" }).expect(200);
+  await buyer.get("/api/auth/me").expect(200);
+
+  const logout = await buyer.post("/api/auth/logout").expect(200);
+  assert.equal(logout.body.data.success, true);
+  assert.match(logout.headers["set-cookie"][0], /Expires=Thu, 01 Jan 1970/i);
+
+  const afterLogout = await buyer.get("/api/auth/me").expect(401);
+  assert.equal(afterLogout.body.error.code, "UNAUTHORIZED");
+});
+
 test("only the configured admin identity can access admin APIs", async () => {
   const buyer = request.agent(app);
   await buyer.post("/api/auth/demo").send({ role: "buyer" }).expect(200);

@@ -5,7 +5,7 @@ import Icon from './Icon';
 import { useAuth } from '../context/AuthContext';
 
 export default function AuthModal() {
-  const { authModalOpen, authMessage, closeAuth, authenticateGoogle, authenticateDemo } = useAuth();
+  const { authModalOpen, authMessage, authIntent, authenticating, closeAuth, authenticateGoogle, authenticateDemo } = useAuth();
   const buttonRef = useRef(null);
   const [googleReady, setGoogleReady] = useState(Boolean(window.google?.accounts?.id));
   const [localError, setLocalError] = useState('');
@@ -73,14 +73,17 @@ export default function AuthModal() {
           <Icon name="close" />
         </button>
         <div className="auth-modal__mark" aria-hidden="true"><Icon name="spark" size={26} /></div>
-        <p className="eyebrow">Your studio account</p>
-        <h2>Keep every thoughtful detail together.</h2>
+        <p className="eyebrow">{authIntent === 'signup' ? 'Create your studio account' : 'Welcome back'}</p>
+        <h2>{authIntent === 'signup' ? 'Begin your Gift N Wrap story.' : 'Keep every thoughtful detail together.'}</h2>
         <p className="muted-copy">
-          Sign in to save pieces, revisit customization notes, and follow each handmade order from concept to delivery.
+          {authIntent === 'signup'
+            ? 'Continue with Google to create your secure account, save pieces, and follow handmade orders.'
+            : 'Sign in with Google to revisit customization notes and follow each handmade order from concept to delivery.'}
         </p>
         {(authMessage || localError) && <Alert variant="danger" className="soft-alert">{authMessage || localError}</Alert>}
-        <div className={`google-signin-slot ${googleReady ? 'is-ready' : ''}`} ref={buttonRef} aria-label="Continue with Google">
+        <div className={`google-signin-slot ${googleReady ? 'is-ready' : ''} ${authenticating ? 'is-busy' : ''}`} aria-label={authIntent === 'signup' ? 'Sign up with Google' : 'Log in with Google'} aria-busy={authenticating}>
           {!googleReady && !localError && <span className="google-button-placeholder">Preparing secure Google sign-in…</span>}
+          <div className="google-signin-target" ref={buttonRef} />
         </div>
         {import.meta.env.VITE_ENABLE_DEMO_AUTH === 'true' && (
           <div className="demo-auth">
@@ -92,7 +95,7 @@ export default function AuthModal() {
           </div>
         )}
         <p className="privacy-note">
-          By continuing, you agree to our terms and acknowledge our privacy policy. We never post on your behalf.
+          {authenticating ? 'Verifying your Google account securely…' : 'New here? Google creates your account automatically. By continuing, you agree to our terms and acknowledge our privacy policy.'}
         </p>
       </Modal.Body>
     </Modal>

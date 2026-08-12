@@ -177,6 +177,17 @@ h1 em, h2 em { color: var(--rose); font-style: normal; }
 .desktop-nav .nav-link:hover, .desktop-nav .nav-link.active { color: var(--burgundy); }
 .desktop-nav .nav-link:hover::after, .desktop-nav .nav-link.active::after { right: 0.2rem; left: 0.2rem; }
 .navbar-tools { display: flex; align-items: center; gap: 0.15rem; }
+.auth-entry { align-items: center; gap: .25rem; margin: 0 .3rem; }
+.auth-entry button { min-height: 2.4rem; padding: .45rem .7rem; color: var(--burgundy); border: 0; background: transparent; font-size: .76rem; font-weight: 800; }
+.auth-entry .auth-entry__signup { padding-inline: .9rem; color: var(--ivory); border-radius: 999px; background: var(--burgundy); }
+.account-menu__toggle { display: flex; min-height: 2.55rem; align-items: center; gap: .45rem; padding: .3rem .65rem .3rem .35rem; color: var(--ink) !important; border: 1px solid var(--line) !important; border-radius: 999px; background: var(--paper) !important; box-shadow: none !important; font-size: .74rem; font-weight: 800; }
+.account-menu__toggle::after { margin-left: .1rem; }
+.account-menu__toggle img { width: 1.75rem; height: 1.75rem; border-radius: 50%; object-fit: cover; }
+.account-menu .dropdown-menu { min-width: 230px; padding: .55rem; border: 1px solid var(--line); background: var(--paper); box-shadow: var(--shadow-md); }
+.account-menu__identity { display: flex; padding: .55rem .65rem .75rem; flex-direction: column; border-bottom: 1px solid var(--line); }
+.account-menu__identity strong { font-size: .82rem; }
+.account-menu__identity small { overflow: hidden; color: var(--muted); font-size: .68rem; text-overflow: ellipsis; }
+.account-menu .dropdown-item { padding: .55rem .65rem; font-size: .76rem; font-weight: 700; }
 .cart-tool { position: relative; }
 .cart-tool .badge { position: absolute; top: -0.1rem; right: -0.2rem; min-width: 1.15rem; padding: 0.26rem; color: var(--white); background: var(--burgundy) !important; font-size: 0.59rem; }
 .nav-menu-button { margin-right: 0.25rem; }
@@ -223,7 +234,9 @@ h1 em, h2 em { color: var(--rose); font-style: normal; }
 .auth-dialog h2 { margin-bottom: 1rem; font-size: 2rem; }
 .auth-dialog .muted-copy { margin-bottom: 1.5rem; }
 .google-signin-slot { display: flex; min-height: 44px; align-items: center; justify-content: center; width: 100%; margin: 1rem 0; }
-.google-signin-slot > div, .google-signin-slot iframe { max-width: 100% !important; }
+.google-signin-target { display: flex; width: 100%; align-items: center; justify-content: center; }
+.google-signin-slot iframe { max-width: 100% !important; }
+.google-signin-slot.is-busy { pointer-events: none; opacity: .65; }
 .google-button-placeholder { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; color: var(--muted); border: 1px solid var(--line); border-radius: .25rem; }
 .privacy-note { margin: 1rem 0 0; color: var(--muted); font-size: .76rem; line-height: 1.45; }
 .demo-auth { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--line); }

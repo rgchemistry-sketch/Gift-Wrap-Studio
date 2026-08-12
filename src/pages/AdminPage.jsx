@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Alert from 'react-bootstrap/Alert';
 import Badge from 'react-bootstrap/Badge';
+import Button from 'react-bootstrap/Button';
 import Container from 'react-bootstrap/Container';
 import Form from 'react-bootstrap/Form';
 import Spinner from 'react-bootstrap/Spinner';
 import Table from 'react-bootstrap/Table';
+import { Link, useNavigate } from 'react-router-dom';
 import Icon from '../components/Icon';
 import SmartImage from '../components/SmartImage';
 import { api } from '../api/client';
@@ -42,10 +44,12 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(false);
-  const { user } = useAuth();
+  const { user, signOut, setUser, signingOut } = useAuth();
   const { notify } = useShop();
+  const navigate = useNavigate();
+  const demoEnabled = import.meta.env.VITE_ENABLE_DEMO_AUTH === 'true';
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
       const [dashboardResult, productsResult, ordersResult, inquiriesResult, contactsResult] = await Promise.all([
@@ -85,11 +89,19 @@ export default function AdminPage() {
       setPreview(false);
     } catch (requestError) {
       setError(requestError.message);
-      setSummary(demoSummary);
-      setPreview(true);
+      if (requestError.status === 401 || requestError.status === 403) {
+        setUser(null);
+        navigate('/account', { replace: true, state: { deniedFrom: '/admin' } });
+      } else if (demoEnabled) {
+        setSummary(demoSummary);
+        setPreview(true);
+      } else {
+        setSummary(null);
+        setPreview(false);
+      }
     } finally { setLoading(false); }
-  };
-  useEffect(()=>{load();},[]);
+  }, [demoEnabled, navigate, setUser]);
+  useEffect(()=>{load();},[load]);
 
   const updateStatus = async (orderId,status) => {
     if(preview){notify('Status changes are disabled while viewing preview data.','neutral');return;}
@@ -108,12 +120,12 @@ export default function AdminPage() {
 
   return <section className="admin-page">
     <Container fluid="xl">
-      <header className="admin-topbar"><div><p className="eyebrow">Gift N Wrap Studio</p><h1>Studio desk</h1></div><div><span className="admin-live-dot"/>{preview?'Preview data':'Live workspace'}<span className="admin-avatar">{(user.name||'A').charAt(0)}</span></div></header>
+      <header className="admin-topbar"><div><p className="eyebrow">Gift N Wrap Studio</p><h1>Studio desk</h1></div><div className="admin-topbar__actions"><span className="admin-live-dot"/>{preview?'Preview data':'Live workspace'}<Button as={Link} to="/" variant="outline-dark" size="sm">Storefront</Button><Button as={Link} to="/account" variant="outline-dark" size="sm">My account</Button><Button variant="dark" size="sm" disabled={signingOut} onClick={async()=>{try{await signOut();navigate('/');}catch(requestError){notify(requestError.message,'error');}}}>{signingOut?'Signing out…':'Sign out'}</Button><span className="admin-avatar">{(user.name||'A').charAt(0)}</span></div></header>
       {preview&&<Alert variant="warning" className="soft-alert admin-preview-alert"><strong>Studio preview:</strong> {error} Changes are disabled until the admin service reconnects. <button type="button" className="plain-link" onClick={load}>Retry</button></Alert>}
       <div className="admin-layout">
         <aside className="admin-sidebar"><nav aria-label="Admin sections">{adminNav.map(([key,icon,label])=><button type="button" key={key} className={section===key?'is-active':''} onClick={()=>setSection(key)}><Icon name={icon}/><span>{label}</span>{key==='orders'&&Number(summary?.metrics?.ordersPending||summary?.counts?.pendingOrders)>0&&<Badge pill>{summary?.metrics?.ordersPending||summary?.counts?.pendingOrders}</Badge>}</button>)}</nav><div className="admin-sidebar__note"><Icon name="shield"/><p><strong>Admin protected</strong><small>Role checks are also enforced by the server.</small></p></div></aside>
         <main className="admin-content">
-          {loading?<div className="account-loading"><Spinner/><span>Opening the studio desk…</span></div>:<>
+          {loading?<div className="account-loading"><Spinner/><span>Opening the studio desk…</span></div>:!summary?<Alert variant="danger" className="soft-alert"><strong>The live admin workspace could not load.</strong> {error} <button type="button" className="plain-link" onClick={load}>Retry</button></Alert>:<>
             {section==='dashboard'&&<Dashboard summary={summary} setSection={setSection}/>}
             {section==='orders'&&<Orders summary={summary} preview={preview} updateStatus={updateStatus}/>}
             {section==='products'&&<Products summary={summary} preview={preview}/>}

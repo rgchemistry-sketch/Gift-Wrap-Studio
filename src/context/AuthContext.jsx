@@ -13,10 +13,14 @@ function readCachedUser() {
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(readCachedUser);
+  const [user, setUser] = useState(null);
+  const [cachedUser] = useState(readCachedUser);
   const [loading, setLoading] = useState(true);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMessage, setAuthMessage] = useState('');
+  const [authIntent, setAuthIntent] = useState('login');
+  const [authenticating, setAuthenticating] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   const cacheUser = useCallback((nextUser) => {
     setUser(nextUser);
@@ -35,7 +39,10 @@ export function AuthProvider({ children }) {
       })
       .catch((error) => {
         if (!active) return;
-        if (error.status === 401 || error.status === 403) cacheUser(null);
+        cacheUser(null);
+        if (cachedUser && error.status !== 401 && error.status !== 403) {
+          setAuthMessage('We could not verify your saved session. Please sign in again.');
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -43,7 +50,7 @@ export function AuthProvider({ children }) {
     return () => {
       active = false;
     };
-  }, [cacheUser]);
+  }, [cacheUser, cachedUser]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -54,8 +61,9 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const openAuth = useCallback((message = '') => {
+  const openAuth = useCallback((message = '', intent = 'login') => {
     setAuthMessage(message);
+    setAuthIntent(intent === 'signup' ? 'signup' : 'login');
     setAuthModalOpen(true);
   }, []);
 
@@ -66,6 +74,7 @@ export function AuthProvider({ children }) {
 
   const authenticateGoogle = useCallback(async (credential) => {
     setAuthMessage('');
+    setAuthenticating(true);
     try {
       const result = await api.authenticateGoogle(credential);
       const nextUser = result.user || result.data?.user || null;
@@ -76,6 +85,8 @@ export function AuthProvider({ children }) {
     } catch (error) {
       setAuthMessage(error.message || 'Google sign-in could not be completed. Please try again.');
       throw error;
+    } finally {
+      setAuthenticating(false);
     }
   }, [cacheUser]);
 
@@ -95,10 +106,16 @@ export function AuthProvider({ children }) {
   }, [cacheUser]);
 
   const signOut = useCallback(async () => {
+    setSigningOut(true);
     try {
       await api.signOut();
-    } finally {
       cacheUser(null);
+      return true;
+    } catch (error) {
+      setAuthMessage('Sign-out could not be confirmed, so your session remains active. Please try again.');
+      throw error;
+    } finally {
+      setSigningOut(false);
     }
   }, [cacheUser]);
 
@@ -108,6 +125,9 @@ export function AuthProvider({ children }) {
       loading,
       authModalOpen,
       authMessage,
+      authIntent,
+      authenticating,
+      signingOut,
       openAuth,
       closeAuth,
       authenticateGoogle,
@@ -115,7 +135,7 @@ export function AuthProvider({ children }) {
       signOut,
       setUser: cacheUser,
     }),
-    [user, loading, authModalOpen, authMessage, openAuth, closeAuth, authenticateGoogle, authenticateDemo, signOut, cacheUser],
+    [user, loading, authModalOpen, authMessage, authIntent, authenticating, signingOut, openAuth, closeAuth, authenticateGoogle, authenticateDemo, signOut, cacheUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
