@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 
 const collections = {
   users: new Map(),
+  authIdentities: new Map(),
+  emailAuthChallenges: new Map(),
+  appleAuthChallenges: new Map(),
   products: new Map(),
   orders: new Map(),
   customInquiries: new Map(),

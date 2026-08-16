@@ -201,10 +201,11 @@ test("phone authentication rejects mismatched Google email and throttles challen
     .expect(401);
 });
 
-test("legacy Google-only login cannot bypass OTP after the provider is configured", async () => {
-  const response = await request(app)
-    .post("/api/auth/google")
-    .send({ credential: "google-credential-with-safe-test-length" })
-    .expect(409);
-  assert.match(response.body.error.message, /Phone verification is required/i);
+test("phone verification remains available as a compatible optional provider", async () => {
+  const phone = await request(app).get("/api/auth/phone/status").expect(200);
+  assert.equal(phone.body.data.enabled, true);
+
+  const auth = await request(app).get("/api/auth/status").expect(200);
+  assert.equal(auth.body.data.details.phone.enabled, true);
+  assert.match(auth.headers["cache-control"], /no-store/);
 });

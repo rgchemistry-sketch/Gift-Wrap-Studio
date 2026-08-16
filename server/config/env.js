@@ -46,6 +46,30 @@ export const env = Object.freeze({
     ? String(process.env.COOKIE_SAME_SITE || "lax").toLowerCase()
     : "lax",
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
+  facebookAppId: process.env.FACEBOOK_APP_ID?.trim() || "",
+  facebookAppSecret: process.env.FACEBOOK_APP_SECRET?.trim() || "",
+  facebookGraphVersion: process.env.FACEBOOK_GRAPH_VERSION?.trim() || "v25.0",
+  appleClientId: process.env.APPLE_CLIENT_ID?.trim() || "",
+  authNonceMinutes: asInteger(process.env.AUTH_NONCE_MINUTES, 5, { min: 2, max: 15 }),
+  resendApiKey: process.env.RESEND_API_KEY?.trim() || "",
+  authEmailFrom: process.env.AUTH_EMAIL_FROM?.trim() || "",
+  authEmailReplyTo: process.env.AUTH_EMAIL_REPLY_TO?.trim() || "",
+  emailOtpSecret: process.env.EMAIL_OTP_SECRET?.trim() || "",
+  emailOtpChallengeMinutes: asInteger(process.env.EMAIL_OTP_CHALLENGE_MINUTES, 10, {
+    min: 2,
+    max: 30,
+  }),
+  emailOtpResendSeconds: asInteger(process.env.EMAIL_OTP_RESEND_SECONDS, 60, {
+    min: 30,
+    max: 600,
+  }),
+  emailOtpMaxAttempts: asInteger(process.env.EMAIL_OTP_MAX_ATTEMPTS, 5, {
+    min: 3,
+    max: 10,
+  }),
+  demoEmailOtpCode: /^\d{6}$/.test(process.env.DEMO_EMAIL_OTP_CODE || "")
+    ? process.env.DEMO_EMAIL_OTP_CODE
+    : "246810",
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID?.trim() || "",
   twilioApiKeySid: process.env.TWILIO_API_KEY_SID?.trim() || "",
   twilioApiKeySecret: process.env.TWILIO_API_KEY_SECRET?.trim() || "",
@@ -103,5 +127,25 @@ export const phoneAuthStatus = () => {
     country: "IN",
   };
 };
+
+export const emailAuthStatus = () => {
+  const hasSigningSecret = Boolean(env.emailOtpSecret);
+  const configured = Boolean(env.resendApiKey && env.authEmailFrom && hasSigningSecret);
+  const demo = Boolean(env.allowDemoAuth && !env.isProduction && hasSigningSecret && !configured);
+  return {
+    provider: configured ? "resend" : demo ? "local-demo" : "resend",
+    enabled: configured || demo,
+    configured,
+    demo,
+  };
+};
+
+export const authProviderStatus = () => ({
+  google: { enabled: Boolean(env.googleClientId) },
+  facebook: { enabled: Boolean(env.facebookAppId && env.facebookAppSecret) },
+  apple: { enabled: Boolean(env.appleClientId) },
+  email: emailAuthStatus(),
+  phone: phoneAuthStatus(),
+});
 
 export const missingConfig = (...keys) => keys.filter((key) => !env[key]);

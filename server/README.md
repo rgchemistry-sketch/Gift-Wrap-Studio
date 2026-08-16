@@ -8,10 +8,10 @@ Required for production authentication:
 
 - `MONGODB_URI` and optionally `MONGODB_DATABASE` (defaults to `gift_n_wrap`)
 - `JWT_SECRET` (at least 32 random characters in production)
-- `GOOGLE_CLIENT_ID`
-- Twilio Verify for phone OTP: `TWILIO_VERIFY_SERVICE_SID` plus exactly one credential option:
-  `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`, or `TWILIO_API_KEY_SID` +
-  `TWILIO_API_KEY_SECRET` (preferred in production)
+- Passwordless email: `RESEND_API_KEY`, a domain-verified fixed `AUTH_EMAIL_FROM`, and a separate
+  `EMAIL_OTP_SECRET` of at least 32 random characters
+- One or more social providers: `GOOGLE_CLIENT_ID`; `FACEBOOK_APP_ID` plus
+  `FACEBOOK_APP_SECRET`; and/or `APPLE_CLIENT_ID`
 - `ADMIN_EMAIL` (the only email that receives the `admin` role)
 - `CLIENT_ORIGINS` (comma-separated origins when the frontend and API are on different hosts)
 
@@ -22,12 +22,15 @@ Required for signed browser uploads:
 - `CLOUDINARY_API_SECRET`
 - `CLOUDINARY_UPLOAD_PRESET` (a **signed** preset configured with an 8 MB `max_file_size`, JPG/PNG/WebP `allowed_formats`, and metadata stripping; the API supplies the signed public ID)
 
-The default browser flow uses Cloudinary's normal `upload` delivery type, so anyone who obtains an asset URL can view it. Accept product-reference images only, not identity documents or other sensitive media. If confidential uploads are required, switch the preset to authenticated delivery and add a signed-delivery endpoint. Configure a Cloudinary lifecycle/cleanup job for uploads that are abandoned before an order or inquiry is submitted.
+The default browser flow uses Cloudinary's normal `upload` delivery type, so anyone who obtains an asset URL can view it. Accept product-reference images only, not identity documents or other sensitive media. If confidential uploads are required, switch the preset to authenticated delivery and add a signed-delivery endpoint. Expired, unused grants are cleaned lazily in bounded batches when new signatures are requested. The grant remains in MongoDB until Cloudinary confirms `ok` or `not found`; provider failures release the claim with exponential backoff for a later retry. A Cloudinary lifecycle rule can still be used as defense in depth.
 
 Optional tuning:
 
 - `PORT=4000`
 - `AUTH_COOKIE_DAYS=7`, `COOKIE_SAME_SITE=lax`, `AUTH_COOKIE_NAME=gnw_session`
+- `EMAIL_OTP_CHALLENGE_MINUTES=10`, `EMAIL_OTP_RESEND_SECONDS=60`,
+  `EMAIL_OTP_MAX_ATTEMPTS=5`, `AUTH_EMAIL_REPLY_TO`
+- `FACEBOOK_GRAPH_VERSION=v25.0`, `AUTH_NONCE_MINUTES=5`
 - `PHONE_AUTH_CHALLENGE_MINUTES=10` (2–30 minutes; challenges are single-use and allow five checks)
 - `FLAT_SHIPPING_FEE=99`, `FREE_SHIPPING_THRESHOLD=2000`, `BULK_ORDER_THRESHOLD=10`
 - `WELCOME_COUPON_CODE=FIRST10`, `WELCOME_DISCOUNT_PERCENT=10`, `WELCOME_DISCOUNT_MAX=500`
@@ -47,26 +50,50 @@ Public:
 - `GET /api/health`
 - `GET /api/products`, `GET /api/products/categories`, `GET /api/products/:slug`
 - `GET /api/offers/welcome`
-- `GET /api/auth/phone/status`
-- `POST /api/auth/phone/start` with `{ credential, email, phone, intent: "login" | "signup" }`, then
-  `POST /api/auth/phone/verify` with `{ challengeId, code }`. Google verifies the email first; a
-  normal session is issued only after Twilio Verify approves the SMS code. Indian mobile numbers
-  are normalized to E.164 and are masked in API responses.
-- `POST /api/auth/google` is retained only for deployments where phone OTP has not been activated;
-  once Twilio Verify is configured it cannot bypass phone verification. Existing sessions continue
-  through `GET /api/auth/me`; `POST /api/auth/logout` clears them.
+- `GET /api/auth/status` returns which email/social providers are ready without exposing secrets.
+- `POST /api/auth/email/start` with `{ email, name?, intent: "login" | "signup" }`, then
+  `POST /api/auth/email/verify` with `{ challengeId, code }`. Codes are HMAC-protected at rest,
+  expire, have bounded checks/resends, and are consumed once. The sender is server-controlled.
+- `POST /api/auth/google`, `POST /api/auth/facebook`, and `POST /api/auth/apple` verify provider
+  credentials on the server. Apple first requires `POST /api/auth/apple/nonce`; its nonce is
+  short-lived and single-use.
+- `GET /api/auth/me` reads the secure cookie session. `POST /api/auth/logout` always clears the
+  current cookie and, when the user record is reachable, increments the session version to revoke
+  the account's other issued sessions.
+- Login and signup are distinct intents. Signup rejects an existing identity, login rejects a
+  missing identity, and matching email text alone never silently links two provider accounts.
+- Optional legacy SMS routes remain at `/api/auth/phone/*` when Twilio Verify is configured, but
+  the storefront's primary passwordless flow is email.
 - `POST /api/custom-inquiries`; authenticated buyers can also use `GET /api/custom-inquiries/mine`
 - `POST /api/contact`
 
 Authenticated buyer:
 
 - `POST /api/orders`, `GET /api/orders/my`, `GET /api/orders/:id`. Send a stable `Idempotency-Key` header (8-100 letters, digits, `.`, `_`, `:`, or `-`) for each checkout attempt; a safe retry returns the original order with `Idempotency-Replayed: true`.
-- `POST /api/uploads/signature` with `{ purpose: "custom-inquiries" | "orders" | "profiles" }`. Every returned snake_case field (`folder`, `public_id`, `overwrite`, `upload_preset`, `allowed_formats`, and `transformation`) is signed and must be included in the Cloudinary form. Each grant is bound to one non-overwritable asset ID, and the Mongo-backed issuance bucket defaults to 20 grants per buyer per hour (`UPLOAD_SIGNATURES_PER_HOUR`).
+- `POST /api/uploads/signature` with `{ purpose: "custom-inquiries" | "orders" | "profiles" }`.
+  Every returned snake_case field (`folder`, `public_id`, `overwrite`, `upload_preset`,
+  `allowed_formats`, and `transformation`) is signed and must be included in the Cloudinary form.
+  Each grant belongs to its authenticated requester and one non-overwritable asset ID. The
+  response includes `expiresAt` and `expiresInSeconds`; order/cart grants last seven days and
+  other grants last two hours. Order attachments are consumed atomically with their order, and
+  same-key concurrent checkout retries return the completed idempotent order. A signature request
+  also gives the expired-upload collector up to 250 ms to process a batch; it continues in the
+  background on a long-running server and runs at most once per minute per process.
+- `DELETE /api/uploads/asset` with `{ publicId }` destroys the caller's unconsumed upload. The
+  exact configured admin may also retire an owned, consumed product image after a successful
+  product update, but only once no product references it. Its ownership record is retained as a
+  deletion audit record.
 
 Configured admin only:
 
 - `GET /api/admin/dashboard`
 - `GET|POST /api/admin/products`, `PATCH|DELETE /api/admin/products/:id` (`DELETE` archives)
+- Admin product uploads use `POST /api/uploads/signature` with `{ purpose: "products" }`. New
+  product images must match the admin's owned grants, which are consumed with the product write.
+  Consumed product and order grants retain ownership provenance. Upload-grant expiry uses a normal
+  lookup index, never Mongo TTL; on the first connection after upgrade, the server removes the
+  legacy `expiresAt` TTL index before creating declared indexes. Only the separate hourly upload
+  quota keeps its TTL index.
 - `GET /api/admin/orders`, `PATCH /api/admin/orders/:id/status`
 - `GET /api/admin/custom-inquiries`, `PATCH /api/admin/custom-inquiries/:id`
 - `GET /api/admin/contacts`, `PATCH /api/admin/contacts/:id`
@@ -77,4 +104,6 @@ MongoDB Atlas (or another replica-set deployment) is required for the transactio
 
 ## Dependencies
 
-Runtime: `express`, `mongoose`, `google-auth-library`, `jsonwebtoken`, `cookie-parser`, `cloudinary`, `zod`, `helmet`, `cors`, `compression`, `express-rate-limit`, and `dotenv` (local launcher only). Tests use `supertest` and Node's built-in test runner.
+Runtime: `express`, `mongoose`, `google-auth-library`, `jose`, `jsonwebtoken`, `cookie-parser`,
+`cloudinary`, `zod`, `helmet`, `cors`, `compression`, `express-rate-limit`, and `dotenv` (local
+launcher only). Tests use `supertest` and Node's built-in test runner.

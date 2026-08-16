@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { env } from "./env.js";
+import { removeLegacyUploadGrantTtlIndexes } from "../models/UploadGrant.js";
 
 mongoose.set("bufferCommands", false);
 mongoose.set("strictQuery", true);
@@ -48,6 +49,10 @@ export const connectDatabase = async () => {
       autoIndex: false,
     })
     .then(async () => {
+      // Older releases declared UploadGrant.expiresAt as a TTL index. Remove that index before
+      // creating the current normal lookup index so MongoDB never drops asset provenance before
+      // the Cloudinary cleanup worker has confirmed deletion.
+      await removeLegacyUploadGrantTtlIndexes();
       await createDeclaredIndexes();
       status = "connected";
       lastError = undefined;

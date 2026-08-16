@@ -16,8 +16,8 @@ export default function ProtectedAdminRoute({ children }) {
         <div className="access-state__icon"><Icon name="lock" size={30} /></div>
         <p className="eyebrow">Protected workspace</p>
         <h1>Studio admin sign-in required.</h1>
-        <p>Verify the Google email and mobile number assigned to the studio administrator. Buyer accounts cannot access this area.</p>
-        <Button className="button-burgundy" onClick={() => openAuth('Use the studio administrator Google account and mobile number to continue.')}>Sign in securely</Button>
+        <p>Use Google or the secure code sent to the studio administrator email. Buyer accounts cannot access this area.</p>
+        <Button className="button-burgundy" onClick={() => openAuth('Use the studio administrator Google account or email verification code to continue.', 'login')}>Sign in securely</Button>
       </Container>
     );
   }

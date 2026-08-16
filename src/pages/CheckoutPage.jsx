@@ -90,7 +90,15 @@ export default function CheckoutPage() {
       return;
     }
     if (!user) {
-      openAuth('Verify your Google email and mobile number to securely attach these details and submit your order request. Your form has been saved.');
+      openAuth('Log in with an email verification code, Google, Facebook or Apple to securely submit your saved order request.', 'login');
+      return;
+    }
+    const expiredUpload = cart.find((line) => {
+      const expiresAt = Date.parse(line.customization?.media?.expiresAt || '');
+      return Number.isFinite(expiresAt) && expiresAt <= Date.now();
+    });
+    if (expiredUpload) {
+      setError(`The secure photo attached to ${expiredUpload.product.title} expired. Remove that item and add it again with the photo.`);
       return;
     }
     const pendingUpload = cart.find((line) => line.customization?.media?.pending);
@@ -199,7 +207,7 @@ export default function CheckoutPage() {
                   <Col xs={12}><Form.Group controlId="checkout-notes"><Form.Label>Delivery or gift notes <small>optional</small></Form.Label><Form.Control as="textarea" rows={4} maxLength={500} value={form.notes} onChange={(event) => update('notes', event.target.value)} placeholder="Anything the studio should know about the occasion or delivery?" /></Form.Group></Col>
                 </Row>
               </fieldset>
-              {!user && <Alert variant="info" className="soft-alert sign-in-reminder"><Icon name="lock" /> You’ll be asked to verify your Google email and mobile number when you send this request. Your form is saved on this device.</Alert>}
+              {!user && <Alert variant="info" className="soft-alert sign-in-reminder"><Icon name="lock" /> You’ll be asked to log in with a secure email code or an approved provider when you send this request. Your form is saved on this device.</Alert>}
               <Button type="submit" className="button-burgundy checkout-submit" disabled={submitting}>{submitting ? <><Spinner size="sm" /> Sending securely…</> : <>Send order request <Icon name="arrow" /></>}</Button>
               <p className="checkout-submit-note">By sending, you are requesting a studio review—not completing a purchase or payment.</p>
             </Form>

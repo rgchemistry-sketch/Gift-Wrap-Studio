@@ -43,6 +43,46 @@ app.use(
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "same-site" },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'", "https://appleid.apple.com"],
+        scriptSrc: [
+          "'self'",
+          "https://accounts.google.com",
+          "https://connect.facebook.net",
+          "https://appleid.cdn-apple.com",
+        ],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+        imgSrc: [
+          "'self'",
+          "data:",
+          "blob:",
+          "https://res.cloudinary.com",
+          "https://platform-lookaside.fbsbx.com",
+          "https://*.fbcdn.net",
+          "https://*.googleusercontent.com",
+        ],
+        connectSrc: [
+          "'self'",
+          "https://accounts.google.com",
+          "https://graph.facebook.com",
+          "https://www.facebook.com",
+          "https://appleid.apple.com",
+          "https://api.cloudinary.com",
+        ],
+        frameSrc: [
+          "https://accounts.google.com",
+          "https://www.facebook.com",
+          "https://appleid.apple.com",
+        ],
+        upgradeInsecureRequests: env.isProduction ? [] : null,
+      },
+    },
   }),
 );
 app.use(compression());

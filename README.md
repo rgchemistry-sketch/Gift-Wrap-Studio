@@ -7,7 +7,8 @@ A responsive React storefront and lightweight Express API for handmade resin art
 - Editorial, mobile-first storefront built with React, React Router, React-Bootstrap, Bootstrap, and custom design tokens
 - Searchable/filterable product catalogue, product customization, cart, wishlist, and order-request checkout
 - Delayed first-order offer (`FIRST10`, 10% up to ₹500) with eligibility checked by the API
-- Google Identity Services sign-in with server-side ID-token verification
+- Passwordless email codes sent from a fixed, verified Resend sender
+- Google, Facebook, and Apple sign-in with server-side credential verification
 - Buyer account and one-admin dashboard; admin access comes only from `ADMIN_EMAIL`
 - MongoDB Atlas persistence with an in-memory preview store when MongoDB is not configured locally
 - Signed, direct-to-Cloudinary customization uploads; the Cloudinary secret never reaches the browser
@@ -26,7 +27,10 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-Open the storefront at the URL printed by Vite (normally `http://localhost:5173`; Vite may select the next free port). Vite proxies `/api` to the Express server at `http://localhost:4000`; port 4000 is API-only during `npm run dev`.
+Open the storefront at `http://localhost:5173`. The dev server uses a strict port because OAuth
+providers authorize exact browser origins; stop the process occupying 5173 or deliberately update
+the Vite port and every provider's development origin together. Vite proxies `/api` to the Express
+server at `http://localhost:4000`; port 4000 is API-only during `npm run dev`.
 
 To run the built storefront and API together on one port, use:
 
@@ -50,22 +54,49 @@ Never place server secrets in a variable prefixed with `VITE_`; Vite variables a
 
 The connection is cached for serverless reuse. Without a URI—or when Atlas is temporarily unavailable in local development—the API reports that it is using its non-persistent preview store. Production falls back read-only instead of accepting writes that could be lost.
 
-### Sign in with Google
+### Authentication providers
+
+Email is the primary passwordless flow. Create and verify a sending domain in Resend, then set
+`RESEND_API_KEY`, a fixed `AUTH_EMAIL_FROM`, and a separate random `EMAIL_OTP_SECRET` of at least
+32 characters. The browser can never choose the sender. Codes are HMAC-protected at rest, expire,
+have bounded attempts and resend cooldowns, and are consumed once. A preview code is returned only
+when `ALLOW_DEMO_AUTH=true` outside production and Resend is not configured.
+
+For Google:
 
 1. Create an OAuth **Web application** client in Google Cloud.
 2. Add `http://localhost:5173` and the final Vercel/custom domain as authorized JavaScript origins.
 3. Put the same client ID in `VITE_GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_ID`.
-4. Set `ADMIN_EMAIL` to the one Google account that should receive the `admin` role. Every other verified Google account is a buyer.
+4. Set `ADMIN_EMAIL` to the exact Google/email-code account that should receive the admin role.
 
 The API verifies the token signature, audience, issuer, and expiry with Google's Node library and stores Google's stable `sub` claim as the external identity.
 
+For Facebook, configure the same app as `VITE_FACEBOOK_APP_ID` and `FACEBOOK_APP_ID`, keep
+`FACEBOOK_APP_SECRET` server-only, and configure the production domain in Meta's app dashboard.
+The API validates every user access token with `debug_token`, requires the configured app ID, and
+then reads the matching stable Graph user ID.
+
+For Apple, create a Sign in with Apple Services ID and website return URL. Set the Services ID in
+both `VITE_APPLE_CLIENT_ID` and `APPLE_CLIENT_ID`, and set `VITE_APPLE_REDIRECT_URI` to the exact
+registered URL. Before opening Apple sign-in the browser calls `POST /api/auth/apple/nonce`, passes
+the returned nonce to Apple, and submits the returned `nonceId` with the ID token. The nonce is
+server-stored, short-lived, and single-use; the API verifies Apple's signature, issuer, audience,
+expiry, nonce, and stable subject.
+
+Social identities are keyed by provider plus stable provider subject. A coincidentally matching
+social email never auto-links an existing account. A successful code sent to the account email can
+safely add email login. The configured administrator address can be enrolled only through Google
+or a verified email code, never directly through Facebook or Apple.
+
 ### Cloudinary
 
-Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and `CLOUDINARY_UPLOAD_PRESET` on the server, plus `VITE_CLOUDINARY_CLOUD_NAME` in the frontend. Configure the signed upload preset to allow JPG/JPEG/PNG/WebP images up to 8 MB; the API also signs a 2400 × 2400 pixel limit transformation. Each grant is tied to one non-overwritable asset ID, and `UPLOAD_SIGNATURES_PER_HOUR` defaults to 20 per buyer. The browser asks the API for a short-lived signature and uploads directly, so the API secret never reaches the browser. Customer photos are personal data: configure restricted/authenticated delivery and an appropriate retention policy in Cloudinary before launch.
+Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and `CLOUDINARY_UPLOAD_PRESET` on the server, plus `VITE_CLOUDINARY_CLOUD_NAME` in the frontend. Configure the signed upload preset to allow JPG/JPEG/PNG/WebP images up to 8 MB; the API also signs a 2400 × 2400 pixel limit transformation. Each grant is tied to one non-overwritable asset ID, and `UPLOAD_SIGNATURES_PER_HOUR` defaults to 20 per buyer. Order/cart grants last seven days; product and other grants last two hours, with both expiry values returned by the signature endpoint. Consumed product and order grants retain ownership provenance, while removed product assets can be retired only by the owning configured admin after no product references them. Expired unused grants are retained in MongoDB until a bounded cleanup sweep receives Cloudinary's `ok` or `not found` confirmation; failed deletions use exponential backoff and retry on later signature traffic. The browser asks the API for a short-lived signature and uploads directly, so the API secret never reaches the browser. Customer photos are personal data: configure restricted/authenticated delivery and an appropriate retention policy in Cloudinary before launch.
 
 ### Sessions and first-order offer
 
 - Generate a long random value for `JWT_SECRET` in production.
+- Logout increments the user's server-side session version, revoking previously issued cookies instead of only deleting the current browser cookie.
+- Authentication responses are marked `Cache-Control: no-store`.
 - The defaults are `WELCOME_COUPON_CODE=FIRST10`, `WELCOME_DISCOUNT_PERCENT=10`, and `WELCOME_DISCOUNT_MAX=500`.
 - The offer excludes corporate/bulk requests and is rejected after a buyer has an existing order.
 
@@ -75,7 +106,7 @@ Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and 
 2. Add the variables from `.env.example` to the appropriate Preview/Production environments.
 3. Set `NODE_ENV=production`, `ALLOW_DEMO_AUTH=false`, and `VITE_ENABLE_DEMO_AUTH=false` in production.
    Also keep `ALLOW_MEMORY_WRITES=false`, so a database outage cannot create non-persistent orders.
-4. Add the final domain to Google authorized origins and `CLIENT_ORIGIN`.
+4. Add the final domain to Google authorized origins, Meta allowed domains, the Apple Services ID website configuration, Resend's verified sender domain, and `CLIENT_ORIGINS`.
 5. Deploy. `vercel.json` builds the Vite app, sends `/api/*` to the Express function, and serves `index.html` for client-side routes.
 
 The project follows Vercel's current [Vite SPA routing](https://vercel.com/docs/frameworks/frontend/vite), Google's [server-side ID-token verification](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token), and Cloudinary's [signed browser upload](https://cloudinary.com/documentation/authentication_signatures) guidance.
@@ -95,5 +126,5 @@ Generated-image provenance and final prompts are recorded in [`docs/image-genera
 ## Before accepting real orders
 
 - Replace or verify all starter catalogue products, prices, inventory, and policies; they are demonstration content.
-- Test the complete Google, Atlas, Cloudinary, email/phone confirmation, and admin workflow on the production domain.
+- Test email codes, Google, Facebook, Apple, logout/revocation, Atlas, Cloudinary, and the exact administrator account on the production domain.
 - Checkout intentionally creates a manual-confirmation order request. Add a payment provider only when the studio is ready to collect online payments.

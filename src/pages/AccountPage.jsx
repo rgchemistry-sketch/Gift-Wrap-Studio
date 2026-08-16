@@ -32,12 +32,13 @@ const statusLabels = {
 };
 
 export default function AccountPage() {
-  const { user, loading: authLoading, openAuth, signOut } = useAuth();
+  const { user, loading: authLoading, openAuth, signOut, signingOut } = useAuth();
   const { wishlist } = useShop();
   const [tab, setTab] = useState('overview');
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [error, setError] = useState('');
+  const [signOutError, setSignOutError] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -64,7 +65,7 @@ export default function AccountPage() {
     return (
       <Container className="account-signin page-section">
         <div className="account-signin__visual"><span>G<span>·</span>W</span><i aria-hidden="true">✦</i></div>
-        <div><p className="eyebrow">Your studio account</p><h1>Every thoughtful detail, remembered.</h1><p>Log in or create an account with your verified Google email and mobile number to keep customization details together and follow your handmade order from studio review to delivery.</p><ul className="check-list"><li><Icon name="check" /> Verified email and mobile identity</li><li><Icon name="check" /> Order and request updates</li><li><Icon name="check" /> Your bag and saved pieces stay on this device</li></ul><div className="account-signin__actions"><Button className="button-burgundy" onClick={() => openAuth('', 'signup')}>Create account <Icon name="arrow" /></Button><Button variant="outline-dark" onClick={() => openAuth('', 'login')}>Log in</Button></div><p className="privacy-note">The same verified identity works for signup and future login.</p></div>
+        <div><p className="eyebrow">Your studio account</p><h1>Every thoughtful detail, remembered.</h1><p>Log in with a secure email code, Google, Facebook or Apple to keep customization details together and follow your handmade order from studio review to delivery.</p><ul className="check-list"><li><Icon name="check" /> Password-free verified sign-in</li><li><Icon name="check" /> Order and request updates</li><li><Icon name="check" /> Your bag and saved pieces stay on this device</li></ul><div className="account-signin__actions"><Button className="button-burgundy" onClick={() => openAuth('', 'signup')}>Create account <Icon name="arrow" /></Button><Button variant="outline-dark" onClick={() => openAuth('', 'login')}>Log in</Button></div><p className="privacy-note">New here? Choose Create account. Returning customers can use Log in.</p></div>
       </Container>
     );
   }
@@ -73,11 +74,12 @@ export default function AccountPage() {
   const latestOrder = orders[0];
 
   const handleSignOut = async () => {
+    setSignOutError('');
     try {
       await signOut();
       navigate('/');
     } catch (requestError) {
-      setError(requestError.message);
+      setSignOutError(requestError.message);
     }
   };
 
@@ -87,9 +89,10 @@ export default function AccountPage() {
         {location.state?.deniedFrom && <Alert variant="warning" className="soft-alert">That workspace is reserved for the studio administrator. You’re safely signed in to your buyer account.</Alert>}
         <header className="account-header">
           <div><p className="eyebrow">My Gift N Wrap</p><h1>Good to see you, {displayName}.</h1><p>Everything made, saved and requested for you lives here.</p></div>
-          <div className="account-header__actions">{user.role === 'admin' && <Button as={Link} to="/admin" variant="outline-dark">Open admin</Button>}<button type="button" className="plain-link" onClick={handleSignOut}>Sign out</button></div>
+          <div className="account-header__actions">{user.role === 'admin' && <Button as={Link} to="/admin" variant="outline-dark">Open admin</Button>}<button type="button" className="plain-link" disabled={signingOut} onClick={handleSignOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button></div>
         </header>
-        <div className="account-tabs" role="tablist" aria-label="Account sections">{tabs.map(([key,label])=><button type="button" key={key} role="tab" aria-selected={tab===key} className={tab===key?'is-active':''} onClick={()=>setTab(key)}>{label}</button>)}</div>
+        {signOutError && <Alert variant="warning" className="soft-alert">{signOutError} <button type="button" className="plain-link" disabled={signingOut} onClick={handleSignOut}>Retry sign out</button></Alert>}
+        <div className="account-tabs" role="group" aria-label="Account sections">{tabs.map(([key,label])=><button type="button" key={key} aria-pressed={tab===key} className={tab===key?'is-active':''} onClick={()=>setTab(key)}>{label}</button>)}</div>
         {error && <Alert variant="warning" className="soft-alert">{error} <button type="button" className="plain-link" onClick={loadOrders}>Retry</button></Alert>}
         {tab === 'overview' && <Overview user={user} latestOrder={latestOrder} orders={orders} savedCount={savedProducts.length} loading={ordersLoading} goTo={setTab} />}
         {tab === 'orders' && <OrdersPanel orders={orders} loading={ordersLoading} />}
@@ -124,5 +127,6 @@ function SavedPanel({ products }) {
 }
 
 function ProfilePanel({ user }) {
-  return <Row className="g-4 account-profile"><Col lg={6}><div className="profile-card"><p className="eyebrow">Personal details</p><h2>Your verified profile</h2><dl><div><dt>Name</dt><dd>{user.name||'Not provided'}</dd></div><div><dt>Email</dt><dd>{user.email}</dd></div><div><dt>Mobile</dt><dd>{user.phoneMasked||'OTP verification not active yet'}{user.phoneVerified&&' · Verified'}</dd></div><div><dt>Account type</dt><dd>{user.role==='admin'?'Studio administrator':'Buyer'}</dd></div></dl><p><Icon name="lock"/> Your email is Google verified; mobile numbers are shown only in masked form.</p></div></Col><Col lg={6}><div className="profile-card"><p className="eyebrow">Delivery addresses</p><h2>Saved for next time</h2>{user.addresses?.length?user.addresses.map((address,index)=><address key={address.id||index}>{address.label&&<strong>{address.label}</strong>}{address.line1}<br/>{address.line2&&<>{address.line2}<br/></>}{address.city}, {address.state} {address.postalCode}</address>):<div className="profile-empty"><Icon name="map"/><p>No saved address yet. Your first confirmed delivery address can appear here for a quicker next request.</p></div>}</div></Col></Row>;
+  const providerLabels = (user.providers || user.authProviders || [user.lastAuthProvider]).filter(Boolean).map((provider) => ({ google: 'Google', facebook: 'Facebook', apple: 'Apple', email: 'Email code' }[provider] || provider));
+  return <Row className="g-4 account-profile"><Col lg={6}><div className="profile-card"><p className="eyebrow">Personal details</p><h2>Your verified profile</h2><dl><div><dt>Name</dt><dd>{user.name||'Not provided'}</dd></div><div><dt>Email</dt><dd>{user.email}{user.emailVerified !== false&&' · Verified'}</dd></div><div><dt>Sign-in</dt><dd>{providerLabels.length?[...new Set(providerLabels)].join(', '):'Verified account'}</dd></div><div><dt>Account type</dt><dd>{user.role==='admin'?'Studio administrator':'Buyer'}</dd></div></dl><p><Icon name="lock"/> Your identity is verified by the sign-in method you chose. We never store a password.</p></div></Col><Col lg={6}><div className="profile-card"><p className="eyebrow">Delivery addresses</p><h2>Saved for next time</h2>{user.addresses?.length?user.addresses.map((address,index)=><address key={address.id||index}>{address.label&&<strong>{address.label}</strong>}{address.line1}<br/>{address.line2&&<>{address.line2}<br/></>}{address.city}, {address.state} {address.postalCode}</address>):<div className="profile-empty"><Icon name="map"/><p>No saved address yet. Your first confirmed delivery address can appear here for a quicker next request.</p></div>}</div></Col></Row>;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Accordion from 'react-bootstrap/Accordion';
 import Button from 'react-bootstrap/Button';
@@ -24,20 +24,35 @@ const colourOptions = [
   ['Tell the artist', '#8b7267'],
 ];
 
-function MediaUpload({ onChange }) {
+const MediaUpload = forwardRef(function MediaUpload({ onChange, onBusyChange }, ref) {
   const inputRef = useRef(null);
   const previewUrlRef = useRef('');
+  const uncommittedPublicIdRef = useRef('');
+  const mountedRef = useRef(true);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState('');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const { user, openAuth } = useAuth();
+  const busy = status === 'uploading' || status === 'deleting';
 
-  useEffect(() => () => {
-    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+  useEffect(() => {
+    onBusyChange(busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      const publicId = uncommittedPublicIdRef.current;
+      uncommittedPublicIdRef.current = '';
+      if (publicId) void api.deleteUploadedAsset(publicId).catch(() => {});
+    };
   }, []);
 
-  const remove = () => {
+  const resetPicker = useCallback(() => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
     previewUrlRef.current = '';
     setFile(null);
@@ -46,32 +61,53 @@ function MediaUpload({ onChange }) {
     setStatus('idle');
     if (inputRef.current) inputRef.current.value = '';
     onChange(null);
-  };
+  }, [onChange]);
 
-  const uploadToCloudinary = async (selectedFile) => {
+  useImperativeHandle(ref, () => ({
+    commitAndReset() {
+      uncommittedPublicIdRef.current = '';
+      resetPicker();
+    },
+  }), [resetPicker]);
+
+  const releaseUncommittedUpload = useCallback(async () => {
+    const publicId = uncommittedPublicIdRef.current;
+    if (!publicId) return true;
     try {
-      const signatureResult = await api.requestUploadSignature({ purpose: 'orders' });
-      const signature = signatureResult.data || signatureResult;
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('api_key', signature.apiKey);
-      formData.append('timestamp', signature.timestamp);
-      formData.append('signature', signature.signature);
-      formData.append('folder', signature.folder);
-      formData.append('upload_preset', signature.upload_preset);
-      formData.append('allowed_formats', signature.allowed_formats);
-      formData.append('transformation', signature.transformation);
-      formData.append('public_id', signature.public_id);
-      formData.append('overwrite', String(signature.overwrite));
-      const response = await fetch(signature.uploadUrl || `https://api.cloudinary.com/v1_1/${signature.cloudName}/image/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-      const uploaded = await response.json();
-      if (!response.ok || !uploaded.secure_url) throw new Error(uploaded.error?.message || 'Upload could not be completed.');
+      await api.deleteUploadedAsset(publicId);
+      if (uncommittedPublicIdRef.current === publicId) {
+        uncommittedPublicIdRef.current = '';
+      }
+      return true;
+    } catch (deleteError) {
+      if (mountedRef.current) {
+        setError(`${deleteError.message} Try removing the photo again.`);
+      }
+      return false;
+    }
+  }, []);
+
+  const uploadSelectedFile = async (selectedFile) => {
+    setStatus('uploading');
+    setError('');
+    onChange({ name: selectedFile.name, pending: true });
+    try {
+      const uploaded = await api.uploadImage(selectedFile, 'orders');
+      if (!mountedRef.current) {
+        if (uploaded.publicId) void api.deleteUploadedAsset(uploaded.publicId).catch(() => {});
+        return;
+      }
+      uncommittedPublicIdRef.current = uploaded.publicId;
       setStatus('uploaded');
-      onChange({ name: selectedFile.name, url: uploaded.secure_url, publicId: uploaded.public_id });
+      onChange({
+        name: selectedFile.name,
+        url: uploaded.url,
+        publicId: uploaded.publicId,
+        expiresAt: uploaded.expiresAt || '',
+        pending: false,
+      });
     } catch (uploadError) {
+      if (!mountedRef.current) return;
       setStatus('local');
       setError(`${uploadError.message} Your preview is still here; remove it or try again.`);
       onChange({ name: selectedFile.name, pending: true });
@@ -83,6 +119,11 @@ function MediaUpload({ onChange }) {
     if (!selectedFile) return;
     setError('');
     const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!selectedFile.size) {
+      setError('That image is empty. Choose another file.');
+      event.target.value = '';
+      return;
+    }
     if (!allowed.includes(selectedFile.type)) {
       setError('Please choose a JPG, PNG or WebP image.');
       event.target.value = '';
@@ -93,6 +134,18 @@ function MediaUpload({ onChange }) {
       event.target.value = '';
       return;
     }
+
+    if (uncommittedPublicIdRef.current) {
+      setStatus('deleting');
+      setError('');
+      const released = await releaseUncommittedUpload();
+      if (!released) {
+        setStatus('uploaded');
+        event.target.value = '';
+        return;
+      }
+    }
+
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
     const objectUrl = URL.createObjectURL(selectedFile);
     previewUrlRef.current = objectUrl;
@@ -101,16 +154,44 @@ function MediaUpload({ onChange }) {
     onChange({ name: selectedFile.name, pending: true });
     if (!user) {
       setStatus('local');
-      setError('Preview ready. Sign in before checkout to securely attach it to your request.');
+      setError('Preview ready. Sign in, then upload it securely before adding this piece.');
       return;
     }
-    setStatus('uploading');
-    await uploadToCloudinary(selectedFile);
+    await uploadSelectedFile(selectedFile);
+  };
+
+  const remove = async () => {
+    if (busy) return;
+    if (uncommittedPublicIdRef.current) {
+      setStatus('deleting');
+      setError('');
+      const released = await releaseUncommittedUpload();
+      if (!released) {
+        setStatus('uploaded');
+        return;
+      }
+    }
+    resetPicker();
+  };
+
+  const retryUpload = async () => {
+    if (!file || busy) return;
+    if (!user) {
+      openAuth('Sign in to securely save your customization image.');
+      return;
+    }
+    await uploadSelectedFile(file);
+  };
+
+  const openFilePicker = () => {
+    if (busy || !inputRef.current) return;
+    inputRef.current.value = '';
+    inputRef.current.click();
   };
 
   return (
     <div className="media-upload">
-      <Form.Control ref={inputRef} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectFile} id="personalization-photo" />
+      <Form.Control ref={inputRef} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectFile} id="personalization-photo" disabled={busy} aria-describedby={file ? 'personalization-photo-status' : undefined} />
       {!file ? (
         <label htmlFor="personalization-photo" className="upload-dropzone">
           <span><Icon name="upload" /></span>
@@ -122,21 +203,26 @@ function MediaUpload({ onChange }) {
           <img src={preview} alt="Selected customization reference preview" />
           <div>
             <strong>{file.name}</strong>
-            <small>
+            <small id="personalization-photo-status" role="status" aria-live="polite">
               {status === 'uploading' && <><Spinner size="sm" /> Uploading securely…</>}
+              {status === 'deleting' && <><Spinner size="sm" /> Removing previous upload…</>}
               {status === 'uploaded' && <><Icon name="check" size={14} /> Securely attached</>}
-              {status === 'local' && 'Preview saved for this page'}
+              {status === 'local' && 'Preview ready — secure upload required'}
             </small>
-            <div><button type="button" onClick={() => inputRef.current?.click()}>Replace</button><button type="button" onClick={remove}>Remove</button></div>
+            <div>
+              {status === 'local' && <button type="button" onClick={retryUpload} disabled={busy}>{user ? 'Try upload again' : 'Sign in to upload'}</button>}
+              <button type="button" onClick={openFilePicker} disabled={busy}>Replace</button>
+              <button type="button" onClick={remove} disabled={busy}>Remove</button>
+            </div>
           </div>
         </div>
       )}
       {error && (
-        <p className="field-message" role="status">{error} {!user && file && <button type="button" onClick={() => openAuth('Sign in to securely save your customization image.')}>Sign in</button>}</p>
+        <p className="field-message" role="alert">{error}</p>
       )}
     </div>
   );
-}
+});
 
 export default function ProductPage() {
   const { slug } = useParams();
@@ -147,6 +233,9 @@ export default function ProductPage() {
   const [quantity, setQuantity] = useState(1);
   const [validated, setValidated] = useState(false);
   const [customization, setCustomization] = useState({ name: '', date: '', message: '', colour: 'Forest & gold', finish: 'Gold foil', media: null });
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [mediaSubmitError, setMediaSubmitError] = useState('');
+  const mediaUploadRef = useRef(null);
   const { addToCart, wishlist, toggleWishlist } = useShop();
 
   useEffect(() => {
@@ -185,7 +274,10 @@ export default function ProductPage() {
   }
 
   const gallery = product.gallery?.length ? product.gallery : [product.image];
-  const updateCustomization = (key, value) => setCustomization((current) => ({ ...current, [key]: value }));
+  const updateCustomization = (key, value) => {
+    if (key === 'media') setMediaSubmitError('');
+    setCustomization((current) => ({ ...current, [key]: value }));
+  };
 
   const submit = (event) => {
     event.preventDefault();
@@ -195,6 +287,16 @@ export default function ProductPage() {
       setValidated(true);
       return;
     }
+    if (mediaBusy) {
+      setMediaSubmitError('Please wait for the photo upload to finish before adding this piece.');
+      return;
+    }
+    if (product.customizable && customization.media && (
+      customization.media.pending || !customization.media.url || !customization.media.publicId
+    )) {
+      setMediaSubmitError('Finish the secure photo upload or remove the preview before adding this piece.');
+      return;
+    }
     setValidated(true);
     const safeCustomization = {
       ...customization,
@@ -202,10 +304,13 @@ export default function ProductPage() {
         name: customization.media.name,
         url: customization.media.url || '',
         publicId: customization.media.publicId || '',
+        expiresAt: customization.media.expiresAt || '',
         pending: Boolean(customization.media.pending),
       } : null,
     };
     addToCart(product, { quantity, customization: product.customizable ? safeCustomization : {} });
+    mediaUploadRef.current?.commitAndReset();
+    setMediaSubmitError('');
   };
 
   const saved = wishlist.includes(product.id);
@@ -277,7 +382,8 @@ export default function ProductPage() {
                       </Form.Group>
                       <Form.Group className="form-field">
                         <Form.Label>Photo or inspiration <small>optional</small></Form.Label>
-                        <MediaUpload onChange={(media) => updateCustomization('media', media)} />
+                        <MediaUpload ref={mediaUploadRef} onChange={(media) => updateCustomization('media', media)} onBusyChange={setMediaBusy} />
+                        {mediaSubmitError && <p className="field-message" role="alert">{mediaSubmitError}</p>}
                       </Form.Group>
                     </fieldset>
                   )}
@@ -288,7 +394,7 @@ export default function ProductPage() {
                       <span aria-live="polite">{quantity}</span>
                       <button type="button" onClick={() => setQuantity((value) => Math.min(10, value + 1))} aria-label="Increase quantity"><Icon name="plus" size={16} /></button>
                     </div>
-                    <Button type="submit" className="button-burgundy flex-grow-1" disabled={!product.inStock}>Add to bag · {formatCurrency(product.price * quantity)}</Button>
+                    <Button type="submit" className="button-burgundy flex-grow-1" disabled={!product.inStock || mediaBusy}>{mediaBusy ? 'Securing photo…' : `Add to bag · ${formatCurrency(product.price * quantity)}`}</Button>
                   </div>
                   {product.customizable && <p className="included-note"><Icon name="check" size={14} /> Standard personalization is included in the displayed price.</p>}
                 </Form>
@@ -319,7 +425,7 @@ export default function ProductPage() {
 
       <div className="mobile-buy-bar">
         <div><small>{product.title}</small><strong>{formatCurrency(product.price * quantity)}</strong></div>
-        <Button className="button-burgundy" onClick={() => document.querySelector('.personalization-form')?.requestSubmit()} disabled={!product.inStock}>{product.customizable ? 'Personalize & add' : 'Add to bag'}</Button>
+        <Button className="button-burgundy" onClick={() => document.querySelector('.personalization-form')?.requestSubmit()} disabled={!product.inStock || mediaBusy}>{mediaBusy ? 'Uploading…' : product.customizable ? 'Personalize & add' : 'Add to bag'}</Button>
       </div>
     </>
   );

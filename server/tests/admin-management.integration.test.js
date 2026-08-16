@@ -12,7 +12,7 @@ process.env.CLOUDINARY_API_SECRET = process.env.JWT_SECRET;
 process.env.CLOUDINARY_UPLOAD_PRESET = "test-locked-preset";
 delete process.env.MONGODB_URI;
 
-const [{ default: app }, { resetMemoryStore }] = await Promise.all([
+const [{ default: app }, { memoryStore, resetMemoryStore }] = await Promise.all([
   import("../app.js"),
   import("../lib/memory-store.js"),
 ]);
@@ -31,8 +31,22 @@ const buyerAgent = async () => {
   return agent;
 };
 
+const productImageGrant = async (admin, alt = "Product image") => {
+  const signature = await admin
+    .post("/api/uploads/signature")
+    .send({ purpose: "products" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+  return {
+    url: `https://res.cloudinary.com/test-cloud/image/upload/v1/${publicId}.jpg`,
+    publicId,
+    alt,
+  };
+};
+
 test("admins can create, edit, publish and archive complete products", async () => {
   const admin = await adminAgent();
+  const productImage = await productImageGrant(admin, "Forest keepsake box");
   const created = await admin
     .post("/api/admin/products")
     .send({
@@ -45,13 +59,7 @@ test("admins can create, edit, publish and archive complete products", async () 
       price: 1799,
       compareAtPrice: 1999,
       inventory: 4,
-      images: [
-        {
-          url: "https://res.cloudinary.com/test-cloud/image/upload/v1/gift-n-wrap/products/admin/box.jpg",
-          publicId: "gift-n-wrap/products/admin/box",
-          alt: "Forest keepsake box",
-        },
-      ],
+      images: [productImage],
       variants: [
         { name: "Large", sku: "GNW-BOX-01-L", price: 2299, inventory: 2, active: true },
       ],
@@ -112,7 +120,7 @@ test("product management validates pricing, SKUs and image ownership", async () 
         },
       ],
     })
-    .expect(400);
+    .expect(422);
 });
 
 test("saved studio settings drive the public popup and checkout totals", async () => {
@@ -197,10 +205,16 @@ test("registered-user administration is protected, paged and privacy-conscious",
     customInquiries: 0,
   });
 
+  ["placed", "confirmed", "in_progress", "ready", "shipped", "delivered", "cancelled"].forEach(
+    (status) => memoryStore.create("orders", { buyerId: "dashboard-test", status }),
+  );
+
   const dashboard = await admin.get("/api/admin/dashboard").expect(200);
   assert.equal(dashboard.body.data.users, 2);
   assert.equal(dashboard.body.data.registeredUsers, 1);
   assert.equal(dashboard.body.data.newUsersThisMonth, 2);
+  assert.equal(dashboard.body.data.orders, 7);
+  assert.equal(dashboard.body.data.ordersPending, 5);
 });
 
 test("only the exact configured admin can request product image upload grants", async () => {
@@ -213,4 +227,8 @@ test("only the exact configured admin can request product image upload grants", 
     .send({ purpose: "products" })
     .expect(200);
   assert.match(signature.body.data.folder, /gift-n-wrap\/products\//);
+  assert.equal(
+    signature.body.data.fullPublicId,
+    `${signature.body.data.folder}/${signature.body.data.public_id}`,
+  );
 });

@@ -24,6 +24,9 @@ export const notFound = (resource = "Resource") =>
 export const conflict = (message, details) =>
   new AppError(409, "CONFLICT", message, details);
 
+export const accountLinkRequired = (message = "Verify your email to connect this sign-in method") =>
+  new AppError(409, "ACCOUNT_LINK_REQUIRED", message);
+
 export const configurationError = (missing) =>
   new AppError(
     503,
