@@ -184,7 +184,9 @@ export default function AuthModal() {
           size: 'large',
           shape: 'rectangular',
           text: authIntent === 'signup' ? 'signup_with' : 'continue_with',
-          width: Math.min(430, googleButtonRef.current.clientWidth || 400),
+          // Google shows the browser's previously used account on buttons 200px or wider.
+          // Keep the official button just below that threshold so it remains generic.
+          width: 199,
         });
         setSdkReady((current) => ({ ...current, google: true }));
         setSdkErrors((current) => ({ ...current, google: '' }));
