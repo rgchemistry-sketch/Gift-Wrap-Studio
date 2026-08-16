@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { env } from "./env.js";
 import { removeLegacyUploadGrantTtlIndexes } from "../models/UploadGrant.js";
+import { removeLegacyUserIdentityIndexes } from "../models/User.js";
 
 mongoose.set("bufferCommands", false);
 mongoose.set("strictQuery", true);
@@ -66,6 +67,9 @@ export const connectDatabase = async () => {
       // creating the current normal lookup index so MongoDB never drops asset provenance before
       // the Cloudinary cleanup worker has confirmed deletion.
       await removeLegacyUploadGrantTtlIndexes();
+      // Google-only releases required this field and created a non-sparse unique index. Social and
+      // email accounts can legitimately omit googleSub, so replace only that exact legacy index.
+      await removeLegacyUserIdentityIndexes();
       await createDeclaredIndexes();
       status = "connected";
       lastError = undefined;
