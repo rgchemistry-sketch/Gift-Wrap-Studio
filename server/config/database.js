@@ -13,6 +13,19 @@ let retryAfter = 0;
 
 const retryDelayMs = () => Math.min(60_000, 1_000 * 2 ** Math.min(failureCount, 6));
 
+const safeErrorSummary = (error) => {
+  const message = String(error?.message || "Unknown database error")
+    .replace(/mongodb(?:\+srv)?:\/\/[^@\s]+@/gi, "mongodb://[credentials-redacted]@")
+    .slice(0, 500);
+  const details = [error?.name || "Error"];
+
+  if (error?.code !== undefined) details.push(`code=${error.code}`);
+  if (error?.codeName) details.push(`codeName=${error.codeName}`);
+  details.push(message);
+
+  return details.join("; ");
+};
+
 const createDeclaredIndexes = async () => {
   const models = Object.values(mongoose.models);
   await Promise.all(models.map((model) => model.createIndexes()));
@@ -74,7 +87,7 @@ export const connectDatabase = async () => {
       }
       if (!env.isTest) {
         console.warn(
-          `[database] MongoDB unavailable (${error.name}); using demo data and retrying later.`,
+          `[database] MongoDB unavailable (${safeErrorSummary(error)}); using demo data and retrying later.`,
         );
       }
       return "memory";
