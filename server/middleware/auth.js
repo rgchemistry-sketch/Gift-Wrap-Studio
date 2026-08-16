@@ -28,17 +28,32 @@ const resolveUser = async (request, { required }) => {
   const storedUser = await getUserById(payload.sub);
   const persistence = databaseStatus();
   if (persistence.mode === "memory" && !env.allowMemoryWrites) throw databaseUnavailable();
-  if (!storedUser && persistence.mode === "mongodb") throw unauthorized();
+  if (!storedUser) throw unauthorized();
+  if (Number(payload.ver || 0) !== Number(storedUser.sessionVersion || 0)) {
+    throw unauthorized("Your session has been signed out. Please sign in again");
+  }
 
   const email = (storedUser?.email || payload.email || "").toLowerCase();
   if (!email) throw unauthorized();
-  const role = env.adminEmail && email === env.adminEmail ? "admin" : "buyer";
+  const role =
+    env.adminEmail && email === env.adminEmail && storedUser.role === "admin"
+      ? "admin"
+      : "buyer";
   request.user = {
     id: storedUser?.id || payload.sub,
     email,
     name: storedUser?.name || payload.name || email.split("@")[0],
     avatar: storedUser?.avatar || payload.avatar || "",
     role,
+    emailVerifiedAt: storedUser.emailVerifiedAt || (storedUser.googleSub ? new Date(0) : null),
+    providers:
+      storedUser.providers?.length > 0
+        ? storedUser.providers
+        : storedUser.googleSub
+          ? ["google"]
+          : [],
+    sessionVersion: Number(storedUser.sessionVersion || 0),
+    googleSub: storedUser.googleSub || "",
     phone: storedUser?.phone || "",
     phoneVerifiedAt: storedUser?.phoneVerifiedAt || null,
   };

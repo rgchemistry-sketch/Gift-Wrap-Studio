@@ -10,7 +10,23 @@ const uploadGrantSchema = new mongoose.Schema(
       required: true,
       enum: ["custom-inquiries", "orders", "profiles", "products"],
     },
-    expiresAt: { type: Date, required: true, expires: 0 },
+    reservationToken: { type: String, default: "", index: true },
+    reservedAt: { type: Date },
+    reservationKind: {
+      type: String,
+      enum: ["product-write", "order-write", "cleanup", "expired-cleanup"],
+    },
+    consumedAt: { type: Date },
+    productId: { type: String, default: "", index: true },
+    orderId: { type: String, default: "", index: true },
+    deletedAt: { type: Date },
+    deletedByUserId: { type: String, default: "" },
+    cleanupAttempts: { type: Number, default: 0, min: 0 },
+    lastCleanupAttemptAt: { type: Date },
+    cleanupNotBefore: { type: Date },
+    // This is deliberately a normal index, not a TTL index. Expired grants must remain until
+    // Cloudinary confirms that the corresponding asset is gone.
+    expiresAt: { type: Date, required: true, index: true },
   },
   { timestamps: true, toJSON: jsonTransform, toObject: jsonTransform },
 );
@@ -30,3 +46,33 @@ export const UploadGrant =
   mongoose.models.UploadGrant || mongoose.model("UploadGrant", uploadGrantSchema);
 export const UploadQuota =
   mongoose.models.UploadQuota || mongoose.model("UploadQuota", uploadQuotaSchema);
+
+export const isLegacyUploadGrantTtlIndex = (index) =>
+  index?.expireAfterSeconds != null &&
+  Object.keys(index.key || {}).length === 1 &&
+  index.key.expiresAt === 1;
+
+export const removeLegacyUploadGrantTtlIndexes = async (
+  collection = UploadGrant.collection,
+) => {
+  let indexes;
+  try {
+    indexes = await collection.indexes();
+  } catch (error) {
+    if (error?.code === 26 || error?.codeName === "NamespaceNotFound") return [];
+    throw error;
+  }
+
+  const removed = [];
+  for (const index of indexes.filter(isLegacyUploadGrantTtlIndex)) {
+    try {
+      await collection.dropIndex(index.name);
+      removed.push(index.name);
+    } catch (error) {
+      // Concurrent application instances can both observe the legacy index during a rolling
+      // deployment. It is safe if another instance removed it first.
+      if (error?.code !== 27 && error?.codeName !== "IndexNotFound") throw error;
+    }
+  }
+  return removed;
+};

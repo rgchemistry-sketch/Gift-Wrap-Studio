@@ -34,6 +34,9 @@ const mergeSettings = (value = {}) => ({
   contact: { ...defaults.contact, ...(value.contact || {}) },
 });
 
+const numericDraftValue = (event) => event.target.value === '' ? '' : Number(event.target.value);
+const numericPayloadValue = (value) => Number(value);
+
 export default function SettingsEditor({ preview = false, notify }) {
   const [saved, setSaved] = useState(defaults);
   const [draft, setDraft] = useState(defaults);
@@ -72,14 +75,14 @@ export default function SettingsEditor({ preview = false, notify }) {
           title: draft.offer.title,
           body: draft.offer.body,
           code: draft.offer.code,
-          percent: draft.offer.percent,
-          maxDiscount: draft.offer.maxDiscount,
-          delaySeconds: draft.offer.delaySeconds,
+          percent: numericPayloadValue(draft.offer.percent),
+          maxDiscount: numericPayloadValue(draft.offer.maxDiscount),
+          delaySeconds: numericPayloadValue(draft.offer.delaySeconds),
         },
         shipping: {
-          flatFee: draft.shipping.flatFee,
-          freeThreshold: draft.shipping.freeThreshold,
-          bulkThreshold: draft.shipping.bulkThreshold,
+          flatFee: numericPayloadValue(draft.shipping.flatFee),
+          freeThreshold: numericPayloadValue(draft.shipping.freeThreshold),
+          bulkThreshold: numericPayloadValue(draft.shipping.bulkThreshold),
         },
         announcement: {
           enabled: draft.announcement.enabled,
@@ -112,15 +115,15 @@ export default function SettingsEditor({ preview = false, notify }) {
       <div className="settings-editor__forms">
         <section className="admin-panel setting-card">
           <div className="setting-card__head"><span><Icon name="spark"/></span><div><p className="eyebrow">Storefront moment</p><h3>Welcome offer popup</h3><p>Control the first message new customers see.</p></div><Form.Check type="switch" id="offer-enabled" label={draft.offer.enabled ? 'Live' : 'Hidden'} checked={draft.offer.enabled} onChange={(event) => update('offer', 'enabled', event.target.checked)}/></div>
-          <div className="admin-setting-row"><Form.Group controlId="offer-eyebrow"><Form.Label>Eyebrow</Form.Label><Form.Control maxLength={80} value={draft.offer.eyebrow} onChange={(event) => update('offer', 'eyebrow', event.target.value)}/></Form.Group><Form.Group controlId="offer-delay"><Form.Label>Popup delay (seconds)</Form.Label><Form.Control type="number" min="0" max="60" value={draft.offer.delaySeconds} onChange={(event) => update('offer', 'delaySeconds', Number(event.target.value))}/></Form.Group></div>
+          <div className="admin-setting-row"><Form.Group controlId="offer-eyebrow"><Form.Label>Eyebrow</Form.Label><Form.Control maxLength={80} value={draft.offer.eyebrow} onChange={(event) => update('offer', 'eyebrow', event.target.value)}/></Form.Group><Form.Group controlId="offer-delay"><Form.Label>Popup delay (seconds)</Form.Label><Form.Control required type="number" min="0" max="60" step="1" value={draft.offer.delaySeconds} onChange={(event) => update('offer', 'delaySeconds', numericDraftValue(event))}/></Form.Group></div>
           <Form.Group controlId="offer-title"><Form.Label>Headline</Form.Label><Form.Control maxLength={140} value={draft.offer.title} onChange={(event) => update('offer', 'title', event.target.value)}/></Form.Group>
           <Form.Group controlId="offer-body"><Form.Label>Message</Form.Label><Form.Control as="textarea" rows={3} maxLength={300} value={draft.offer.body} onChange={(event) => update('offer', 'body', event.target.value)}/></Form.Group>
-          <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="offer-code"><Form.Label>Offer code</Form.Label><Form.Control required value={draft.offer.code} onChange={(event) => update('offer', 'code', event.target.value.toUpperCase().replace(/\s/g, ''))}/></Form.Group><Form.Group controlId="offer-percent"><Form.Label>Discount (%)</Form.Label><Form.Control required type="number" min="1" max="100" value={draft.offer.percent} onChange={(event) => update('offer', 'percent', Number(event.target.value))}/></Form.Group><Form.Group controlId="offer-max-discount"><Form.Label>Maximum saving (₹)</Form.Label><Form.Control required type="number" min="0" value={draft.offer.maxDiscount} onChange={(event) => update('offer', 'maxDiscount', Number(event.target.value))}/></Form.Group></div>
+          <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="offer-code"><Form.Label>Offer code</Form.Label><Form.Control required value={draft.offer.code} onChange={(event) => update('offer', 'code', event.target.value.toUpperCase().replace(/\s/g, ''))}/></Form.Group><Form.Group controlId="offer-percent"><Form.Label>Discount (%)</Form.Label><Form.Control required type="number" min="0" max="100" step="1" value={draft.offer.percent} onChange={(event) => update('offer', 'percent', numericDraftValue(event))}/></Form.Group><Form.Group controlId="offer-max-discount"><Form.Label>Maximum saving (₹)</Form.Label><Form.Control required type="number" min="0" max="100000" step="1" value={draft.offer.maxDiscount} onChange={(event) => update('offer', 'maxDiscount', numericDraftValue(event))}/></Form.Group></div>
         </section>
 
         <section className="admin-panel setting-card">
           <div className="setting-card__head"><span><Icon name="truck"/></span><div><p className="eyebrow">Operations</p><h3>Timelines & thresholds</h3><p>Set clear expectations before customers order.</p></div></div>
-          <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="ready-lead-time"><Form.Label>Ready-piece lead time</Form.Label><Form.Control required value={draft.leadTimes.ready} onChange={(event) => update('leadTimes', 'ready', event.target.value)}/></Form.Group><Form.Group controlId="custom-lead-time"><Form.Label>Custom-piece lead time</Form.Label><Form.Control required value={draft.leadTimes.custom} onChange={(event) => update('leadTimes', 'custom', event.target.value)}/></Form.Group><Form.Group controlId="shipping-fee"><Form.Label>Standard shipping fee (₹)</Form.Label><Form.Control type="number" min="0" value={draft.shipping.flatFee} onChange={(event) => update('shipping', 'flatFee', Number(event.target.value))}/></Form.Group><Form.Group controlId="free-shipping-threshold"><Form.Label>Free shipping from (₹)</Form.Label><Form.Control type="number" min="0" value={draft.shipping.freeThreshold} onChange={(event) => update('shipping', 'freeThreshold', Number(event.target.value))}/></Form.Group><Form.Group controlId="bulk-order-threshold"><Form.Label>Bulk order from (pieces)</Form.Label><Form.Control type="number" min="2" max="100" value={draft.shipping.bulkThreshold} onChange={(event) => update('shipping', 'bulkThreshold', Number(event.target.value))}/></Form.Group></div>
+          <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="ready-lead-time"><Form.Label>Ready-piece lead time</Form.Label><Form.Control required value={draft.leadTimes.ready} onChange={(event) => update('leadTimes', 'ready', event.target.value)}/></Form.Group><Form.Group controlId="custom-lead-time"><Form.Label>Custom-piece lead time</Form.Label><Form.Control required value={draft.leadTimes.custom} onChange={(event) => update('leadTimes', 'custom', event.target.value)}/></Form.Group><Form.Group controlId="shipping-fee"><Form.Label>Standard shipping fee (₹)</Form.Label><Form.Control required type="number" min="0" max="10000" step="1" value={draft.shipping.flatFee} onChange={(event) => update('shipping', 'flatFee', numericDraftValue(event))}/></Form.Group><Form.Group controlId="free-shipping-threshold"><Form.Label>Free shipping from (₹)</Form.Label><Form.Control required type="number" min="0" max="1000000" step="1" value={draft.shipping.freeThreshold} onChange={(event) => update('shipping', 'freeThreshold', numericDraftValue(event))}/></Form.Group><Form.Group controlId="bulk-order-threshold"><Form.Label>Bulk order from (pieces)</Form.Label><Form.Control required type="number" min="2" max="100" step="1" value={draft.shipping.bulkThreshold} onChange={(event) => update('shipping', 'bulkThreshold', numericDraftValue(event))}/></Form.Group></div>
         </section>
 
         <section className="admin-panel setting-card">

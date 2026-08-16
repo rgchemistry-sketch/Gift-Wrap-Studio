@@ -39,7 +39,12 @@ export const verifyGoogleCredential = async (credential) => {
 export const signSession = (user) => {
   requireJwtConfig();
   return jwt.sign(
-    { email: user.email, name: user.name, avatar: user.avatar || "" },
+    {
+      email: user.email,
+      name: user.name,
+      avatar: user.avatar || "",
+      ver: Number(user.sessionVersion || 0),
+    },
     env.jwtSecret,
     {
       subject: user.id,
@@ -78,6 +83,13 @@ export const publicUser = (user) => ({
   name: user.name,
   avatar: user.avatar || "",
   role: user.role,
+  emailVerified: Boolean(user.emailVerifiedAt || user.googleSub),
+  providers:
+    user.providers?.length > 0
+      ? [...new Set(user.providers)]
+      : user.googleSub
+        ? ["google"]
+        : [],
   phoneMasked: user.phone ? `+91 •••••• ${user.phone.slice(-4)}` : "",
   phoneVerified: Boolean(user.phoneVerifiedAt),
 });

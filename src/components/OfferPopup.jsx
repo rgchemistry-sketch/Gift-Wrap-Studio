@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import Button from 'react-bootstrap/Button';
 import Modal from 'react-bootstrap/Modal';
+import { useLocation } from 'react-router-dom';
 import Icon from './Icon';
+import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 
 const DISMISSED_KEY = 'gnw-first-offer-dismissed';
@@ -9,6 +11,8 @@ const CLAIMED_KEY = 'gnw-first-offer-claimed';
 
 export default function OfferPopup() {
   const [show, setShow] = useState(false);
+  const location = useLocation();
+  const { authModalOpen, user } = useAuth();
   const { notify, welcomeOffer, claimedOfferCode, claimWelcomeOffer } = useShop();
   const popup = welcomeOffer?.popup || welcomeOffer || {};
   const enabled = welcomeOffer?.enabled ?? popup.enabled ?? true;
@@ -17,12 +21,17 @@ export default function OfferPopup() {
   const percent = Number(welcomeOffer?.percent ?? popup.percent ?? 10);
   const delaySeconds = Math.max(0, Number(popup.delaySeconds ?? welcomeOffer?.popupDelaySeconds ?? 7.5));
   const claimed = Boolean(claimedOfferCode || window.sessionStorage.getItem(CLAIMED_KEY) === 'true');
+  const suppressed = authModalOpen || location.pathname.startsWith('/admin') || location.pathname.startsWith('/account') || user?.role === 'admin';
 
   useEffect(() => {
+    if (suppressed) {
+      setShow(false);
+      return undefined;
+    }
     if (!welcomeOffer || !enabled || !eligible || window.sessionStorage.getItem(DISMISSED_KEY) || claimed) return undefined;
     const timer = window.setTimeout(() => setShow(true), delaySeconds * 1000);
     return () => window.clearTimeout(timer);
-  }, [claimed, delaySeconds, eligible, enabled, welcomeOffer]);
+  }, [claimed, delaySeconds, eligible, enabled, suppressed, welcomeOffer]);
 
   const dismiss = () => {
     window.sessionStorage.setItem(DISMISSED_KEY, 'true');

@@ -57,12 +57,26 @@ const relativeOrHttpsUrl = z
     },
     "Enter an HTTPS URL or a site-relative path",
   );
+const productImageUrl = relativeOrHttpsUrl.refine(
+  (value) => {
+    if (value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\")) {
+      return true;
+    }
+    try {
+      return new URL(value).hostname.toLowerCase() === "res.cloudinary.com";
+    } catch {
+      return false;
+    }
+  },
+  "Use a Cloudinary HTTPS URL or a site-relative path",
+);
 const optionalBlank = (schema) => z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
 
 export const googleLoginSchema = z
   .object({
     credential: text(20, 10_000).optional(),
     idToken: text(20, 10_000).optional(),
+    intent: z.enum(["login", "signup"]),
   })
   .strict()
   .refine((value) => Boolean(value.credential || value.idToken), {
@@ -90,7 +104,7 @@ export const slugParamsSchema = z
 
 const imageSchema = z
   .object({
-    url: relativeOrHttpsUrl,
+    url: productImageUrl,
     publicId: z
       .string()
       .trim()
@@ -425,5 +439,18 @@ export const contactStatusSchema = z
 export const uploadSignatureSchema = z
   .object({
     purpose: z.enum(["custom-inquiries", "orders", "profiles", "products"]).default("custom-inquiries"),
+  })
+  .strict();
+
+export const uploadAssetDeleteSchema = z
+  .object({
+    publicId: z
+      .string()
+      .trim()
+      .max(300)
+      .regex(
+        /^gift-n-wrap\/(?:custom-inquiries|orders|profiles|products)\/[A-Za-z0-9_-]+\/[0-9a-fA-F-]{36}$/,
+        "Enter a valid reserved upload public ID",
+      ),
   })
   .strict();

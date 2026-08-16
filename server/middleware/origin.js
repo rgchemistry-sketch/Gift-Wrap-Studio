@@ -8,7 +8,15 @@ export const isOriginAllowed = (request, origin = request.get("origin")) => {
   const normalizedOrigin = normalizedHost(origin);
   if (env.clientOrigins.includes(normalizedOrigin)) return true;
   try {
-    return new URL(normalizedOrigin).host === normalizedHost(request.get("host"));
+    const originUrl = new URL(normalizedOrigin);
+    if (
+      !env.isProduction
+      && ["http:", "https:"].includes(originUrl.protocol)
+      && ["localhost", "127.0.0.1", "[::1]"].includes(originUrl.hostname)
+    ) {
+      return true;
+    }
+    return originUrl.host === normalizedHost(request.get("host"));
   } catch {
     return false;
   }

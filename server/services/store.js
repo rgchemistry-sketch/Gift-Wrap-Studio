@@ -7,6 +7,7 @@ import {
   badRequest,
   conflict,
   databaseUnavailable,
+  forbidden,
   notFound,
   rateLimited,
 } from "../lib/errors.js";
@@ -18,8 +19,32 @@ import { Product } from "../models/Product.js";
 import { StudioSettings } from "../models/StudioSettings.js";
 import { User } from "../models/User.js";
 import { UploadGrant, UploadQuota } from "../models/UploadGrant.js";
+import { AuthIdentity } from "../models/AuthIdentity.js";
 
 const clone = (value) => (value == null ? value : structuredClone(value));
+
+let uploadGrantConsumptionHookForTests;
+let uploadGrantReservationConflictHookForTests;
+
+export const setUploadGrantConsumptionHookForTests = (hook) => {
+  if (!env.isTest) throw new Error("Upload grant consumption hooks are test-only");
+  uploadGrantConsumptionHookForTests = hook;
+};
+
+export const resetUploadGrantConsumptionHookForTests = () => {
+  if (!env.isTest) throw new Error("Upload grant consumption hooks are test-only");
+  uploadGrantConsumptionHookForTests = undefined;
+};
+
+export const setUploadGrantReservationConflictHookForTests = (hook) => {
+  if (!env.isTest) throw new Error("Upload grant reservation hooks are test-only");
+  uploadGrantReservationConflictHookForTests = hook;
+};
+
+export const resetUploadGrantReservationConflictHookForTests = () => {
+  if (!env.isTest) throw new Error("Upload grant reservation hooks are test-only");
+  uploadGrantReservationConflictHookForTests = undefined;
+};
 
 const plain = (record) => {
   if (!record) return undefined;
@@ -40,6 +65,7 @@ const publicOrder = (record) => {
   delete value.idempotencyHash;
   delete value.inventoryReservations;
   delete value.inventoryReleasedAt;
+  delete value.writePending;
   return value;
 };
 
@@ -58,6 +84,11 @@ const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const assertWritable = (mode) => {
   if (mode === "memory" && !env.allowMemoryWrites) throw databaseUnavailable();
   return mode;
+};
+
+const restoreMemoryRecord = (collection, record) => {
+  memoryStore.remove(collection, record.id);
+  return memoryStore.create(collection, record, record.id);
 };
 
 let mongoSeedPromise;
@@ -178,6 +209,85 @@ export const getProductForAdmin = async (id) => {
 const productSkus = (product) =>
   [product.sku, ...(product.variants || []).map((variant) => variant.sku)].filter(Boolean);
 
+const productImagePublicIds = (product) =>
+  (product.images || []).map((image) => image.publicId).filter(Boolean);
+
+const cloudinaryUrlMatchesPublicId = (imageUrl, publicId) => {
+  if (!env.cloudinaryCloudName) return false;
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(imageUrl.pathname);
+  } catch {
+    return false;
+  }
+  const uploadPrefix = `/${env.cloudinaryCloudName}/image/upload/`;
+  if (!decodedPath.startsWith(uploadPrefix)) return false;
+  const deliveryPath = decodedPath.slice(uploadPrefix.length);
+  const versionMarker = /(?:^|\/)v\d+\//g;
+  let versionMatch;
+  let latestVersionMatch;
+  while ((versionMatch = versionMarker.exec(deliveryPath))) {
+    latestVersionMatch = versionMatch;
+  }
+  const deliveredAsset = latestVersionMatch
+    ? deliveryPath.slice(latestVersionMatch.index + latestVersionMatch[0].length)
+    : deliveryPath;
+  return new RegExp(`^${escapeRegExp(publicId)}(?:\\.[A-Za-z0-9]+)?$`).test(deliveredAsset);
+};
+
+const orderCustomizationPublicIds = (items) =>
+  items.flatMap((item, index) => {
+    if (!item.customization) return [];
+    let customization;
+    try {
+      customization = JSON.parse(item.customization);
+    } catch {
+      return [];
+    }
+    if (
+      !customization ||
+      typeof customization !== "object" ||
+      Array.isArray(customization) ||
+      !Object.hasOwn(customization, "media") ||
+      customization.media == null
+    ) {
+      return [];
+    }
+    const field = `items.${index}.customization`;
+    const media = customization.media;
+    if (!media || typeof media !== "object" || Array.isArray(media)) {
+      throw badRequest("Customization media must be a securely uploaded image", [{ field }]);
+    }
+    if (media.pending) {
+      throw badRequest("Finish uploading the customization image before placing the order", [
+        { field },
+      ]);
+    }
+    const url = typeof media.url === "string" ? media.url.trim() : "";
+    const publicId = typeof media.publicId === "string" ? media.publicId.trim() : "";
+    if (!url || !publicId) {
+      throw badRequest("Customization media must include its secure URL and upload public ID", [
+        { field },
+      ]);
+    }
+    let imageUrl;
+    try {
+      imageUrl = new URL(url);
+    } catch {
+      throw badRequest("Customization media has an invalid image URL", [{ field }]);
+    }
+    if (
+      imageUrl.protocol !== "https:" ||
+      imageUrl.hostname.toLowerCase() !== "res.cloudinary.com" ||
+      !cloudinaryUrlMatchesPublicId(imageUrl, publicId)
+    ) {
+      throw badRequest("The customization image URL does not match its upload public ID", [
+        { field },
+      ]);
+    }
+    return [publicId];
+  });
+
 const assertProductInvariants = (product) => {
   if (product.compareAtPrice != null && product.compareAtPrice < product.price) {
     throw badRequest("Compare-at price must be at least the selling price", [
@@ -187,6 +297,10 @@ const assertProductInvariants = (product) => {
   const skus = productSkus(product);
   if (new Set(skus).size !== skus.length) {
     throw conflict("Every SKU in a product must be unique", [{ field: "variants" }]);
+  }
+  const imagePublicIds = productImagePublicIds(product);
+  if (new Set(imagePublicIds).size !== imagePublicIds.length) {
+    throw conflict("Every uploaded product image must be unique", [{ field: "images" }]);
   }
   for (const [index, image] of (product.images || []).entries()) {
     if (!image.publicId) continue;
@@ -198,15 +312,12 @@ const assertProductInvariants = (product) => {
         { field: `images.${index}.url` },
       ]);
     }
-    const expectedPrefix = env.cloudinaryCloudName
-      ? `/image/upload/`
-      : "/image/upload/";
     if (
       imageUrl.protocol !== "https:" ||
       imageUrl.hostname.toLowerCase() !== "res.cloudinary.com" ||
-      (env.cloudinaryCloudName && !imageUrl.pathname.startsWith(`/${env.cloudinaryCloudName}${expectedPrefix}`))
+      !cloudinaryUrlMatchesPublicId(imageUrl, image.publicId)
     ) {
-      throw badRequest("Product image public IDs must belong to the configured Cloudinary account", [
+      throw badRequest("The product image URL does not match its reserved Cloudinary public ID", [
         { field: `images.${index}` },
       ]);
     }
@@ -232,45 +343,138 @@ const assertProductSkusAvailable = async (candidate, mode, excludedId) => {
   }
 };
 
-export const createProduct = async (input) => {
+export const createProduct = async (input, { userId } = {}) => {
   const mode = assertWritable(await ensureCatalogSeeded());
   assertProductInvariants(input);
   await assertProductSkusAvailable(input, mode);
-  if (mode === "mongodb") return plain(await Product.create(input));
-  if (memoryStore.findOne("products", (product) => product.slug === input.slug)) {
-    throw conflict("A product with this slug already exists", [{ field: "slug" }]);
+  const publicIds = productImagePublicIds(input);
+  if (publicIds.length && !userId) {
+    throw forbidden("An authenticated administrator must own every uploaded product image");
   }
-  return memoryStore.create("products", input);
+  const reservation = await reserveProductImageGrants({ userId, publicIds });
+  if (mode === "mongodb") {
+    let session;
+    let product;
+    try {
+      session = await mongoose.startSession();
+      await session.withTransaction(async () => {
+        [product] = await Product.create([input], { session });
+        await consumeProductImageGrants({
+          reservationToken: reservation?.reservationToken,
+          productId: product.id,
+          expectedCount: publicIds.length,
+          session,
+          mode,
+        });
+      });
+      if (!product) throw conflict("The product could not be created");
+      return plain(product);
+    } catch (error) {
+      await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
+      throw error;
+    } finally {
+      await session?.endSession();
+    }
+  }
+
+  let product;
+  try {
+    if (memoryStore.findOne("products", (item) => item.slug === input.slug)) {
+      throw conflict("A product with this slug already exists", [{ field: "slug" }]);
+    }
+    product = memoryStore.create("products", input);
+    await consumeProductImageGrants({
+      reservationToken: reservation?.reservationToken,
+      productId: product.id,
+      expectedCount: publicIds.length,
+      mode,
+    });
+    return product;
+  } catch (error) {
+    if (product) memoryStore.remove("products", product.id);
+    await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
+    throw error;
+  }
 };
 
-export const updateProduct = async (id, input) => {
+export const updateProduct = async (id, input, { userId } = {}) => {
   const mode = assertWritable(await ensureCatalogSeeded());
   const changes = input.active === true ? { ...input, archivedAt: null } : input;
-  if (mode === "mongodb") {
-    if (!mongoose.isValidObjectId(id)) throw notFound("Product");
-    const existing = plain(await Product.findById(id));
-    if (!existing) throw notFound("Product");
-    const candidate = { ...existing, ...changes };
-    assertProductInvariants(candidate);
-    await assertProductSkusAvailable(candidate, mode, new mongoose.Types.ObjectId(id));
-    const record = await Product.findByIdAndUpdate(id, { $set: changes }, { new: true, runValidators: true });
-    if (!record) throw notFound("Product");
-    return plain(record);
-  }
+  if (mode === "mongodb" && !mongoose.isValidObjectId(id)) throw notFound("Product");
+  const existing =
+    mode === "mongodb" ? plain(await Product.findById(id)) : memoryStore.get("products", id);
+  if (!existing) throw notFound("Product");
+  const candidate = { ...existing, ...changes };
+  assertProductInvariants(candidate);
+  await assertProductSkusAvailable(
+    candidate,
+    mode,
+    mode === "mongodb" ? new mongoose.Types.ObjectId(id) : id,
+  );
   if (
+    mode === "memory" &&
     input.slug &&
     memoryStore.findOne("products", (product) => product.slug === input.slug && product.id !== id)
   ) {
     throw conflict("A product with this slug already exists", [{ field: "slug" }]);
   }
-  const existing = memoryStore.get("products", id);
-  if (!existing) throw notFound("Product");
-  const candidate = { ...existing, ...changes };
-  assertProductInvariants(candidate);
-  await assertProductSkusAvailable(candidate, mode, id);
-  const record = memoryStore.update("products", id, changes);
-  if (!record) throw notFound("Product");
-  return record;
+
+  const retainedPublicIds = new Set(productImagePublicIds(existing));
+  const newPublicIds = productImagePublicIds(candidate).filter(
+    (publicId) => !retainedPublicIds.has(publicId),
+  );
+  if (newPublicIds.length && !userId) {
+    throw forbidden("An authenticated administrator must own every new uploaded product image");
+  }
+  const reservation = await reserveProductImageGrants({ userId, publicIds: newPublicIds });
+  if (mode === "mongodb") {
+    let session;
+    let product;
+    try {
+      session = await mongoose.startSession();
+      await session.withTransaction(async () => {
+        const record = await Product.findByIdAndUpdate(
+          id,
+          { $set: changes },
+          { new: true, runValidators: true, session },
+        );
+        if (!record) throw notFound("Product");
+        product = plain(record);
+        await consumeProductImageGrants({
+          reservationToken: reservation?.reservationToken,
+          productId: product.id,
+          expectedCount: newPublicIds.length,
+          session,
+          mode,
+        });
+      });
+      if (!product) throw conflict("The product could not be updated");
+      return product;
+    } catch (error) {
+      await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
+      throw error;
+    } finally {
+      await session?.endSession();
+    }
+  }
+
+  let written = false;
+  try {
+    const record = memoryStore.update("products", id, changes);
+    if (!record) throw notFound("Product");
+    written = true;
+    await consumeProductImageGrants({
+      reservationToken: reservation?.reservationToken,
+      productId: record.id,
+      expectedCount: newPublicIds.length,
+      mode,
+    });
+    return record;
+  } catch (error) {
+    if (written) restoreMemoryRecord("products", existing);
+    await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
+    throw error;
+  }
 };
 
 export const archiveProduct = async (id) =>
@@ -292,9 +496,11 @@ export const upsertGoogleUser = async ({ googleSub, email, name, avatar, phone, 
       Object.assign(record, {
         googleSub,
         email: normalizedEmail,
+        emailVerifiedAt: record.emailVerifiedAt || new Date(),
         name,
         avatar: avatar || "",
         role,
+        providers: [...new Set([...(record.providers || []), "google"])],
         lastLoginAt: new Date(),
         ...(phone ? { phone, phoneVerifiedAt: phoneVerifiedAt || new Date() } : {}),
       });
@@ -303,9 +509,12 @@ export const upsertGoogleUser = async ({ googleSub, email, name, avatar, phone, 
       record = await User.create({
         googleSub,
         email: normalizedEmail,
+        emailVerifiedAt: new Date(),
         name,
         avatar: avatar || "",
         role,
+        providers: ["google"],
+        sessionVersion: 0,
         lastLoginAt: new Date(),
         ...(phone ? { phone, phoneVerifiedAt: phoneVerifiedAt || new Date() } : {}),
       });
@@ -323,9 +532,12 @@ export const upsertGoogleUser = async ({ googleSub, email, name, avatar, phone, 
   const changes = {
     googleSub,
     email: normalizedEmail,
+    emailVerifiedAt: record?.emailVerifiedAt || new Date(),
     name,
     avatar: avatar || "",
     role,
+    providers: [...new Set([...(record?.providers || []), "google"])],
+    sessionVersion: record?.sessionVersion || 0,
     lastLoginAt: new Date(),
     ...(phone ? { phone, phoneVerifiedAt: phoneVerifiedAt || new Date() } : {}),
   };
@@ -358,6 +570,233 @@ export const getUserById = async (id) => {
     return plain(await User.findById(id));
   }
   return memoryStore.get("users", id);
+};
+
+const identityKey = (provider, subject) => `${provider}:${subject}`;
+const normalizedProviders = (providers = []) =>
+  [...new Set(providers.filter((provider) => ["email", "google", "facebook", "apple"].includes(provider)))];
+
+const plainIdentity = (record) => {
+  const value = plain(record);
+  if (value?.userId) value.userId = String(value.userId);
+  return value;
+};
+
+export const getUserByEmail = async (email) => {
+  const mode = await connectDatabase();
+  const normalizedEmail = email.toLowerCase();
+  if (mode === "mongodb") return plain(await User.findOne({ email: normalizedEmail }));
+  return memoryStore.findOne("users", (user) => user.email === normalizedEmail);
+};
+
+export const getLegacyGoogleUserBySubject = async (googleSub) => {
+  const mode = await connectDatabase();
+  if (mode === "mongodb") return plain(await User.findOne({ googleSub }));
+  return memoryStore.findOne("users", (user) => user.googleSub === googleSub);
+};
+
+export const getAuthIdentity = async (provider, subject) => {
+  const mode = await connectDatabase();
+  if (mode === "mongodb") {
+    return plainIdentity(await AuthIdentity.findOne({ provider, subject }));
+  }
+  return memoryStore.get("authIdentities", identityKey(provider, subject));
+};
+
+export const getUserByAuthIdentity = async (provider, subject) => {
+  const identity = await getAuthIdentity(provider, subject);
+  return identity ? getUserById(identity.userId) : undefined;
+};
+
+export const createUserWithAuthIdentity = async ({
+  provider,
+  subject,
+  email,
+  emailVerified,
+  name,
+  avatar,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  const normalizedEmail = email.toLowerCase();
+  const adminEligibleProvider = ["email", "google"].includes(provider);
+  const role =
+    adminEligibleProvider && env.adminEmail && normalizedEmail === env.adminEmail
+      ? "admin"
+      : "buyer";
+  const now = new Date();
+  const userInput = {
+    email: normalizedEmail,
+    ...(emailVerified ? { emailVerifiedAt: now } : {}),
+    name: name?.trim() || normalizedEmail.split("@")[0],
+    avatar: avatar || "",
+    role,
+    providers: [provider],
+    sessionVersion: 0,
+    lastLoginAt: now,
+    ...(provider === "google" ? { googleSub: subject } : {}),
+  };
+
+  if (mode === "mongodb") {
+    const user = await User.create(userInput);
+    try {
+      await AuthIdentity.create({
+        userId: user._id,
+        provider,
+        subject,
+        providerEmail: normalizedEmail,
+        emailVerified: Boolean(emailVerified),
+        lastUsedAt: now,
+      });
+    } catch (error) {
+      await User.findByIdAndDelete(user._id).catch(() => {});
+      throw error;
+    }
+    return plain(user);
+  }
+
+  if (memoryStore.findOne("users", (user) => user.email === normalizedEmail)) {
+    throw conflict("An account already uses this email address");
+  }
+  if (memoryStore.get("authIdentities", identityKey(provider, subject))) {
+    throw conflict("That sign-in identity is already connected to an account");
+  }
+  const user = memoryStore.create("users", userInput);
+  memoryStore.create(
+    "authIdentities",
+    {
+      userId: user.id,
+      provider,
+      subject,
+      providerEmail: normalizedEmail,
+      emailVerified: Boolean(emailVerified),
+      lastUsedAt: now,
+    },
+    identityKey(provider, subject),
+  );
+  return user;
+};
+
+export const linkAuthIdentity = async ({
+  userId,
+  provider,
+  subject,
+  providerEmail = "",
+  emailVerified = false,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  const existing = await getAuthIdentity(provider, subject);
+  if (existing && existing.userId !== String(userId)) {
+    throw conflict("That sign-in identity is already connected to another account");
+  }
+  const now = new Date();
+
+  if (mode === "mongodb") {
+    if (!mongoose.isValidObjectId(userId)) throw notFound("User");
+    if (!existing) {
+      await AuthIdentity.create({
+        userId,
+        provider,
+        subject,
+        providerEmail: providerEmail.toLowerCase(),
+        emailVerified: Boolean(emailVerified),
+        lastUsedAt: now,
+      });
+    } else {
+      await AuthIdentity.findByIdAndUpdate(existing.id, {
+        $set: {
+          providerEmail: providerEmail.toLowerCase(),
+          emailVerified: Boolean(existing.emailVerified || emailVerified),
+          lastUsedAt: now,
+        },
+      });
+    }
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { $addToSet: { providers: provider } },
+      { new: true, runValidators: true },
+    );
+    if (!user) throw notFound("User");
+    return plain(user);
+  }
+
+  if (!existing) {
+    memoryStore.create(
+      "authIdentities",
+      {
+        userId: String(userId),
+        provider,
+        subject,
+        providerEmail: providerEmail.toLowerCase(),
+        emailVerified: Boolean(emailVerified),
+        lastUsedAt: now,
+      },
+      identityKey(provider, subject),
+    );
+  } else {
+    memoryStore.update("authIdentities", existing.id, {
+      providerEmail: providerEmail.toLowerCase(),
+      emailVerified: Boolean(existing.emailVerified || emailVerified),
+      lastUsedAt: now,
+    });
+  }
+  const user = memoryStore.get("users", userId);
+  if (!user) throw notFound("User");
+  return memoryStore.update("users", userId, {
+    providers: normalizedProviders([...(user.providers || []), provider]),
+  });
+};
+
+export const touchAuthenticatedUser = async (
+  userId,
+  { provider, subject = "", providerEmail = "", emailVerified = false, name, avatar } = {},
+) => {
+  const mode = assertWritable(await connectDatabase());
+  const existing = await getUserById(userId);
+  if (!existing) throw notFound("User");
+  const normalizedProviderEmail = providerEmail.toLowerCase();
+  const verifiesPrimaryEmail =
+    emailVerified && normalizedProviderEmail && normalizedProviderEmail === existing.email;
+  const adminEligible = existing.role === "admin" || ["email", "google"].includes(provider);
+  const changes = {
+    role:
+      adminEligible && env.adminEmail && existing.email === env.adminEmail
+        ? "admin"
+        : "buyer",
+    providers: normalizedProviders([...(existing.providers || []), provider]),
+    lastLoginAt: new Date(),
+    ...(name?.trim() ? { name: name.trim() } : {}),
+    ...(avatar ? { avatar } : {}),
+    ...(verifiesPrimaryEmail && !existing.emailVerifiedAt ? { emailVerifiedAt: new Date() } : {}),
+  };
+  if (provider === "google" && !existing.googleSub) {
+    const identity = await getAuthIdentity(provider, subject);
+    if (identity?.subject) changes.googleSub = identity.subject;
+  }
+
+  if (mode === "mongodb") {
+    return plain(
+      await User.findByIdAndUpdate(userId, { $set: changes }, { new: true, runValidators: true }),
+    );
+  }
+  return memoryStore.update("users", userId, changes);
+};
+
+export const revokeUserSessions = async (userId) => {
+  const mode = assertWritable(await connectDatabase());
+  if (mode === "mongodb") {
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { $inc: { sessionVersion: 1 } },
+      { new: true, runValidators: true },
+    );
+    if (!user) throw notFound("User");
+    return plain(user);
+  }
+  const user = memoryStore.get("users", userId);
+  if (!user) throw notFound("User");
+  return memoryStore.update("users", userId, {
+    sessionVersion: Number(user.sessionVersion || 0) + 1,
+  });
 };
 
 const defaultStudioSettings = () => ({
@@ -486,12 +925,15 @@ const findIdempotentOrder = async (buyerId, idempotencyKey, mode) => {
       ? await Order.findOne({ buyerId, idempotencyKey }).select("+idempotencyKey +idempotencyHash")
       : memoryStore.findOne(
           "orders",
-          (order) => order.buyerId === buyerId && order.idempotencyKey === idempotencyKey,
+          (order) =>
+            order.buyerId === buyerId &&
+            order.idempotencyKey === idempotencyKey &&
+            order.writePending !== true,
         );
   return plain(record);
 };
 
-const persistMongoOrder = async (record, stockRequests) => {
+const persistMongoOrder = async (record, stockRequests, grantReservation) => {
   const session = await mongoose.startSession();
   let createdOrder;
   try {
@@ -536,6 +978,13 @@ const persistMongoOrder = async (record, stockRequests) => {
           });
         }
         [createdOrder] = await Order.create([{ ...record, inventoryReservations }], { session });
+        await consumeOrderCustomizationGrants({
+          reservationToken: grantReservation?.reservationToken,
+          orderId: createdOrder.id,
+          expectedCount: grantReservation?.publicIds.length || 0,
+          session,
+          mode: "mongodb",
+        });
       },
       {
         readConcern: { level: "snapshot" },
@@ -590,6 +1039,45 @@ const assertMatchingReplay = (order, requestHash) => {
   return order;
 };
 
+const waitForIdempotentOrder = async (buyerId, idempotencyKey, requestHash, mode) => {
+  if (!idempotencyKey) return undefined;
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const repeated = await findIdempotentOrder(buyerId, idempotencyKey, mode);
+    if (repeated) return assertMatchingReplay(repeated, requestHash);
+    if (attempt < 79) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  return undefined;
+};
+
+const reserveOrderGrantsForIdempotentWrite = async ({
+  buyerId,
+  publicIds,
+  idempotencyKey,
+  idempotencyHash,
+  mode,
+}) => {
+  try {
+    return {
+      reservation: await reserveOrderCustomizationGrants({
+        userId: buyerId,
+        publicIds,
+      }),
+    };
+  } catch (error) {
+    if (error?.code !== "CONFLICT" || !idempotencyKey) throw error;
+    const repeated = await waitForIdempotentOrder(
+      buyerId,
+      idempotencyKey,
+      idempotencyHash,
+      mode,
+    );
+    if (repeated) return { repeated };
+    throw error;
+  }
+};
+
 export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) => {
   const mode = assertWritable(await ensureCatalogSeeded());
   const studioSettings = await getStudioSettings(mode);
@@ -629,6 +1117,7 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
       customization: requestedItem.customization,
     });
   }
+  const customizationPublicIds = [...new Set(orderCustomizationPublicIds(items))];
 
   const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const shippingFee =
@@ -696,7 +1185,10 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
     const repeated = idempotencyKey
       ? memoryStore.findOne(
           "orders",
-          (order) => order.buyerId === buyer.id && order.idempotencyKey === idempotencyKey,
+          (order) =>
+            order.buyerId === buyer.id &&
+            order.idempotencyKey === idempotencyKey &&
+            order.writePending !== true,
         )
       : undefined;
     if (repeated) {
@@ -709,25 +1201,66 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
     if (input.couponCode && !firstOrderNow) {
       throw conflict("The welcome offer is available on your first order only");
     }
-    const inventoryReservations = reserveMemoryInventory(stockRequests);
-    return {
-      order: publicOrder(
-        memoryStore.create("orders", {
+    const grantAttempt = await reserveOrderGrantsForIdempotentWrite({
+      buyerId: buyer.id,
+      publicIds: customizationPublicIds,
+      idempotencyKey,
+      idempotencyHash,
+      mode,
+    });
+    if (grantAttempt.repeated) {
+      return { order: publicOrder(grantAttempt.repeated), replayed: true };
+    }
+    const grantReservation = grantAttempt.reservation;
+    const inventorySnapshots = [...stockRequests.keys()]
+      .map((productId) => memoryStore.get("products", productId))
+      .filter((product) => product?.inventory != null);
+    let createdOrder;
+    try {
+      const inventoryReservations = reserveMemoryInventory(stockRequests);
+      createdOrder = memoryStore.create("orders", {
           ...record,
           isFirstOrder: firstOrderNow,
           inventoryReservations,
           inventoryReleasedAt: null,
-        }),
-      ),
-      replayed: false,
-    };
+          writePending: true,
+        });
+      await consumeOrderCustomizationGrants({
+        reservationToken: grantReservation?.reservationToken,
+        orderId: createdOrder.id,
+        expectedCount: customizationPublicIds.length,
+        mode,
+      });
+      createdOrder = memoryStore.update("orders", createdOrder.id, { writePending: false });
+      return { order: publicOrder(createdOrder), replayed: false };
+    } catch (error) {
+      if (createdOrder) memoryStore.remove("orders", createdOrder.id);
+      inventorySnapshots.forEach((product) => restoreMemoryRecord("products", product));
+      await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
+      throw error;
+    }
   }
 
+  const grantAttempt = await reserveOrderGrantsForIdempotentWrite({
+    buyerId: buyer.id,
+    publicIds: customizationPublicIds,
+    idempotencyKey,
+    idempotencyHash,
+    mode,
+  });
+  if (grantAttempt.repeated) {
+    return { order: publicOrder(grantAttempt.repeated), replayed: true };
+  }
+  const grantReservation = grantAttempt.reservation;
   try {
-    return { order: publicOrder(await persistMongoOrder(record, stockRequests)), replayed: false };
+    return {
+      order: publicOrder(await persistMongoOrder(record, stockRequests, grantReservation)),
+      replayed: false,
+    };
   } catch (error) {
     const repeated = await findIdempotentOrder(buyer.id, idempotencyKey, mode);
     if (repeated) {
+      await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
       return {
         order: publicOrder(assertMatchingReplay(repeated, idempotencyHash)),
         replayed: true,
@@ -736,18 +1269,30 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
 
     if (record.isFirstOrder && duplicateIndex(error, "uniq_buyer_first_order", "isFirstOrder")) {
       if (input.couponCode) {
+        await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
         throw conflict("The welcome offer is available on your first order only");
       }
-      return {
-        order: publicOrder(
-          await persistMongoOrder({ ...record, isFirstOrder: false }, stockRequests),
-        ),
-        replayed: false,
-      };
+      try {
+        return {
+          order: publicOrder(
+            await persistMongoOrder(
+              { ...record, isFirstOrder: false },
+              stockRequests,
+              grantReservation,
+            ),
+          ),
+          replayed: false,
+        };
+      } catch (retryError) {
+        await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
+        throw retryError;
+      }
     }
     if (duplicateIndex(error, "uniq_buyer_welcome_offer", "welcomeOfferClaimed")) {
+      await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
       throw conflict("The welcome offer is available on your first order only");
     }
+    await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
     throw error;
   }
 };
@@ -985,6 +1530,13 @@ const adminUserView = (record, relationship = {}) => {
     name: user.name,
     avatar: user.avatar || "",
     role: user.role,
+    emailVerified: Boolean(user.emailVerifiedAt || user.googleSub),
+    providers:
+      user.providers?.length > 0
+        ? normalizedProviders(user.providers)
+        : user.googleSub
+          ? ["google"]
+          : [],
     phone: maskPhone(user.phone),
     phoneVerified: Boolean(user.phoneVerifiedAt),
     createdAt: user.createdAt,
@@ -1206,10 +1758,12 @@ export const getRegisteredUserDetail = async (id) => {
 
 export const getDashboardStats = async () => {
   const mode = await ensureCatalogSeeded();
+  const pendingOrderStatuses = ["placed", "confirmed", "in_progress", "ready", "shipped"];
   if (mode === "mongodb") {
-    const [products, orders, newInquiries, newMessages, userMetrics] = await Promise.all([
+    const [products, orders, ordersPending, newInquiries, newMessages, userMetrics] = await Promise.all([
       Product.countDocuments({ active: true }),
       Order.countDocuments({}),
+      Order.countDocuments({ status: { $in: pendingOrderStatuses } }),
       CustomInquiry.countDocuments({ status: "new" }),
       Contact.countDocuments({ status: "new" }),
       getRegisteredUserMetrics(mode),
@@ -1217,6 +1771,7 @@ export const getDashboardStats = async () => {
     return {
       products,
       orders,
+      ordersPending,
       newInquiries,
       newMessages,
       users: userMetrics.total,
@@ -1230,6 +1785,10 @@ export const getDashboardStats = async () => {
   return {
     products: memoryStore.count("products", (product) => product.active),
     orders: memoryStore.count("orders"),
+    ordersPending: memoryStore.count(
+      "orders",
+      (order) => pendingOrderStatuses.includes(order.status),
+    ),
     newInquiries: memoryStore.count("customInquiries", (inquiry) => inquiry.status === "new"),
     newMessages: memoryStore.count("contacts", (contact) => contact.status === "new"),
     users: userMetrics.total,
@@ -1240,9 +1799,14 @@ export const getDashboardStats = async () => {
   };
 };
 
+const uploadGrantLifetimeSeconds = (purpose) =>
+  purpose === "orders" ? 7 * 24 * 60 * 60 : 2 * 60 * 60;
+
 export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
   const mode = assertWritable(await connectDatabase());
   const now = Date.now();
+  const expiresInSeconds = uploadGrantLifetimeSeconds(purpose);
+  const grantExpiresAt = new Date(now + expiresInSeconds * 1_000);
   const windowStartedAt = new Date(Math.floor(now / 3_600_000) * 3_600_000);
   const expiresAt = new Date(windowStartedAt.getTime() + 2 * 3_600_000);
   const quotaId = `${userId}:${windowStartedAt.toISOString()}`;
@@ -1271,13 +1835,13 @@ export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
         throw error;
       }
     }
-    await UploadGrant.create({
+    const grant = await UploadGrant.create({
       publicId,
       userId,
       purpose,
-      expiresAt: new Date(now + 2 * 3_600_000),
+      expiresAt: grantExpiresAt,
     });
-    return;
+    return { ...plain(grant), expiresInSeconds };
   }
 
   const existing = memoryStore.get("uploadQuotas", quotaId);
@@ -1293,9 +1857,663 @@ export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
       quotaId,
     );
   }
-  memoryStore.create(
+  const grant = memoryStore.create(
     "uploadGrants",
-    { publicId, userId, purpose, expiresAt: new Date(now + 2 * 3_600_000) },
+    {
+      publicId,
+      userId,
+      purpose,
+      reservationToken: "",
+      productId: "",
+      orderId: "",
+      expiresAt: grantExpiresAt,
+    },
     publicId,
   );
+  return { ...grant, expiresInSeconds };
+};
+
+const unreservedGrantQuery = {
+  consumedAt: { $exists: false },
+  $or: [{ reservationToken: "" }, { reservationToken: { $exists: false } }],
+};
+
+export const releaseUploadGrantReservation = async (reservationToken) => {
+  if (!reservationToken) return;
+  const mode = assertWritable(await connectDatabase());
+  if (mode === "mongodb") {
+    await UploadGrant.updateMany(
+      {
+        reservationToken,
+        $or: [{ consumedAt: { $exists: false } }, { reservationKind: "cleanup" }],
+      },
+      {
+        $set: { reservationToken: "" },
+        $unset: { reservedAt: 1, reservationKind: 1 },
+      },
+    );
+    return;
+  }
+  memoryStore
+    .find(
+      "uploadGrants",
+      (grant) =>
+        grant.reservationToken === reservationToken &&
+        (!grant.consumedAt || grant.reservationKind === "cleanup"),
+    )
+    .forEach((grant) =>
+      memoryStore.update("uploadGrants", grant.id, {
+        reservationToken: "",
+        reservedAt: null,
+        reservationKind: undefined,
+      }),
+    );
+};
+
+export const claimUnconsumedUploadGrantsForCleanup = async ({ userId }) => {
+  const mode = assertWritable(await connectDatabase());
+  const reservationToken = randomBytes(24).toString("base64url");
+  const now = new Date();
+
+  if (mode === "mongodb") {
+    await UploadGrant.updateMany(
+      {
+        userId,
+        consumedAt: { $exists: false },
+        deletedAt: { $exists: false },
+        $or: [{ reservationToken: "" }, { reservationToken: { $exists: false } }],
+      },
+      {
+        $set: {
+          reservationToken,
+          reservedAt: now,
+          reservationKind: "cleanup",
+        },
+      },
+    );
+    const grants = await UploadGrant.find({
+      userId,
+      reservationToken,
+      reservationKind: "cleanup",
+      consumedAt: { $exists: false },
+    });
+    return {
+      reservationToken: grants.length ? reservationToken : "",
+      grants: grants.map(plain),
+    };
+  }
+
+  const grants = memoryStore
+    .find(
+      "uploadGrants",
+      (grant) =>
+        grant.userId === userId &&
+        !grant.consumedAt &&
+        !grant.deletedAt &&
+        !grant.reservationToken,
+    )
+    .map((grant) =>
+      memoryStore.update("uploadGrants", grant.id, {
+        reservationToken,
+        reservedAt: now,
+        reservationKind: "cleanup",
+      }),
+    );
+  return {
+    reservationToken: grants.length ? reservationToken : "",
+    grants,
+  };
+};
+
+const expiredCleanupReservationIsAvailable = (grant, staleBefore) => {
+  if (!grant.reservationToken) return true;
+  const reservationTimestamp = grant.reservedAt || grant.updatedAt;
+  return Boolean(
+    reservationTimestamp && new Date(reservationTimestamp).getTime() <= staleBefore.getTime(),
+  );
+};
+
+export const claimNextExpiredUploadGrantForCleanup = async ({
+  now = new Date(),
+  reservationStaleMs = 15 * 60 * 1_000,
+} = {}) => {
+  const mode = assertWritable(await connectDatabase());
+  const claimedAt = new Date(now);
+  const staleBefore = new Date(claimedAt.getTime() - reservationStaleMs);
+  const reservationToken = randomBytes(24).toString("base64url");
+
+  if (mode === "mongodb") {
+    const grant = await UploadGrant.findOneAndUpdate(
+      {
+        consumedAt: { $exists: false },
+        deletedAt: { $exists: false },
+        expiresAt: { $lte: claimedAt },
+        $and: [
+          {
+            $or: [
+              { cleanupNotBefore: { $exists: false } },
+              { cleanupNotBefore: null },
+              { cleanupNotBefore: { $lte: claimedAt } },
+            ],
+          },
+          {
+            $or: [
+              { reservationToken: "" },
+              { reservationToken: { $exists: false } },
+              { reservedAt: { $lte: staleBefore } },
+              {
+                $and: [
+                  { reservedAt: { $exists: false } },
+                  { updatedAt: { $lte: staleBefore } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        $set: {
+          reservationToken,
+          reservedAt: claimedAt,
+          reservationKind: "expired-cleanup",
+          lastCleanupAttemptAt: claimedAt,
+        },
+        $inc: { cleanupAttempts: 1 },
+        $unset: { cleanupNotBefore: 1 },
+      },
+      { new: true, runValidators: true, sort: { expiresAt: 1, createdAt: 1 } },
+    );
+    return plain(grant);
+  }
+
+  const grant = memoryStore
+    .find(
+      "uploadGrants",
+      (candidate) =>
+        !candidate.consumedAt &&
+        !candidate.deletedAt &&
+        candidate.expiresAt &&
+        new Date(candidate.expiresAt).getTime() <= claimedAt.getTime() &&
+        (!candidate.cleanupNotBefore ||
+          new Date(candidate.cleanupNotBefore).getTime() <= claimedAt.getTime()) &&
+        expiredCleanupReservationIsAvailable(candidate, staleBefore),
+    )
+    .sort(
+      (left, right) =>
+        new Date(left.expiresAt).getTime() - new Date(right.expiresAt).getTime() ||
+        new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    )[0];
+  if (!grant) return undefined;
+  return memoryStore.update("uploadGrants", grant.id, {
+    reservationToken,
+    reservedAt: claimedAt,
+    reservationKind: "expired-cleanup",
+    cleanupAttempts: (grant.cleanupAttempts || 0) + 1,
+    lastCleanupAttemptAt: claimedAt,
+    cleanupNotBefore: undefined,
+  });
+};
+
+export const finalizeExpiredUploadGrantCleanup = async ({
+  publicId,
+  reservationToken,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  if (mode === "mongodb") {
+    const result = await UploadGrant.deleteOne({
+      publicId,
+      reservationToken,
+      reservationKind: "expired-cleanup",
+      consumedAt: { $exists: false },
+      deletedAt: { $exists: false },
+    });
+    return result.deletedCount === 1;
+  }
+
+  const grant = memoryStore.get("uploadGrants", publicId);
+  if (
+    !grant ||
+    grant.reservationToken !== reservationToken ||
+    grant.reservationKind !== "expired-cleanup" ||
+    grant.consumedAt ||
+    grant.deletedAt
+  ) {
+    return false;
+  }
+  memoryStore.remove("uploadGrants", grant.id);
+  return true;
+};
+
+export const releaseExpiredUploadGrantCleanup = async ({
+  publicId,
+  reservationToken,
+  retryAt,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  const cleanupNotBefore = new Date(retryAt);
+  if (mode === "mongodb") {
+    const result = await UploadGrant.updateOne(
+      {
+        publicId,
+        reservationToken,
+        reservationKind: "expired-cleanup",
+        consumedAt: { $exists: false },
+        deletedAt: { $exists: false },
+      },
+      {
+        $set: { reservationToken: "", cleanupNotBefore },
+        $unset: { reservedAt: 1, reservationKind: 1 },
+      },
+    );
+    return result.modifiedCount === 1;
+  }
+
+  const grant = memoryStore.get("uploadGrants", publicId);
+  if (
+    !grant ||
+    grant.reservationToken !== reservationToken ||
+    grant.reservationKind !== "expired-cleanup" ||
+    grant.consumedAt ||
+    grant.deletedAt
+  ) {
+    return false;
+  }
+  memoryStore.update("uploadGrants", grant.id, {
+    reservationToken: "",
+    reservedAt: null,
+    reservationKind: undefined,
+    cleanupNotBefore,
+  });
+  return true;
+};
+
+const uploadGrantUuidPattern =
+  "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+const reserveUploadGrantsForWrite = async ({
+  userId,
+  publicIds = [],
+  purpose,
+  reservationKind,
+  field,
+  message,
+}) => {
+  const uniquePublicIds = [...new Set(publicIds)];
+  if (!uniquePublicIds.length) return undefined;
+  const mode = assertWritable(await connectDatabase());
+  const reservationToken = randomBytes(24).toString("base64url");
+  const now = new Date();
+  const claimed = [];
+
+  try {
+    for (const publicId of uniquePublicIds) {
+      const expectedPublicId = new RegExp(
+        `^gift-n-wrap/${escapeRegExp(purpose)}/${escapeRegExp(String(userId))}/${uploadGrantUuidPattern}$`,
+      );
+      if (!expectedPublicId.test(publicId)) {
+        throw conflict(message, [{ field, publicId }]);
+      }
+      let grant;
+      if (mode === "mongodb") {
+        grant = plain(
+          await UploadGrant.findOneAndUpdate(
+            {
+              publicId,
+              userId,
+              purpose,
+              expiresAt: { $gt: now },
+              ...unreservedGrantQuery,
+            },
+            {
+              $set: {
+                reservationToken,
+                reservedAt: now,
+                reservationKind,
+              },
+            },
+            { new: true, runValidators: true },
+          ),
+        );
+      } else {
+        const candidate = memoryStore.get("uploadGrants", publicId);
+        if (
+          candidate &&
+          candidate.userId === userId &&
+          candidate.purpose === purpose &&
+          candidate.expiresAt > now &&
+          !candidate.consumedAt &&
+          !candidate.reservationToken
+        ) {
+          grant = memoryStore.update("uploadGrants", candidate.id, {
+            reservationToken,
+            reservedAt: now,
+            reservationKind,
+          });
+        }
+      }
+      if (!grant) {
+        if (uploadGrantReservationConflictHookForTests) {
+          await uploadGrantReservationConflictHookForTests({
+            publicId,
+            purpose,
+            reservationKind,
+          });
+        }
+        throw conflict(message, [{ field, publicId }]);
+      }
+      claimed.push(publicId);
+    }
+    return { reservationToken, publicIds: claimed };
+  } catch (error) {
+    await releaseUploadGrantReservation(reservationToken).catch(() => {});
+    throw error;
+  }
+};
+
+export const reserveProductImageGrants = async ({ userId, publicIds = [] }) =>
+  reserveUploadGrantsForWrite({
+    userId,
+    publicIds,
+    purpose: "products",
+    reservationKind: "product-write",
+    field: "images",
+    message:
+      "Every new uploaded product image requires an unused grant owned by this administrator",
+  });
+
+const reserveOrderCustomizationGrants = async ({ userId, publicIds = [] }) =>
+  reserveUploadGrantsForWrite({
+    userId,
+    publicIds,
+    purpose: "orders",
+    reservationKind: "order-write",
+    field: "items.customization",
+    message: "Every customization image requires an unused upload grant owned by this customer",
+  });
+
+const consumeReservedUploadGrants = async ({
+  reservationToken,
+  reservationKind,
+  attachmentField,
+  attachmentId,
+  expectedCount = 0,
+  session,
+  mode: selectedMode,
+  failureMessage,
+}) => {
+  if (!expectedCount) return;
+  if (!reservationToken) {
+    throw conflict(failureMessage);
+  }
+  if (uploadGrantConsumptionHookForTests) {
+    await uploadGrantConsumptionHookForTests({
+      reservationToken,
+      reservationKind,
+      attachmentId: String(attachmentId),
+      expectedCount,
+    });
+  }
+  const mode = assertWritable(selectedMode || (await connectDatabase()));
+  const now = new Date();
+  if (mode === "mongodb") {
+    const result = await UploadGrant.updateMany(
+      {
+        reservationToken,
+        reservationKind,
+        consumedAt: { $exists: false },
+      },
+      {
+        $set: {
+          consumedAt: now,
+          [attachmentField]: String(attachmentId),
+          reservationToken: "",
+        },
+        $unset: { reservedAt: 1, reservationKind: 1, expiresAt: 1 },
+      },
+      { session },
+    );
+    if (result.modifiedCount !== expectedCount) {
+      throw conflict(failureMessage);
+    }
+    return;
+  }
+  const grants = memoryStore.find(
+    "uploadGrants",
+    (grant) =>
+      grant.reservationToken === reservationToken &&
+      grant.reservationKind === reservationKind &&
+      !grant.consumedAt,
+  );
+  if (grants.length !== expectedCount) {
+    throw conflict(failureMessage);
+  }
+  grants.forEach((grant) =>
+    memoryStore.update("uploadGrants", grant.id, {
+      consumedAt: now,
+      [attachmentField]: String(attachmentId),
+      reservationToken: "",
+      reservedAt: null,
+      reservationKind: undefined,
+      expiresAt: undefined,
+    }),
+  );
+};
+
+export const consumeProductImageGrants = async ({
+  reservationToken,
+  productId,
+  expectedCount = 0,
+  session,
+  mode,
+}) =>
+  consumeReservedUploadGrants({
+    reservationToken,
+    reservationKind: "product-write",
+    attachmentField: "productId",
+    attachmentId: productId,
+    expectedCount,
+    session,
+    mode,
+    failureMessage: "Product image grants could not be finalized",
+  });
+
+const consumeOrderCustomizationGrants = async ({
+  reservationToken,
+  orderId,
+  expectedCount = 0,
+  session,
+  mode,
+}) =>
+  consumeReservedUploadGrants({
+    reservationToken,
+    reservationKind: "order-write",
+    attachmentField: "orderId",
+    attachmentId: orderId,
+    expectedCount,
+    session,
+    mode,
+    failureMessage: "Order customization image grants could not be finalized",
+  });
+
+const productReferencesPublicId = async (publicId, mode) =>
+  mode === "mongodb"
+    ? Boolean(await Product.exists({ "images.publicId": publicId }))
+    : Boolean(
+        memoryStore.findOne("products", (product) =>
+          product.images?.some((image) => image.publicId === publicId),
+        ),
+      );
+
+export const claimUploadGrantForCleanup = async ({
+  userId,
+  publicId,
+  allowConsumedProductCleanup = false,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  const reservationToken = randomBytes(24).toString("base64url");
+  const now = new Date();
+  let grant;
+  if (mode === "mongodb") {
+    grant = plain(
+      await UploadGrant.findOneAndUpdate(
+        {
+          publicId,
+          userId,
+          expiresAt: { $gt: now },
+          ...unreservedGrantQuery,
+        },
+        {
+          $set: {
+            reservationToken,
+            reservedAt: now,
+            reservationKind: "cleanup",
+          },
+        },
+        { new: true, runValidators: true },
+      ),
+    );
+  } else {
+    const candidate = memoryStore.get("uploadGrants", publicId);
+    if (
+      candidate &&
+      candidate.userId === userId &&
+      candidate.expiresAt > now &&
+      !candidate.consumedAt &&
+      !candidate.reservationToken
+    ) {
+      grant = memoryStore.update("uploadGrants", candidate.id, {
+        reservationToken,
+        reservedAt: now,
+        reservationKind: "cleanup",
+      });
+    }
+  }
+  if (grant) return { ...grant, provenanceRetained: false };
+
+  const existing =
+    mode === "mongodb"
+      ? plain(await UploadGrant.findOne({ publicId }))
+      : memoryStore.get("uploadGrants", publicId);
+  if (!existing) throw notFound("Upload grant");
+  if (existing.userId !== userId) {
+    throw forbidden("Only the upload owner can remove this image");
+  }
+  if (existing.deletedAt) {
+    throw conflict("This uploaded image has already been removed");
+  }
+  if (existing.consumedAt) {
+    if (
+      !allowConsumedProductCleanup ||
+      existing.purpose !== "products" ||
+      !existing.productId
+    ) {
+      throw conflict("This image is already attached to a saved record and cannot be removed here");
+    }
+
+    if (mode === "mongodb") {
+      grant = plain(
+        await UploadGrant.findOneAndUpdate(
+          {
+            publicId,
+            userId,
+            purpose: "products",
+            consumedAt: { $exists: true },
+            deletedAt: { $exists: false },
+            $or: [{ reservationToken: "" }, { reservationToken: { $exists: false } }],
+          },
+          {
+            $set: {
+              reservationToken,
+              reservedAt: now,
+              reservationKind: "cleanup",
+            },
+          },
+          { new: true, runValidators: true },
+        ),
+      );
+    } else if (!existing.reservationToken) {
+      grant = memoryStore.update("uploadGrants", existing.id, {
+        reservationToken,
+        reservedAt: now,
+        reservationKind: "cleanup",
+      });
+    }
+    if (!grant) {
+      throw conflict("This upload is currently being finalized. Please try again");
+    }
+    if (await productReferencesPublicId(publicId, mode)) {
+      await releaseUploadGrantReservation(reservationToken).catch(() => {});
+      throw conflict("Remove this image from the product and save it before deleting the asset");
+    }
+    return { ...grant, provenanceRetained: true };
+  }
+  if (existing.expiresAt <= now) throw conflict("This upload grant has expired");
+  throw conflict("This upload is currently being finalized. Please try again");
+};
+
+export const deleteClaimedUploadGrant = async ({
+  userId,
+  publicId,
+  reservationToken,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  if (mode === "mongodb") {
+    const tombstone = await UploadGrant.findOneAndUpdate(
+      {
+        publicId,
+        userId,
+        reservationToken,
+        reservationKind: "cleanup",
+        purpose: "products",
+        consumedAt: { $exists: true },
+        deletedAt: { $exists: false },
+      },
+      {
+        $set: {
+          deletedAt: new Date(),
+          deletedByUserId: userId,
+          reservationToken: "",
+        },
+        $unset: { reservedAt: 1, reservationKind: 1 },
+      },
+      { new: true },
+    );
+    if (tombstone) return { provenanceRetained: true };
+
+    const result = await UploadGrant.deleteOne({
+      publicId,
+      userId,
+      reservationToken,
+      reservationKind: "cleanup",
+      consumedAt: { $exists: false },
+    });
+    if (result.deletedCount !== 1) {
+      throw conflict("The upload cleanup could not be finalized");
+    }
+    return { provenanceRetained: false };
+  }
+  const grant = memoryStore.get("uploadGrants", publicId);
+  if (
+    !grant ||
+    grant.userId !== userId ||
+    grant.reservationToken !== reservationToken ||
+    grant.reservationKind !== "cleanup"
+  ) {
+    throw conflict("The upload cleanup could not be finalized");
+  }
+  if (grant.consumedAt) {
+    if (grant.purpose !== "products" || grant.deletedAt) {
+      throw conflict("The upload cleanup could not be finalized");
+    }
+    memoryStore.update("uploadGrants", grant.id, {
+      deletedAt: new Date(),
+      deletedByUserId: userId,
+      reservationToken: "",
+      reservedAt: null,
+      reservationKind: undefined,
+    });
+    return { provenanceRetained: true };
+  }
+  memoryStore.remove("uploadGrants", grant.id);
+  return { provenanceRetained: false };
 };

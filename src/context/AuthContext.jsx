@@ -1,81 +1,95 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 
 const AuthContext = createContext(null);
-const USER_KEY = 'gnw-user';
+const LEGACY_USER_KEY = 'gnw-user';
 
-function readCachedUser() {
-  try {
-    return JSON.parse(window.localStorage.getItem(USER_KEY) || 'null');
-  } catch {
-    return null;
-  }
-}
+const userFrom = (result) => result?.user || result?.data?.user || null;
+const dataFrom = (result) => result?.data || result;
+const providerEnabled = (provider) => Boolean(
+  typeof provider === 'object' && provider !== null ? provider.enabled : provider,
+);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [cachedUser] = useState(readCachedUser);
   const [loading, setLoading] = useState(true);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMessage, setAuthMessage] = useState('');
   const [authIntent, setAuthIntent] = useState('login');
   const [authenticating, setAuthenticating] = useState(false);
+  const [authMethod, setAuthMethod] = useState('');
   const [signingOut, setSigningOut] = useState(false);
-  const [phoneAuthStatus, setPhoneAuthStatus] = useState({ loading: true, enabled: false, error: false });
-  const [phoneChallenge, setPhoneChallenge] = useState(null);
+  const [authStatus, setAuthStatus] = useState({
+    loading: true,
+    error: false,
+    providers: { google: false, facebook: false, apple: false, email: false },
+  });
+  const [emailChallenge, setEmailChallenge] = useState(null);
+  const authGenerationRef = useRef(0);
+  const authInFlightRef = useRef(0);
 
-  const cacheUser = useCallback((nextUser) => {
-    setUser(nextUser);
-    if (nextUser) window.localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
-    else window.localStorage.removeItem(USER_KEY);
+  const updateUser = useCallback((nextUser) => {
+    setUser(nextUser || null);
+    // Older builds cached account PII in localStorage. Sessions now live only in
+    // the secure HttpOnly cookie, so remove that legacy copy whenever auth runs.
+    window.localStorage.removeItem(LEGACY_USER_KEY);
   }, []);
 
   useEffect(() => {
     let active = true;
+    const generation = authGenerationRef.current;
+    window.localStorage.removeItem(LEGACY_USER_KEY);
     api
       .getCurrentUser()
       .then((result) => {
-        if (!active) return;
-        const nextUser = result.user || result.data?.user || null;
-        cacheUser(nextUser);
+        if (active && generation === authGenerationRef.current) updateUser(userFrom(result));
       })
       .catch((error) => {
-        if (!active) return;
-        cacheUser(null);
-        if (cachedUser && error.status !== 401 && error.status !== 403) {
+        if (!active || generation !== authGenerationRef.current) return;
+        updateUser(null);
+        if (error.status !== 401 && error.status !== 403) {
           setAuthMessage('We could not verify your saved session. Please sign in again.');
         }
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active && generation === authGenerationRef.current) setLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [cacheUser, cachedUser]);
+  }, [updateUser]);
 
-  const refreshPhoneAuthStatus = useCallback(async () => {
-    setPhoneAuthStatus((current) => ({ ...current, loading: true, error: false }));
+  const refreshAuthStatus = useCallback(async () => {
+    setAuthStatus((current) => ({ ...current, loading: true, error: false }));
     try {
-      const result = await api.getPhoneAuthStatus();
-      const status = result.data || result;
-      setPhoneAuthStatus({ loading: false, enabled: Boolean(status.enabled), error: false, ...status });
+      const status = dataFrom(await api.getAuthStatus()) || {};
+      setAuthStatus({
+        ...status,
+        loading: false,
+        error: false,
+        providers: {
+          google: providerEnabled(status.providers?.google),
+          facebook: providerEnabled(status.providers?.facebook),
+          apple: providerEnabled(status.providers?.apple),
+          email: providerEnabled(status.providers?.email),
+        },
+      });
       return status;
     } catch (error) {
-      setPhoneAuthStatus({ loading: false, enabled: false, error: true });
+      setAuthStatus((current) => ({ ...current, loading: false, error: true }));
       throw error;
     }
   }, []);
 
   useEffect(() => {
-    refreshPhoneAuthStatus().catch(() => {});
-  }, [refreshPhoneAuthStatus]);
+    refreshAuthStatus().catch(() => {});
+  }, [refreshAuthStatus]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authState = params.get('auth');
     if (authState === 'error') {
-      setAuthMessage('Google sign-in could not be completed. Please try again.');
+      setAuthMessage('Sign-in could not be completed. Please try again.');
       setAuthModalOpen(true);
     }
   }, []);
@@ -83,107 +97,191 @@ export function AuthProvider({ children }) {
   const openAuth = useCallback((message = '', intent = 'login') => {
     setAuthMessage(message);
     setAuthIntent(intent === 'signup' ? 'signup' : 'login');
-    setPhoneChallenge(null);
+    setEmailChallenge(null);
     setAuthModalOpen(true);
   }, []);
 
   const closeAuth = useCallback(() => {
+    if (authenticating) return;
     setAuthModalOpen(false);
     setAuthMessage('');
-    setPhoneChallenge(null);
-  }, []);
+    setEmailChallenge(null);
+    setAuthMethod('');
+  }, [authenticating]);
 
-  const authenticateGoogle = useCallback(async (credential) => {
+  const runAuthentication = useCallback(async (method, operation, fallbackMessage) => {
+    if (authInFlightRef.current) {
+      const busyError = new Error('Another sign-in is already in progress. Please wait a moment.');
+      setAuthMessage(busyError.message);
+      throw busyError;
+    }
+    const generation = ++authGenerationRef.current;
+    authInFlightRef.current = generation;
     setAuthMessage('');
     setAuthenticating(true);
+    setAuthMethod(method);
     try {
-      const result = await api.authenticateGoogle(credential);
-      const nextUser = result.user || result.data?.user || null;
-      if (!nextUser) throw new Error('No user was returned');
-      cacheUser(nextUser);
-      setAuthModalOpen(false);
+      const result = await operation();
+      const nextUser = userFrom(result);
+      if (!nextUser) throw new Error('No account was returned. Please try again.');
+      if (generation === authGenerationRef.current) {
+        updateUser(nextUser);
+        setEmailChallenge(null);
+        setAuthModalOpen(false);
+      }
       return nextUser;
     } catch (error) {
-      setAuthMessage(error.message || 'Google sign-in could not be completed. Please try again.');
+      const message = error.code === 'ACCOUNT_LINK_REQUIRED'
+        ? 'An account already uses that email. Use its existing sign-in method, or enter the email above for a secure login code.'
+        : error.message || fallbackMessage;
+      if (generation === authGenerationRef.current) {
+        if (error.code === 'ACCOUNT_LINK_REQUIRED') setAuthIntent('login');
+        setAuthMessage(message);
+      }
       throw error;
     } finally {
-      setAuthenticating(false);
+      if (authInFlightRef.current === generation) authInFlightRef.current = 0;
+      if (generation === authGenerationRef.current) {
+        setAuthenticating(false);
+        setAuthMethod('');
+        setLoading(false);
+      }
     }
-  }, [cacheUser]);
+  }, [updateUser]);
 
-  const startPhoneAuthentication = useCallback(async ({ credential, email, phone, intent }) => {
+  const authenticateGoogle = useCallback(
+    (credential) => runAuthentication(
+      'google',
+      () => api.authenticateGoogle(credential, authIntent),
+      'Google sign-in could not be completed. Please try again.',
+    ),
+    [authIntent, runAuthentication],
+  );
+
+  const authenticateFacebook = useCallback(
+    (accessToken) => runAuthentication(
+      'facebook',
+      () => api.authenticateFacebook(accessToken, authIntent),
+      'Facebook sign-in could not be completed. Please try again.',
+    ),
+    [authIntent, runAuthentication],
+  );
+
+  const prepareAppleAuthentication = useCallback(async () => {
+    if (authInFlightRef.current) {
+      const busyError = new Error('Another sign-in is already in progress. Please wait a moment.');
+      setAuthMessage(busyError.message);
+      throw busyError;
+    }
+    const operationToken = Symbol('apple-prepare');
+    authInFlightRef.current = operationToken;
     setAuthMessage('');
-    setAuthenticating(true);
     try {
-      const result = await api.startPhoneAuthentication({ credential, email, phone, intent });
-      const challenge = result.data || result;
-      if (!challenge?.challengeId) throw new Error('The verification challenge could not be started.');
-      setPhoneChallenge(challenge);
+      const challenge = dataFrom(await api.requestAppleNonce());
+      if (!challenge?.nonceId || !challenge?.nonce) throw new Error('Apple sign-in could not be prepared.');
       return challenge;
     } catch (error) {
-      setAuthMessage(error.message || 'The verification code could not be sent. Please try again.');
+      if (authInFlightRef.current === operationToken) {
+        setAuthMessage(error.message || 'Apple sign-in could not be prepared. Please try again.');
+      }
       throw error;
     } finally {
-      setAuthenticating(false);
+      if (authInFlightRef.current === operationToken) authInFlightRef.current = 0;
     }
   }, []);
 
-  const verifyPhoneAuthentication = useCallback(async (code) => {
-    if (!phoneChallenge?.challengeId) throw new Error('Request a new verification code first.');
+  const authenticateApple = useCallback(
+    ({ idToken, nonceId, name }) => runAuthentication(
+      'apple',
+      () => api.authenticateApple({ idToken, nonceId, name, intent: authIntent }),
+      'Apple sign-in could not be completed. Please try again.',
+    ),
+    [authIntent, runAuthentication],
+  );
+
+  const startEmailAuthentication = useCallback(async ({ email, name, intent }) => {
+    if (authInFlightRef.current) {
+      const busyError = new Error('Another sign-in is already in progress. Please wait a moment.');
+      setAuthMessage(busyError.message);
+      throw busyError;
+    }
+    const operationToken = Symbol('email-start');
+    authInFlightRef.current = operationToken;
     setAuthMessage('');
     setAuthenticating(true);
+    setAuthMethod('email');
     try {
-      const result = await api.verifyPhoneAuthentication({
-        challengeId: phoneChallenge.challengeId,
-        code,
-      });
-      const nextUser = result.user || result.data?.user || null;
-      if (!nextUser) throw new Error('No user was returned');
-      cacheUser(nextUser);
-      setPhoneChallenge(null);
-      setAuthModalOpen(false);
-      return nextUser;
+      const rawChallenge = dataFrom(await api.startEmailAuthentication({ email, name, intent }));
+      if (!rawChallenge?.challengeId) throw new Error('The email verification code could not be sent.');
+      const challenge = {
+        ...rawChallenge,
+        email,
+        retryAfterSeconds: rawChallenge.retryAfterSeconds ?? rawChallenge.resendAfterSeconds ?? 60,
+        expiresInMinutes: rawChallenge.expiresInMinutes
+          ?? Math.max(1, Math.ceil(Number(rawChallenge.expiresInSeconds || 600) / 60)),
+        previewCode: rawChallenge.previewCode ?? rawChallenge.demoCode,
+      };
+      if (authInFlightRef.current === operationToken) setEmailChallenge(challenge);
+      return challenge;
     } catch (error) {
-      setAuthMessage(error.message || 'That verification code could not be confirmed.');
+      if (authInFlightRef.current === operationToken) {
+        setAuthMessage(error.message || 'The email verification code could not be sent. Please try again.');
+      }
       throw error;
     } finally {
-      setAuthenticating(false);
+      if (authInFlightRef.current === operationToken) {
+        authInFlightRef.current = 0;
+        setAuthenticating(false);
+        setAuthMethod('');
+      }
     }
-  }, [cacheUser, phoneChallenge]);
+  }, []);
 
-  const resetPhoneChallenge = useCallback(() => {
-    setPhoneChallenge(null);
+  const verifyEmailAuthentication = useCallback(async (code) => {
+    if (!emailChallenge?.challengeId) throw new Error('Request a new verification code first.');
+    return runAuthentication(
+      'email',
+      () => api.verifyEmailAuthentication({ challengeId: emailChallenge.challengeId, code }),
+      'That verification code could not be confirmed.',
+    );
+  }, [emailChallenge, runAuthentication]);
+
+  const resetEmailChallenge = useCallback(() => {
+    setEmailChallenge(null);
     setAuthMessage('');
   }, []);
 
-  const authenticateDemo = useCallback(async (role = 'buyer') => {
-    setAuthMessage('');
-    try {
-      const result = await api.authenticateDemo(role);
-      const nextUser = result.user || result.data?.user || null;
-      if (!nextUser) throw new Error('No preview user was returned');
-      cacheUser(nextUser);
-      setAuthModalOpen(false);
-      return nextUser;
-    } catch (error) {
-      setAuthMessage(error.message || 'Preview sign-in could not be completed.');
-      throw error;
-    }
-  }, [cacheUser]);
+  const authenticateDemo = useCallback(
+    (role = 'buyer') => runAuthentication(
+      'demo',
+      () => api.authenticateDemo(role),
+      'Preview sign-in could not be completed.',
+    ),
+    [runAuthentication],
+  );
 
   const signOut = useCallback(async () => {
+    const generation = ++authGenerationRef.current;
+    authInFlightRef.current = 0;
+    setAuthenticating(false);
+    setAuthMethod('');
     setSigningOut(true);
     try {
       await api.signOut();
-      cacheUser(null);
+      if (generation === authGenerationRef.current) updateUser(null);
       return true;
     } catch (error) {
-      setAuthMessage('Sign-out could not be confirmed, so your session remains active. Please try again.');
+      if (generation === authGenerationRef.current) {
+        setAuthMessage('Sign-out could not be confirmed, so your session remains active. Please try again.');
+      }
       throw error;
     } finally {
-      setSigningOut(false);
+      if (generation === authGenerationRef.current) {
+        setSigningOut(false);
+        setLoading(false);
+      }
     }
-  }, [cacheUser]);
+  }, [updateUser]);
 
   const value = useMemo(
     () => ({
@@ -193,21 +291,25 @@ export function AuthProvider({ children }) {
       authMessage,
       authIntent,
       authenticating,
+      authMethod,
       signingOut,
-      phoneAuthStatus,
-      phoneChallenge,
-      refreshPhoneAuthStatus,
+      authStatus,
+      emailChallenge,
+      refreshAuthStatus,
       openAuth,
       closeAuth,
       authenticateGoogle,
-      startPhoneAuthentication,
-      verifyPhoneAuthentication,
-      resetPhoneChallenge,
+      authenticateFacebook,
+      prepareAppleAuthentication,
+      authenticateApple,
+      startEmailAuthentication,
+      verifyEmailAuthentication,
+      resetEmailChallenge,
       authenticateDemo,
       signOut,
-      setUser: cacheUser,
+      setUser: updateUser,
     }),
-    [user, loading, authModalOpen, authMessage, authIntent, authenticating, signingOut, phoneAuthStatus, phoneChallenge, refreshPhoneAuthStatus, openAuth, closeAuth, authenticateGoogle, startPhoneAuthentication, verifyPhoneAuthentication, resetPhoneChallenge, authenticateDemo, signOut, cacheUser],
+    [user, loading, authModalOpen, authMessage, authIntent, authenticating, authMethod, signingOut, authStatus, emailChallenge, refreshAuthStatus, openAuth, closeAuth, authenticateGoogle, authenticateFacebook, prepareAppleAuthentication, authenticateApple, startEmailAuthentication, verifyEmailAuthentication, resetEmailChallenge, authenticateDemo, signOut, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

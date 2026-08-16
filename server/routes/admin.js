@@ -55,7 +55,9 @@ adminRouter.post(
   "/products",
   validate({ body: createProductSchema }),
   asyncHandler(async (request, response) => {
-    response.status(201).json({ data: await createProduct(request.validated.body) });
+    response.status(201).json({
+      data: await createProduct(request.validated.body, { userId: request.user.id }),
+    });
   }),
 );
 
@@ -72,7 +74,9 @@ adminRouter.patch(
   validate({ params: idParamsSchema, body: updateProductSchema }),
   asyncHandler(async (request, response) => {
     response.json({
-      data: await updateProduct(request.validated.params.id, request.validated.body),
+      data: await updateProduct(request.validated.params.id, request.validated.body, {
+        userId: request.user.id,
+      }),
     });
   }),
 );
