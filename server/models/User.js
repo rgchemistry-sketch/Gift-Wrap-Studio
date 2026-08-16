@@ -23,3 +23,33 @@ const userSchema = new mongoose.Schema(
 );
 
 export const User = mongoose.models.User || mongoose.model("User", userSchema);
+
+export const isLegacyGoogleSubIndex = (index) =>
+  index?.name === "googleSub_1" &&
+  index?.unique === true &&
+  index?.sparse !== true &&
+  Object.keys(index.key || {}).length === 1 &&
+  index.key.googleSub === 1;
+
+export const removeLegacyUserIdentityIndexes = async (collection = User.collection) => {
+  let indexes;
+  try {
+    indexes = await collection.indexes();
+  } catch (error) {
+    if (error?.code === 26 || error?.codeName === "NamespaceNotFound") return [];
+    throw error;
+  }
+
+  const removed = [];
+  for (const index of indexes.filter(isLegacyGoogleSubIndex)) {
+    try {
+      await collection.dropIndex(index.name);
+      removed.push(index.name);
+    } catch (error) {
+      // Multiple serverless instances may run this migration together. A concurrent removal is
+      // successful for our purposes and the sparse replacement is created immediately afterward.
+      if (error?.code !== 27 && error?.codeName !== "IndexNotFound") throw error;
+    }
+  }
+  return removed;
+};
