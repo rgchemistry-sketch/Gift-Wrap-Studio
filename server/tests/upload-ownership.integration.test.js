@@ -270,9 +270,10 @@ test("updates retain attached public IDs while requiring a grant for every new i
 
 test("a product write failure releases its grant for a safe retry", async () => {
   const { agent: admin } = await login("admin");
+  const originalImage = await requestProductGrant(admin);
   await admin
     .post("/api/admin/products")
-    .send(baseProduct("duplicate-write"))
+    .send({ ...baseProduct("duplicate-write"), images: [originalImage] })
     .expect(201);
   const image = await requestProductGrant(admin);
 
@@ -311,9 +312,10 @@ test("product create and update roll back exactly when grant consumption fails",
   assert.equal(memoryStore.get("uploadGrants", createImage.publicId).consumedAt, undefined);
 
   store.resetUploadGrantConsumptionHookForTests();
+  const existingImage = await requestProductGrant(admin);
   const created = await admin
     .post("/api/admin/products")
-    .send(baseProduct("failed-consumption-update"))
+    .send({ ...baseProduct("failed-consumption-update"), images: [existingImage] })
     .expect(201);
   const beforeUpdate = memoryStore.get("products", created.body.data.id);
   const updateImage = await requestProductGrant(admin);

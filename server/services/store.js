@@ -20,6 +20,10 @@ import { StudioSettings } from "../models/StudioSettings.js";
 import { User } from "../models/User.js";
 import { UploadGrant, UploadQuota } from "../models/UploadGrant.js";
 import { AuthIdentity } from "../models/AuthIdentity.js";
+import {
+  normalizeFacebookProfile,
+  normalizeInstagramProfile,
+} from "../../shared/social-profiles.js";
 
 const clone = (value) => (value == null ? value : structuredClone(value));
 
@@ -829,6 +833,7 @@ const defaultStudioSettings = () => ({
     email: "info@giftnwrapstudio.com",
     phone: "+919588281126",
     instagram: "@giftnwrapstudio",
+    facebook: "",
   },
 });
 
@@ -837,31 +842,38 @@ const mergeStudioSettings = (current = {}, changes = {}) => {
   return Object.fromEntries(
     Object.entries(defaults).map(([group, fallback]) => [
       group,
-      { ...fallback, ...(current[group] || {}), ...(changes[group] || {}) },
+      Object.fromEntries(
+        Object.keys(fallback).map((key) => {
+          const currentGroup = current[group] || {};
+          const changesGroup = changes[group] || {};
+          if (Object.prototype.hasOwnProperty.call(changesGroup, key)) {
+            return [key, changesGroup[key]];
+          }
+          if (Object.prototype.hasOwnProperty.call(currentGroup, key)) {
+            return [key, currentGroup[key]];
+          }
+          return [key, fallback[key]];
+        }),
+      ),
     ]),
   );
 };
 
 const publicStudioSettings = (record) => {
   const settings = mergeStudioSettings(record);
-  let instagramHandle = settings.contact.instagram.startsWith("@")
-    ? settings.contact.instagram
-    : "";
-  if (!instagramHandle && settings.contact.instagram.startsWith("https://")) {
-    try {
-      const [username] = new URL(settings.contact.instagram).pathname.split("/").filter(Boolean);
-      if (username) instagramHandle = `@${username}`;
-    } catch {
-      instagramHandle = "";
-    }
-  }
-  settings.contact.instagramHandle = instagramHandle;
-  settings.contact.instagramUrl = settings.contact.instagram.startsWith("https://")
-    ? settings.contact.instagram
-    : settings.contact.instagram
-      ? `https://www.instagram.com/${settings.contact.instagram.replace(/^@/, "")}`
-      : "";
-  return settings;
+  const instagram = normalizeInstagramProfile(settings.contact.instagram);
+  const facebook = normalizeFacebookProfile(settings.contact.facebook);
+  return {
+    ...settings,
+    contact: {
+      ...settings.contact,
+      instagramHandle: instagram?.handle ? `@${instagram.handle}` : "",
+      instagramUrl: instagram?.url || "",
+      facebookHandle: facebook?.handle ? `@${facebook.handle}` : "",
+      facebookLabel: facebook?.label || "",
+      facebookUrl: facebook?.url || "",
+    },
+  };
 };
 
 export const getStudioSettings = async (selectedMode) => {

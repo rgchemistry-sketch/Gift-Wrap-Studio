@@ -14,6 +14,7 @@ import OfferPopup from './OfferPopup';
 import { ToastStack } from './Feedback';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
+import { resolveStudioContact } from '../utils/studio-contact';
 
 const navItems = [
   ['Shop', '/shop'],
@@ -23,12 +24,16 @@ const navItems = [
   ['Our story', '/our-story'],
 ];
 
-function formatPhoneLabel(value) {
-  const digits = String(value || '').replace(/\D/g, '');
-  const local = digits.length > 10 ? digits.slice(-10) : digits;
-  if (local.length !== 10) return value;
-  return `+91 ${local.slice(0, 5)} ${local.slice(5)}`;
-}
+const CANONICAL_ORIGIN = 'https://www.giftnwrapstudio.com';
+
+const configuredValue = (settings, group, key, legacyKey, fallback) => {
+  if (!settings) return fallback;
+  if (Object.prototype.hasOwnProperty.call(group, key)) return group[key] ?? '';
+  if (legacyKey && Object.prototype.hasOwnProperty.call(settings, legacyKey)) {
+    return settings[legacyKey] ?? '';
+  }
+  return fallback;
+};
 
 function Brand() {
   return (
@@ -51,13 +56,29 @@ export default function Layout() {
   const { cartCount, notify, studioSettings } = useShop();
   const { user, openAuth, signOut, signingOut } = useAuth();
   const announcement = studioSettings?.announcement || {};
-  const contact = studioSettings?.contact || {};
+  const contact = resolveStudioContact(studioSettings);
   const announcementEnabled = announcement.enabled ?? true;
-  const announcementText = announcement.text || studioSettings?.announcementText || 'Every piece handmade with care';
-  const announcementLinkLabel = announcement.linkLabel || studioSettings?.announcementLinkLabel || 'PAN India delivery';
-  const announcementLinkUrl = announcement.linkUrl || studioSettings?.announcementLinkUrl || '/shop';
-  const contactPhone = contact.phone || studioSettings?.contactPhone || '+919588281126';
-  const contactPhoneLabel = contact.phoneLabel || studioSettings?.contactPhoneLabel || formatPhoneLabel(contactPhone);
+  const announcementText = configuredValue(
+    studioSettings,
+    announcement,
+    'text',
+    'announcementText',
+    'Every piece handmade with care',
+  );
+  const announcementLinkLabel = configuredValue(
+    studioSettings,
+    announcement,
+    'linkLabel',
+    'announcementLinkLabel',
+    'PAN India delivery',
+  );
+  const announcementLinkUrl = configuredValue(
+    studioSettings,
+    announcement,
+    'linkUrl',
+    'announcementLinkUrl',
+    '/shop',
+  );
 
   const handleSignOut = async () => {
     try {
@@ -73,6 +94,13 @@ export default function Layout() {
     setMenuOpen(false);
     setSearchOpen(false);
     window.scrollTo({ top: 0, behavior: 'instant' });
+
+    const normalizedPath = location.pathname === '/'
+      ? '/'
+      : location.pathname.replace(/\/+$/, '');
+    const canonicalUrl = new URL(normalizedPath, CANONICAL_ORIGIN).href;
+    document.querySelector('link[rel="canonical"]')?.setAttribute('href', canonicalUrl);
+    document.querySelector('meta[property="og:url"]')?.setAttribute('content', canonicalUrl);
   }, [location.pathname]);
 
   const submitSearch = (event) => {
@@ -83,10 +111,10 @@ export default function Layout() {
 
   return (
     <div className="site-shell">
-      {announcementEnabled && <div className="announcement-bar">
+      {announcementEnabled && (announcementText || (announcementLinkLabel && announcementLinkUrl)) && <div className="announcement-bar">
         <Container fluid="xl" className="announcement-bar__inner">
-          <span><Icon name="spark" size={14} /> {announcementText}</span>
-          {announcementLinkLabel && (announcementLinkUrl.startsWith('/') ? <Link to={announcementLinkUrl}>{announcementLinkLabel} <Icon name="arrow" size={14} /></Link> : <a href={announcementLinkUrl} target="_blank" rel="noreferrer">{announcementLinkLabel} <Icon name="arrow" size={14} /></a>)}
+          {announcementText && <span><Icon name="spark" size={14} /> {announcementText}</span>}
+          {announcementLinkLabel && announcementLinkUrl && (announcementLinkUrl.startsWith('/') ? <Link to={announcementLinkUrl}>{announcementLinkLabel} <Icon name="arrow" size={14} /></Link> : <a href={announcementLinkUrl} target="_blank" rel="noreferrer">{announcementLinkLabel} <Icon name="arrow" size={14} /></a>)}
         </Container>
       </div>}
 
@@ -170,7 +198,7 @@ export default function Layout() {
           </nav>
           <div className="mobile-menu__footer">
             {user ? <><button type="button" className="plain-link" onClick={() => navigate('/account')}><Icon name="user" /> My account</button>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => navigate('/admin')}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="close" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></> : <><button type="button" className="plain-link" onClick={() => openAuth('', 'login')}><Icon name="user" /> Log in</button><button type="button" className="plain-link" onClick={() => openAuth('', 'signup')}><Icon name="spark" /> Create account</button></>}
-            <a href={`tel:${contactPhone.replace(/[^+\d]/g, '')}`}><Icon name="phone" /> {contactPhoneLabel}</a>
+            {contact.phoneHref && <a href={contact.phoneHref}><Icon name="phone" /> {contact.phoneLabel}</a>}
           </div>
         </Offcanvas.Body>
       </Offcanvas>
@@ -188,12 +216,7 @@ export default function Layout() {
 }
 
 function Footer({ settings }) {
-  const contact = settings?.contact || {};
-  const phone = contact.phone || settings?.contactPhone || '+919588281126';
-  const phoneLabel = contact.phoneLabel || settings?.contactPhoneLabel || formatPhoneLabel(phone);
-  const email = contact.email || settings?.contactEmail || 'info@giftnwrapstudio.com';
-  const instagramUrl = contact.instagramUrl || settings?.instagramUrl || 'https://www.instagram.com/giftnwrapstudio';
-  const instagramHandle = contact.instagramHandle || settings?.instagramHandle || '@giftnwrapstudio';
+  const contact = resolveStudioContact(settings);
   return (
     <footer className="site-footer">
       <div className="footer-marquee" aria-hidden="true">
@@ -204,7 +227,10 @@ function Footer({ settings }) {
           <div className="footer-intro">
             <Brand />
             <p>We preserve names, flowers, photographs and stories in thoughtful resin art—one handmade piece at a time.</p>
-            <a href={instagramUrl} target="_blank" rel="noreferrer" className="social-link"><Icon name="instagram" /> {instagramHandle}</a>
+            <div className="d-flex flex-column align-items-start gap-2">
+              {contact.instagramUrl && <a href={contact.instagramUrl} target="_blank" rel="noreferrer" className="social-link"><Icon name="instagram" /> {contact.instagramLabel || 'Instagram'}</a>}
+              {contact.facebookUrl && <a href={contact.facebookUrl} target="_blank" rel="noreferrer" className="social-link"><Icon name="facebook" /> {contact.facebookLabel || 'Facebook'}</a>}
+            </div>
           </div>
           <div>
             <p className="footer-heading">Explore</p>
@@ -222,8 +248,8 @@ function Footer({ settings }) {
           </div>
           <div className="footer-contact">
             <p className="footer-heading">Visit & contact</p>
-            <a href={`tel:${phone.replace(/[^+\d]/g, '')}`}><Icon name="phone" /> {phoneLabel}</a>
-            <a href={`mailto:${email}`}><Icon name="mail" /> {email}</a>
+            {contact.phoneHref && <a href={contact.phoneHref}><Icon name="phone" /> {contact.phoneLabel}</a>}
+            {contact.email && <a href={`mailto:${contact.email}`}><Icon name="mail" /> {contact.email}</a>}
             <a href="https://maps.app.goo.gl/Tfcr1XpcvsaZqgJ28?g_st=iw" target="_blank" rel="noreferrer"><Icon name="map" /> Open studio location</a>
           </div>
         </div>

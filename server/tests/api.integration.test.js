@@ -63,6 +63,7 @@ test("health reports the non-durable demo fallback without Atlas", async () => {
 
 test("catalog seeds demo products and supports detail lookup", async () => {
   const list = await request(app).get("/api/products?featured=true&limit=2").expect(200);
+  assert.equal(list.headers["cache-control"], "no-store");
   assert.equal(list.body.data.length, 2);
   assert.ok(list.body.meta.total >= 4);
   assert.ok(list.body.data.every((product) => product.featured));
@@ -70,7 +71,11 @@ test("catalog seeds demo products and supports detail lookup", async () => {
   const detail = await request(app)
     .get(`/api/products/${list.body.data[0].slug}`)
     .expect(200);
+  assert.equal(detail.headers["cache-control"], "no-store");
   assert.equal(detail.body.data.id, list.body.data[0].id);
+
+  const categories = await request(app).get("/api/products/categories").expect(200);
+  assert.equal(categories.headers["cache-control"], "no-store");
 });
 
 test("validation errors use the stable API error envelope", async () => {

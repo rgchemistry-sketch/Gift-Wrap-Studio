@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Alert from 'react-bootstrap/Alert';
 import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
@@ -6,9 +6,10 @@ import Container from 'react-bootstrap/Container';
 import Form from 'react-bootstrap/Form';
 import Spinner from 'react-bootstrap/Spinner';
 import Table from 'react-bootstrap/Table';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Icon from '../components/Icon';
 import SmartImage from '../components/SmartImage';
+import AdminSectionState from '../components/admin/AdminSectionState';
 import ProductManager from '../components/admin/ProductManager';
 import SettingsEditor from '../components/admin/SettingsEditor';
 import UsersManager from '../components/admin/UsersManager';
@@ -42,6 +43,26 @@ const adminNav = [
   ['settings', 'shield', 'Studio settings'],
 ];
 
+const adminSectionKeys = new Set(adminNav.map(([key]) => key));
+const adminSectionLabels = Object.fromEntries(adminNav.map(([key, , label]) => [key, label]));
+const sectionErrorKeys = {
+  dashboard: 'dashboard',
+  products: 'products',
+  orders: 'orders',
+  requests: 'inquiries',
+  messages: 'messages',
+};
+const sectionDataKeys = {
+  products: 'productsList',
+  orders: 'recentOrders',
+  requests: 'inquiries',
+  messages: 'messages',
+};
+
+const adminSectionHref = (section) => section === 'dashboard'
+  ? '/admin'
+  : `/admin?section=${encodeURIComponent(section)}`;
+
 const ADMIN_PAGE_LIMIT = 50;
 const attentionOrderStatuses = new Set(['placed', 'confirmed', 'in_progress', 'ready', 'shipped']);
 
@@ -71,17 +92,42 @@ const collectionConfig = {
 };
 
 export default function AdminPage() {
-  const [section, setSection] = useState('dashboard');
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [sectionErrors, setSectionErrors] = useState({});
   const [preview, setPreview] = useState(false);
   const [collectionLoading, setCollectionLoading] = useState({});
   const [workingItem, setWorkingItem] = useState('');
   const { user, signOut, setUser, signingOut } = useAuth();
   const { notify } = useShop();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedSection = searchParams.get('section');
+  const section = requestedSection && adminSectionKeys.has(requestedSection)
+    ? requestedSection
+    : 'dashboard';
+  const contentRef = useRef(null);
+  const previousSectionRef = useRef(section);
   const demoEnabled = import.meta.env.VITE_ENABLE_DEMO_AUTH === 'true';
+
+  const selectSection = useCallback((nextSection) => {
+    if (!adminSectionKeys.has(nextSection)) return;
+    navigate(adminSectionHref(nextSection));
+  }, [navigate]);
+
+  useEffect(() => {
+    if (requestedSection && !adminSectionKeys.has(requestedSection)) {
+      navigate('/admin', { replace: true });
+    }
+  }, [navigate, requestedSection]);
+
+  useEffect(() => {
+    if (previousSectionRef.current === section) return undefined;
+    previousSectionRef.current = section;
+    const focusFrame = window.requestAnimationFrame(() => contentRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [section]);
 
   const load = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
@@ -106,11 +152,16 @@ export default function AdminPage() {
 
       const fulfilled = {};
       const unavailable = [];
+      const nextSectionErrors = {};
       settled.forEach((result, index) => {
         const [key, label] = jobs[index];
         if (result.status === 'fulfilled') fulfilled[key] = result.value;
-        else unavailable.push(label);
+        else {
+          unavailable.push(label);
+          nextSectionErrors[key] = result.reason?.message || `${label} could not load.`;
+        }
       });
+      setSectionErrors(nextSectionErrors);
 
       if (!Object.keys(fulfilled).length) {
         const message = settled.find((result) => result.status === 'rejected')?.reason?.message
@@ -202,6 +253,7 @@ export default function AdminPage() {
       const result = await config.getter({ page, limit: ADMIN_PAGE_LIMIT });
       const items = listFrom(result, config.listKeys);
       const pagination = paginationFrom(result, items.length);
+      setSectionErrors((current) => ({ ...current, [kind]: '' }));
       setSummary((current) => {
         if (!current) return current;
         const nextMetrics = { ...current.metrics };
@@ -224,6 +276,7 @@ export default function AdminPage() {
         setUser(null);
         navigate('/account', { replace: true, state: { deniedFrom: '/admin' } });
       } else {
+        setSectionErrors((current) => ({ ...current, [kind]: requestError.message }));
         notify(requestError.message, 'error');
       }
     } finally {
@@ -278,16 +331,41 @@ export default function AdminPage() {
     finally{setWorkingItem('');}
   };
 
+  const activeErrorKey = sectionErrorKeys[section];
+  const activeSectionError = activeErrorKey ? sectionErrors[activeErrorKey] : '';
+  const activeDataKey = sectionDataKeys[section];
+  const activeSectionHasData = activeDataKey
+    ? Boolean(summary?.[activeDataKey]?.length)
+    : true;
+  const activeSectionUnavailable = Boolean(activeSectionError && activeDataKey && !activeSectionHasData);
+  const activeSectionLabel = adminSectionLabels[section] || 'Admin section';
+  const adminName = user?.name || 'Studio administrator';
+  const adminEmail = user?.email || 'Administrator account';
+  const adminInitial = String(user?.name || user?.email || 'A').charAt(0).toUpperCase();
+
   return <section className="admin-page">
     <Container fluid="xl">
-      <header className="admin-topbar"><div><p className="eyebrow">Gift N Wrap Studio</p><h1>Studio desk</h1></div><div className="admin-topbar__actions"><span className="admin-live-dot"/>{preview?'Preview data':'Live workspace'}<Button as={Link} to="/" variant="outline-dark" size="sm">Storefront</Button><Button as={Link} to="/account" variant="outline-dark" size="sm">My account</Button><Button variant="dark" size="sm" disabled={signingOut} onClick={async()=>{try{await signOut();navigate('/');}catch(requestError){notify(requestError.message,'error');}}}>{signingOut?'Signing out…':'Sign out'}</Button><span className="admin-avatar">{(user.name||'A').charAt(0)}</span></div></header>
+      <header className="admin-topbar">
+        <div><p className="eyebrow">Gift N Wrap Studio</p><h1>Studio desk</h1></div>
+        <div className="admin-topbar__actions">
+          <span className="admin-workspace-state"><span className="admin-live-dot" aria-hidden="true"/><span>{preview ? 'Preview data' : 'Live workspace'}</span></span>
+          <Button as={Link} to="/" variant="outline-dark" size="sm">Storefront</Button>
+          <Button as={Link} to="/account" variant="outline-dark" size="sm">My account</Button>
+          <Button variant="dark" size="sm" disabled={signingOut} onClick={async()=>{try{await signOut();navigate('/');}catch(requestError){notify(requestError.message,'error');}}}>{signingOut?'Signing out…':'Sign out'}</Button>
+          <span className="admin-identity" title={adminEmail}>
+            <span className="admin-avatar" aria-hidden="true">{adminInitial}</span>
+            <span className="admin-identity__copy"><strong>{adminName}</strong><small>{adminEmail}</small></span>
+          </span>
+        </div>
+      </header>
       {preview&&<Alert variant="warning" className="soft-alert admin-preview-alert"><strong>Studio preview:</strong> {error} Changes are disabled until the admin service reconnects. <button type="button" className="plain-link" onClick={load}>Retry</button></Alert>}
       {!preview&&summary&&error&&<Alert variant="warning" className="soft-alert admin-preview-alert"><strong>Partial workspace:</strong> {error} The available sections remain usable. <button type="button" className="plain-link" onClick={()=>load({quiet:true})}>Retry missing data</button></Alert>}
       <div className="admin-layout">
-        <aside className="admin-sidebar"><nav aria-label="Admin sections">{adminNav.map(([key,icon,label])=>{const pending=Number(summary?.metrics?.ordersPending??summary?.counts?.pendingOrders??0);const partial=Boolean(summary?.metrics?.ordersPendingPartial);return <button type="button" key={key} className={section===key?'is-active':''} aria-current={section===key?'page':undefined} onClick={()=>setSection(key)}><Icon name={icon}/><span>{label}</span>{key==='orders'&&pending>0&&<Badge pill title={partial?'Count from the latest loaded orders':'Orders needing attention'} aria-label={`${pending} orders needing attention${partial?' in the latest loaded page':''}`}>{pending}{partial?'*':''}</Badge>}</button>;})}</nav><div className="admin-sidebar__note"><Icon name="shield"/><p><strong>Admin protected</strong><small>Role checks are also enforced by the server.</small></p></div></aside>
-        <div className="admin-content">
-          {loading?<div className="account-loading"><Spinner/><span>Opening the studio desk…</span></div>:!summary?<Alert variant="danger" className="soft-alert"><strong>The live admin workspace could not load.</strong> {error} <button type="button" className="plain-link" onClick={load}>Retry</button></Alert>:<>
-            {section==='dashboard'&&<Dashboard summary={summary} setSection={setSection}/>}
+        <aside className="admin-sidebar"><nav aria-label="Admin sections">{adminNav.map(([key,icon,label])=>{const pending=Number(summary?.metrics?.ordersPending??summary?.counts?.pendingOrders??0);const partial=Boolean(summary?.metrics?.ordersPendingPartial);return <Link to={adminSectionHref(key)} key={key} className={section===key?'is-active':''} aria-current={section===key?'page':undefined}><Icon name={icon}/><span>{label}</span>{key==='orders'&&pending>0&&<Badge pill title={partial?'Count from the latest loaded orders':'Orders needing attention'} aria-label={`${pending} orders needing attention${partial?' in the latest loaded page':''}`}>{pending}{partial?'*':''}</Badge>}</Link>;})}</nav><div className="admin-sidebar__note"><Icon name="shield"/><p><strong>Admin protected</strong><small>Role checks are also enforced by the server.</small></p></div></aside>
+        <div ref={contentRef} className="admin-content" tabIndex={-1} aria-label={`${activeSectionLabel} admin section`}>
+          {loading?<div className="account-loading" role="status" aria-live="polite"><Spinner aria-hidden="true"/><span>Opening the studio desk…</span></div>:!summary?<Alert variant="danger" className="soft-alert"><strong>The live admin workspace could not load.</strong> {error} <button type="button" className="plain-link" onClick={load}>Retry</button></Alert>:activeSectionUnavailable?<><div className="admin-section-head"><div><p className="eyebrow">Temporarily unavailable</p><h2>{activeSectionLabel}</h2></div></div><AdminSectionState title={`${activeSectionLabel} could not load`} message={activeSectionError} actionLabel="Try again" onAction={()=>load({quiet:true})}/></>:<>
+            {activeSectionError&&<Alert variant="warning" className="soft-alert admin-section-alert"><strong>{activeSectionLabel} may be out of date.</strong> {activeSectionError} <button type="button" className="plain-link" onClick={()=>load({quiet:true})}>Retry this section</button></Alert>}
+            {section==='dashboard'&&<Dashboard summary={summary} setSection={selectSection}/>}
             {section==='orders'&&<Orders summary={summary} preview={preview} updateStatus={updateStatus} loading={collectionLoading.orders} workingItem={workingItem} onPageChange={(page)=>loadCollection('orders',page)}/>}
             {section==='products'&&<ProductManager products={summary.productsList} preview={preview} notify={notify} onRefresh={()=>load({quiet:true})}/>}
             {section==='requests'&&<Requests summary={summary} preview={preview} updateInquiryStatus={updateInquiryStatus} loading={collectionLoading.inquiries} workingItem={workingItem} onPageChange={(page)=>loadCollection('inquiries',page)}/>}
