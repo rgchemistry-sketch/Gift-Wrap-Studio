@@ -71,6 +71,15 @@ test("admins can create, edit, publish and archive complete products", async () 
   assert.equal(created.body.data.variants[0].price, 2299);
   assert.equal(created.body.data.active, false);
 
+  const emptyGalleryUpdate = await admin
+    .patch(`/api/admin/products/${created.body.data.id}`)
+    .send({ images: [] })
+    .expect(422);
+  assert.equal(
+    emptyGalleryUpdate.body.error.details.some((issue) => issue.field === "images"),
+    true,
+  );
+
   const publicDraft = await request(app).get("/api/products/forest-keepsake-box").expect(404);
   assert.equal(publicDraft.body.error.code, "NOT_FOUND");
 
@@ -96,6 +105,15 @@ test("product management validates pricing, SKUs and image ownership", async () 
     shortDescription: "A sufficiently descriptive product catalogue summary.",
     price: 1000,
   };
+
+  const emptyGalleryCreate = await admin
+    .post("/api/admin/products")
+    .send({ ...base, images: [] })
+    .expect(422);
+  assert.equal(
+    emptyGalleryCreate.body.error.details.some((issue) => issue.field === "images"),
+    true,
+  );
 
   await admin
     .post("/api/admin/products")
@@ -149,7 +167,8 @@ test("saved studio settings drive the public popup and checkout totals", async (
       contact: {
         email: "hello@example.test",
         phone: "+91 98765 43210",
-        instagram: "@giftnwrapstudio",
+        instagram: "https://instagram.com/GiftNWrapStudio/?igsh=share",
+        facebook: "@GiftNWrapStudio",
       },
     })
     .expect(200);
@@ -158,6 +177,16 @@ test("saved studio settings drive the public popup and checkout totals", async (
   const publicSettings = await request(app).get("/api/settings").expect(200);
   assert.equal(publicSettings.body.data.shipping.flatFee, 149);
   assert.equal(publicSettings.body.data.contact.phone, "+919876543210");
+  assert.equal(
+    publicSettings.body.data.contact.instagramUrl,
+    "https://www.instagram.com/giftnwrapstudio/",
+  );
+  assert.equal(publicSettings.body.data.contact.instagramHandle, "@giftnwrapstudio");
+  assert.equal(
+    publicSettings.body.data.contact.facebookUrl,
+    "https://www.facebook.com/giftnwrapstudio/",
+  );
+  assert.equal(publicSettings.body.data.contact.facebookLabel, "@giftnwrapstudio");
 
   const offer = await request(app).get("/api/offers/welcome").expect(200);
   assert.equal(offer.body.data.code, "HELLO15");
@@ -182,6 +211,46 @@ test("saved studio settings drive the public popup and checkout totals", async (
   assert.equal(order.body.data.shippingFee, 149);
   assert.equal(order.body.data.discount, 285);
   assert.equal(order.body.data.total, 1763);
+});
+
+test("studio social settings reject content links and preserve explicit blanks", async () => {
+  const admin = await adminAgent();
+
+  const invalidInstagram = await admin
+    .put("/api/admin/settings")
+    .send({ contact: { instagram: "https://www.instagram.com/reel/example/" } })
+    .expect(422);
+  assert.equal(
+    invalidInstagram.body.error.details.some((issue) => issue.field === "contact.instagram"),
+    true,
+  );
+
+  const invalidFacebook = await admin
+    .put("/api/admin/settings")
+    .send({ contact: { facebook: "https://www.facebook.com/groups/example/" } })
+    .expect(422);
+  assert.equal(
+    invalidFacebook.body.error.details.some((issue) => issue.field === "contact.facebook"),
+    true,
+  );
+
+  const cleared = await admin
+    .put("/api/admin/settings")
+    .send({ contact: { email: "", phone: "", instagram: "", facebook: "" } })
+    .expect(200);
+  assert.deepEqual(
+    {
+      email: cleared.body.data.contact.email,
+      phone: cleared.body.data.contact.phone,
+      instagramUrl: cleared.body.data.contact.instagramUrl,
+      facebookUrl: cleared.body.data.contact.facebookUrl,
+    },
+    { email: "", phone: "", instagramUrl: "", facebookUrl: "" },
+  );
+
+  const publicSettings = await request(app).get("/api/settings").expect(200);
+  assert.equal(publicSettings.body.data.contact.instagramUrl, "");
+  assert.equal(publicSettings.body.data.contact.facebookUrl, "");
 });
 
 test("registered-user administration is protected, paged and privacy-conscious", async () => {

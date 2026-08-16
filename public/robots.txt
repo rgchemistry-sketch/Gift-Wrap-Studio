@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://giftnwrapstudio.com/sitemap.xml
+Sitemap: https://www.giftnwrapstudio.com/sitemap.xml

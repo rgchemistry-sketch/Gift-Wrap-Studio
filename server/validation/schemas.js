@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  FACEBOOK_PROFILE_MESSAGE,
+  INSTAGRAM_PROFILE_MESSAGE,
+  normalizeFacebookProfile,
+  normalizeInstagramProfile,
+} from "../../shared/social-profiles.js";
 
 const text = (min, max) => z.string().trim().min(min).max(max);
 const email = z.string().trim().toLowerCase().email().max(254);
@@ -153,7 +159,7 @@ const productUpdateFields = {
     (value) => (value === "" ? null : value),
     numberInput(z.number().int().min(0).max(10_000_000).nullable()),
   ),
-  images: z.array(imageSchema).max(10),
+  images: z.array(imageSchema).min(1, "Add at least one product image").max(10),
   tags: z.array(text(1, 50)).max(30),
   customizationOptions: z.array(text(1, 100)).max(30),
   variants: z.array(productVariantSchema).max(100),
@@ -171,7 +177,7 @@ export const createProductSchema = z
     description: productUpdateFields.description.default(""),
     sku: productUpdateFields.sku.default(""),
     compareAtPrice: productUpdateFields.compareAtPrice.default(null),
-    images: productUpdateFields.images.default([]),
+    images: productUpdateFields.images,
     tags: productUpdateFields.tags.default([]),
     customizationOptions: productUpdateFields.customizationOptions.default([]),
     variants: productUpdateFields.variants.default([]),
@@ -228,16 +234,16 @@ export const idParamsSchema = z.object({ id: text(1, 100) }).strict();
 const relativeOrHttpsUrlOrBlank = z.union([z.literal(""), relativeOrHttpsUrl]);
 const emailOrBlank = z.union([z.literal(""), email]);
 const phoneOrBlank = z.union([z.literal(""), phone]);
-const instagramOrBlank = z.string().trim().max(200).refine((value) => {
-  if (!value) return true;
-  if (/^@[A-Za-z0-9._]{1,30}$/.test(value)) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && /(^|\.)instagram\.com$/i.test(url.hostname);
-  } catch {
-    return false;
-  }
-}, "Enter an @handle or an HTTPS Instagram URL");
+const instagramOrBlank = z
+  .string()
+  .trim()
+  .max(200)
+  .refine((value) => normalizeInstagramProfile(value) !== null, INSTAGRAM_PROFILE_MESSAGE);
+const facebookOrBlank = z
+  .string()
+  .trim()
+  .max(200)
+  .refine((value) => normalizeFacebookProfile(value) !== null, FACEBOOK_PROFILE_MESSAGE);
 
 const leadTimesSettingsSchema = z
   .object({
@@ -281,6 +287,7 @@ const contactSettingsSchema = z
     email: emailOrBlank.optional(),
     phone: phoneOrBlank.optional(),
     instagram: instagramOrBlank.optional(),
+    facebook: facebookOrBlank.optional(),
   })
   .strict();
 

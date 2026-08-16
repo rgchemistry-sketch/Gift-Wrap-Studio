@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import Accordion from 'react-bootstrap/Accordion';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
@@ -9,17 +10,126 @@ import Row from 'react-bootstrap/Row';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../components/Icon';
 import { api } from '../api/client';
+import { useShop } from '../context/ShopContext';
+import { resolveStudioContact } from '../utils/studio-contact';
 
-const faq = [['Can I customize every product?','Most products marked “Customizable” support names, dates, colours, finishes and other product-specific details.'],['Do you accept bulk orders?','Yes. Share your quantity, occasion, date and budget through the custom order form.'],['Can I add names and photos?','Yes, where the product supports them. You can preview and securely upload supported images while personalizing.'],['Do you make corporate gifts?','Yes—logo plaques, employee awards, desk pieces, hampers, event souvenirs and more.'],['Do you deliver across India?','Yes. Every piece is carefully packaged for PAN India delivery.'],['Can I request a completely new design?','Absolutely. Begin a custom request and describe what you have in mind.']];
+const faq = [
+  ['Can I customize every product?', 'Most products marked “Customizable” support names, dates, colours, finishes and other product-specific details.'],
+  ['Do you accept bulk orders?', 'Yes. Share your quantity, occasion, date and budget through the custom order form.'],
+  ['Can I add names and photos?', 'Yes, where the product supports them. You can preview and securely upload supported images while personalizing.'],
+  ['Do you make corporate gifts?', 'Yes—logo plaques, employee awards, desk pieces, hampers, event souvenirs and more.'],
+  ['Do you deliver across India?', 'Yes. Every piece is carefully packaged for PAN India delivery.'],
+  ['Can I request a completely new design?', 'Absolutely. Begin a custom request and describe what you have in mind.'],
+];
 
 export default function ContactPage() {
-  const [form, setForm] = useState({ name: '', email: '', phone: '', subject: 'Product question', message: '' });
+  const { studioSettings } = useShop();
+  const contact = resolveStudioContact(studioSettings);
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    subject: 'Product question',
+    message: '',
+  });
   const [state, setState] = useState({ submitting: false, error: '', sent: false });
-  const update = (key,value)=>setForm(current=>({...current,[key]:value}));
-  const submit = async(event)=>{event.preventDefault(); if(!event.currentTarget.checkValidity()){event.currentTarget.classList.add('was-validated');return;} setState({submitting:true,error:'',sent:false}); try{await api.submitContact(form);setState({submitting:false,error:'',sent:true});setForm({name:'',email:'',phone:'',subject:'Product question',message:''});}catch(error){setState({submitting:false,error:`${error.message} Your message was not sent; please try again or call the studio.`,sent:false});}};
+
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!event.currentTarget.checkValidity()) {
+      event.currentTarget.classList.add('was-validated');
+      return;
+    }
+    setState({ submitting: true, error: '', sent: false });
+    try {
+      await api.submitContact(form);
+      setState({ submitting: false, error: '', sent: true });
+      setForm({ name: '', email: '', phone: '', subject: 'Product question', message: '' });
+    } catch (error) {
+      setState({
+        submitting: false,
+        error: `${error.message} Your message was not sent; please try again${contact.phone ? ' or call the studio' : ''}.`,
+        sent: false,
+      });
+    }
+  };
+
   return <>
-    <section className="contact-hero"><Container fluid="xl"><p className="eyebrow light-eyebrow">Contact the studio</p><h1>A thoughtful gift<br />starts with a hello.</h1><p>Questions, unusual ideas and detailed briefs are all welcome. We’ll help you find the clearest next step.</p></Container></section>
-    <section className="page-section contact-main"><Container fluid="xl"><Row className="g-5"><Col lg={5}><div className="contact-details"><p className="eyebrow">Gift N Wrap Studio</p><h2>Handmade resin art & personalized gifts.</h2><p>Reach us directly for product questions, timelines, custom ideas and bulk gifting.</p><a href="tel:+919588281126"><span><Icon name="phone" /></span><p><small>Call or WhatsApp</small><strong>+91 95882 81126</strong></p></a><a href="mailto:info@giftnwrapstudio.com"><span><Icon name="mail" /></span><p><small>Email the studio</small><strong>info@giftnwrapstudio.com</strong></p></a><a href="https://www.instagram.com/giftnwrapstudio" target="_blank" rel="noreferrer"><span><Icon name="instagram" /></span><p><small>See recent work</small><strong>@giftnwrapstudio</strong></p></a><a href="https://maps.app.goo.gl/Tfcr1XpcvsaZqgJ28?g_st=iw" target="_blank" rel="noreferrer"><span><Icon name="map" /></span><p><small>Find the studio</small><strong>Open in Google Maps</strong></p></a></div></Col><Col lg={{span:6,offset:1}}><Form noValidate onSubmit={submit} className="contact-form"><p className="eyebrow">Send a note</p><h2>What can we make easier?</h2>{state.error&&<Alert variant="danger" className="soft-alert">{state.error}</Alert>}{state.sent&&<Alert variant="success" className="soft-alert"><Icon name="check" /> Your message reached the studio. We’ll reply as soon as we can.</Alert>}<Row className="g-3"><Col sm={6}><Form.Group controlId="contact-name"><Form.Label>Name</Form.Label><Form.Control required value={form.name} onChange={e=>update('name',e.target.value)}/><Form.Control.Feedback type="invalid">Enter your name.</Form.Control.Feedback></Form.Group></Col><Col sm={6}><Form.Group controlId="contact-phone"><Form.Label>Mobile <small>optional</small></Form.Label><Form.Control inputMode="numeric" value={form.phone} onChange={e=>update('phone',e.target.value.replace(/\D/g,'').slice(0,10))}/></Form.Group></Col><Col xs={12}><Form.Group controlId="contact-email"><Form.Label>Email</Form.Label><Form.Control required type="email" value={form.email} onChange={e=>update('email',e.target.value)}/><Form.Control.Feedback type="invalid">Enter a valid email.</Form.Control.Feedback></Form.Group></Col><Col xs={12}><Form.Group controlId="contact-subject"><Form.Label>About</Form.Label><Form.Select value={form.subject} onChange={e=>update('subject',e.target.value)}><option>Product question</option><option>Existing order</option><option>Custom design</option><option>Corporate or bulk gifting</option><option>Delivery and care</option></Form.Select></Form.Group></Col><Col xs={12}><Form.Group controlId="contact-message"><Form.Label>Message</Form.Label><Form.Control required as="textarea" rows={6} maxLength={1200} value={form.message} onChange={e=>update('message',e.target.value)} placeholder="Include the product, occasion or order number if you have one."/><Form.Control.Feedback type="invalid">Tell us how we can help.</Form.Control.Feedback></Form.Group></Col></Row><Button type="submit" className="button-burgundy" disabled={state.submitting}>{state.submitting?<><Spinner size="sm"/> Sending…</>:<>Send message <Icon name="arrow"/></>}</Button></Form></Col></Row></Container></section>
-    <section className="faq-section page-section" id="faq"><Container fluid="xl"><Row className="gy-5"><Col lg={4}><p className="eyebrow">Frequently asked</p><h2>The useful details, all together.</h2><p className="muted-copy">For care and processing timelines, visit our dedicated guide.</p><a href="/care-and-delivery" className="text-link">Care & delivery guide <Icon name="arrow"/></a></Col><Col lg={{span:7,offset:1}}><Accordion flush className="studio-accordion">{faq.map(([q,a],i)=><Accordion.Item eventKey={String(i)} key={q}><Accordion.Header>{q}</Accordion.Header><Accordion.Body>{a}</Accordion.Body></Accordion.Item>)}</Accordion></Col></Row></Container></section>
+    <section className="contact-hero">
+      <Container fluid="xl">
+        <p className="eyebrow light-eyebrow">Contact the studio</p>
+        <h1>A thoughtful gift<br />starts with a hello.</h1>
+        <p>Questions, unusual ideas and detailed briefs are all welcome. We’ll help you find the clearest next step.</p>
+      </Container>
+    </section>
+    <section className="page-section contact-main">
+      <Container fluid="xl">
+        <Row className="g-5">
+          <Col lg={5}>
+            <div className="contact-details">
+              <p className="eyebrow">Gift N Wrap Studio</p>
+              <h2>Handmade resin art & personalized gifts.</h2>
+              <p>Reach us directly for product questions, timelines, custom ideas and bulk gifting.</p>
+              {contact.phoneHref && <a href={contact.phoneHref}>
+                <span><Icon name="phone" /></span>
+                <p><small>Call the studio</small><strong>{contact.phoneLabel}</strong></p>
+              </a>}
+              {contact.email && <a href={`mailto:${contact.email}`}>
+                <span><Icon name="mail" /></span>
+                <p><small>Email the studio</small><strong>{contact.email}</strong></p>
+              </a>}
+              {contact.instagramUrl && <a href={contact.instagramUrl} target="_blank" rel="noreferrer">
+                <span><Icon name="instagram" /></span>
+                <p><small>See recent work on Instagram</small><strong>{contact.instagramLabel || 'Instagram'}</strong></p>
+              </a>}
+              {contact.facebookUrl && <a href={contact.facebookUrl} target="_blank" rel="noreferrer">
+                <span><Icon name="facebook" /></span>
+                <p><small>Visit us on Facebook</small><strong>{contact.facebookLabel || 'Facebook'}</strong></p>
+              </a>}
+              <a href="https://maps.app.goo.gl/Tfcr1XpcvsaZqgJ28?g_st=iw" target="_blank" rel="noreferrer">
+                <span><Icon name="map" /></span>
+                <p><small>Find the studio</small><strong>Open in Google Maps</strong></p>
+              </a>
+            </div>
+          </Col>
+          <Col lg={{ span: 6, offset: 1 }}>
+            <Form noValidate onSubmit={submit} className="contact-form">
+              <p className="eyebrow">Send a note</p>
+              <h2>What can we make easier?</h2>
+              {state.error && <Alert variant="danger" className="soft-alert">{state.error}</Alert>}
+              {state.sent && <Alert variant="success" className="soft-alert"><Icon name="check" /> Your message reached the studio. We’ll reply as soon as we can.</Alert>}
+              <Row className="g-3">
+                <Col sm={6}><Form.Group controlId="contact-name"><Form.Label>Name</Form.Label><Form.Control required value={form.name} onChange={(event) => update('name', event.target.value)} /><Form.Control.Feedback type="invalid">Enter your name.</Form.Control.Feedback></Form.Group></Col>
+                <Col sm={6}><Form.Group controlId="contact-phone"><Form.Label>Mobile <small>optional</small></Form.Label><Form.Control inputMode="numeric" value={form.phone} onChange={(event) => update('phone', event.target.value.replace(/\D/g, '').slice(0, 10))} /></Form.Group></Col>
+                <Col xs={12}><Form.Group controlId="contact-email"><Form.Label>Email</Form.Label><Form.Control required type="email" value={form.email} onChange={(event) => update('email', event.target.value)} /><Form.Control.Feedback type="invalid">Enter a valid email.</Form.Control.Feedback></Form.Group></Col>
+                <Col xs={12}><Form.Group controlId="contact-subject"><Form.Label>About</Form.Label><Form.Select value={form.subject} onChange={(event) => update('subject', event.target.value)}><option>Product question</option><option>Existing order</option><option>Custom design</option><option>Corporate or bulk gifting</option><option>Delivery and care</option></Form.Select></Form.Group></Col>
+                <Col xs={12}><Form.Group controlId="contact-message"><Form.Label>Message</Form.Label><Form.Control required as="textarea" rows={6} maxLength={1200} value={form.message} onChange={(event) => update('message', event.target.value)} placeholder="Include the product, occasion or order number if you have one." /><Form.Control.Feedback type="invalid">Tell us how we can help.</Form.Control.Feedback></Form.Group></Col>
+              </Row>
+              <Button type="submit" className="button-burgundy" disabled={state.submitting}>
+                {state.submitting ? <><Spinner size="sm" /> Sending…</> : <>Send message <Icon name="arrow" /></>}
+              </Button>
+            </Form>
+          </Col>
+        </Row>
+      </Container>
+    </section>
+    <section className="faq-section page-section" id="faq">
+      <Container fluid="xl">
+        <Row className="gy-5">
+          <Col lg={4}>
+            <p className="eyebrow">Frequently asked</p>
+            <h2>The useful details, all together.</h2>
+            <p className="muted-copy">For care and processing timelines, visit our dedicated guide.</p>
+            <Link to="/care-and-delivery" className="text-link">Care & delivery guide <Icon name="arrow" /></Link>
+          </Col>
+          <Col lg={{ span: 7, offset: 1 }}>
+            <Accordion flush className="studio-accordion">
+              {faq.map(([question, answer], index) => <Accordion.Item eventKey={String(index)} key={question}><Accordion.Header>{question}</Accordion.Header><Accordion.Body>{answer}</Accordion.Body></Accordion.Item>)}
+            </Accordion>
+          </Col>
+        </Row>
+      </Container>
+    </section>
   </>;
 }

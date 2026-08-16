@@ -11,7 +11,7 @@ productsRouter.get(
   validate({ query: productQuerySchema }),
   asyncHandler(async (request, response) => {
     const result = await listProducts(request.validated.query);
-    response.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
+    response.setHeader("Cache-Control", "no-store");
     response.json({
       data: result.items,
       meta: {
@@ -27,7 +27,7 @@ productsRouter.get(
 productsRouter.get(
   "/categories",
   asyncHandler(async (_request, response) => {
-    response.setHeader("Cache-Control", "public, max-age=300, s-maxage=1800");
+    response.setHeader("Cache-Control", "no-store");
     response.json({ data: await listProductCategories() });
   }),
 );
@@ -36,7 +36,7 @@ productsRouter.get(
   "/:slug",
   validate({ params: slugParamsSchema }),
   asyncHandler(async (request, response) => {
-    response.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
+    response.setHeader("Cache-Control", "no-store");
     response.json({ data: await getProductBySlug(request.validated.params.slug) });
   }),
 );

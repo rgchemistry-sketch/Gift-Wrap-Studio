@@ -37,6 +37,29 @@ export default function ProductManager({ products: initialProducts = [], preview
   const openCreate = () => { setEditorProduct(undefined); setEditorOpen(true); };
   const openEdit = (product) => { setEditorProduct(product); setEditorOpen(true); };
 
+  const copyProductLink = async (slug) => {
+    const url = new URL(`/product/${slug}`, window.location.origin).href;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = url;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        if (!copied) throw new Error('Clipboard unavailable');
+      }
+      notify('Product link copied.');
+    } catch {
+      notify('The product link could not be copied. Open it and copy the address from your browser.', 'error');
+    }
+  };
+
   const togglePublished = async (raw) => {
     if (raw.archivedAt) return;
     const id = raw.id || raw._id;
@@ -92,9 +115,24 @@ export default function ProductManager({ products: initialProducts = [], preview
       const id = raw.id || raw._id || product.id;
       return <article key={id}>
         <div className="admin-product-card__image"><SmartImage src={product.image} alt="" fallbackLabel={product.category}/>{raw.featured && <span className="admin-product-card__feature"><Icon name="spark" size={12}/> Featured</span>}</div>
-        <div className="admin-product-card__body"><div className="admin-product-card__meta"><span className={archived ? 'is-archived' : active ? 'in-stock' : 'out-stock'}>{archived ? 'Archived' : active ? 'Published' : 'Draft'}</span><small>{raw.sku || 'No SKU'}</small></div><h3>{product.title}</h3><p>{product.category}</p><div className="admin-product-card__price"><strong>{formatCurrency(product.price)}</strong>{product.compareAt && <del>{formatCurrency(product.compareAt)}</del>}<span className={stock != null && stock <= 3 ? 'is-low' : ''}>{stock == null ? 'Made to order' : `${stock} in stock`}</span></div><div className="admin-product-card__actions"><Button type="button" variant="outline-dark" size="sm" onClick={() => openEdit(raw)} disabled={preview || workingId === id}>Edit</Button>{archived?<button type="button" className="plain-link" disabled={preview || workingId === id} onClick={() => restoreProduct(raw)}>Restore & publish</button>:<><button type="button" className="plain-link" disabled={preview || workingId === id} onClick={() => togglePublished(raw)}>{active ? 'Unpublish' : 'Publish'}</button><button type="button" className="plain-link is-danger" disabled={preview || workingId === id} onClick={() => archiveProduct(raw)}>Archive</button></>}</div></div>
+        <div className="admin-product-card__body">
+          <div className="admin-product-card__meta"><span className={archived ? 'is-archived' : active ? 'in-stock' : 'out-stock'}>{archived ? 'Archived' : active ? 'Published' : 'Draft'}</span><small>{raw.sku || 'No SKU'}</small></div>
+          <h3>{product.title}</h3>
+          <p>{product.category}</p>
+          <div className="admin-product-card__price"><strong>{formatCurrency(product.price)}</strong>{product.compareAt && <del>{formatCurrency(product.compareAt)}</del>}<span className={stock != null && stock <= 3 ? 'is-low' : ''}>{stock == null ? 'Made to order' : `${stock} in stock`}</span></div>
+          <div className="admin-product-card__permalink">
+            <div><span>Permalink</span><code title={`/product/${product.slug}`}>/product/{product.slug}</code></div>
+            <div>
+              {active
+                ? <a href={`/product/${product.slug}`} target="_blank" rel="noreferrer" aria-label={`Open ${product.title} on the storefront`}>Open <Icon name="arrow" size={13}/></a>
+                : <span className="admin-product-card__not-live">Not live</span>}
+              <button type="button" onClick={() => void copyProductLink(product.slug)} aria-label={`Copy link for ${product.title}`}>Copy</button>
+            </div>
+          </div>
+          <div className="admin-product-card__actions"><Button type="button" variant="outline-dark" size="sm" onClick={() => openEdit(raw)} disabled={preview || workingId === id}>Edit</Button>{archived?<button type="button" className="plain-link" disabled={preview || workingId === id} onClick={() => restoreProduct(raw)}>Restore & publish</button>:<><button type="button" className="plain-link" disabled={preview || workingId === id} onClick={() => togglePublished(raw)}>{active ? 'Unpublish' : 'Publish'}</button><button type="button" className="plain-link is-danger" disabled={preview || workingId === id} onClick={() => archiveProduct(raw)}>Archive</button></>}</div>
+        </div>
       </article>;
-    })}</div> : <AdminSectionState title="No pieces found" message={query || status !== 'current' ? 'Try another search or catalogue status.' : 'Create your first piece to begin the studio catalogue.'} actionLabel={!query && status === 'current' ? 'Create product' : undefined} onAction={openCreate}/>}
+    })}</div> : <AdminSectionState title="No pieces found" message={query || status !== 'current' ? 'Try another search or catalogue status.' : 'Create your first piece to begin the studio catalogue.'} actionLabel={!preview && !query && status === 'current' ? 'Create product' : undefined} onAction={!preview ? openCreate : undefined}/>}
     {editorOpen && (
       <ProductEditor
         product={editorProduct}

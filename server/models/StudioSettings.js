@@ -47,6 +47,7 @@ const contactSchema = new mongoose.Schema(
     email: { type: String, default: "", lowercase: true, trim: true, maxlength: 254 },
     phone: { type: String, default: "", trim: true, maxlength: 20 },
     instagram: { type: String, default: "", trim: true, maxlength: 200 },
+    facebook: { type: String, default: "", trim: true, maxlength: 200 },
   },
   { _id: false },
 );

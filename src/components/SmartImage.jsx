@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 
-export default function SmartImage({ src, alt, className = '', fallbackLabel = 'Gift N Wrap', ...props }) {
+export default function SmartImage({
+  src,
+  alt,
+  className = '',
+  fallbackLabel = 'Gift N Wrap',
+  onError,
+  onLoad,
+  ...props
+}) {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => setFailed(false), [src]);
@@ -14,5 +22,20 @@ export default function SmartImage({ src, alt, className = '', fallbackLabel = '
     );
   }
 
-  return <img src={src} alt={alt} className={className} onError={() => setFailed(true)} {...props} />;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      {...props}
+      onLoad={(event) => {
+        setFailed(false);
+        onLoad?.(event);
+      }}
+      onError={(event) => {
+        setFailed(true);
+        onError?.(event);
+      }}
+    />
+  );
 }
