@@ -12,9 +12,19 @@ import ProductCard from '../components/ProductCard';
 import SmartImage from '../components/SmartImage';
 import { RouteLoader } from '../components/Feedback';
 import { api } from '../api/client';
-import { demoProducts, formatCurrency } from '../data/catalog';
+import { formatCurrency } from '../data/catalog';
+import { useCatalog } from '../data/useCatalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
+
+const emptyCustomization = () => ({
+  name: '',
+  date: '',
+  message: '',
+  colour: 'Forest & gold',
+  finish: 'Gold foil',
+  media: null,
+});
 
 const colourOptions = [
   ['Forest & gold', '#315446'],
@@ -232,16 +242,24 @@ export default function ProductPage() {
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [validated, setValidated] = useState(false);
-  const [customization, setCustomization] = useState({ name: '', date: '', message: '', colour: 'Forest & gold', finish: 'Gold foil', media: null });
+  const [customization, setCustomization] = useState(emptyCustomization);
   const [mediaBusy, setMediaBusy] = useState(false);
   const [mediaSubmitError, setMediaSubmitError] = useState('');
   const mediaUploadRef = useRef(null);
   const { addToCart, wishlist, toggleWishlist } = useShop();
+  const { products: catalog } = useCatalog();
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError('');
+    // /product/:slug keeps the same component mounted between products, so every
+    // per-product choice has to be cleared or it follows the visitor to the next piece.
+    setSelectedImage(0);
+    setQuantity(1);
+    setValidated(false);
+    setCustomization(emptyCustomization());
+    setMediaSubmitError('');
     api.getProduct(slug)
       .then((result) => {
         if (active) setProduct(result.product);
@@ -256,8 +274,8 @@ export default function ProductPage() {
   }, [slug]);
 
   const related = useMemo(
-    () => demoProducts.filter((item) => item.id !== product?.id && item.category === product?.category).slice(0, 3),
-    [product],
+    () => catalog.filter((item) => item.id !== product?.id && item.category === product?.category).slice(0, 3),
+    [catalog, product],
   );
 
   if (loading) return <RouteLoader />;
@@ -274,6 +292,7 @@ export default function ProductPage() {
   }
 
   const gallery = product.gallery?.length ? product.gallery : [product.image];
+  const activeImageIndex = Math.min(selectedImage, gallery.length - 1);
   const updateCustomization = (key, value) => {
     if (key === 'media') setMediaSubmitError('');
     setCustomization((current) => ({ ...current, [key]: value }));
@@ -325,13 +344,13 @@ export default function ProductPage() {
               <div className="product-gallery">
                 <div className="product-gallery__thumbs" aria-label="Product images">
                   {gallery.map((image, index) => (
-                    <button key={`${image}-${index}`} type="button" className={selectedImage === index ? 'is-active' : ''} onClick={() => setSelectedImage(index)} aria-label={`Show image ${index + 1}`} aria-pressed={selectedImage === index}>
+                    <button key={`${image}-${index}`} type="button" className={activeImageIndex === index ? 'is-active' : ''} onClick={() => setSelectedImage(index)} aria-label={`Show image ${index + 1}`} aria-pressed={activeImageIndex === index}>
                       <SmartImage src={image} alt="" fallbackLabel={product.category} />
                     </button>
                   ))}
                 </div>
                 <div className="product-gallery__main">
-                  <SmartImage src={gallery[selectedImage]} alt={`${product.title}, view ${selectedImage + 1}`} fallbackLabel={product.title} />
+                  <SmartImage src={gallery[activeImageIndex]} alt={`${product.title}, view ${activeImageIndex + 1}`} fallbackLabel={product.title} />
                   {product.badge && <span className="product-gallery__badge">{product.badge}</span>}
                 </div>
               </div>
@@ -382,7 +401,9 @@ export default function ProductPage() {
                       </Form.Group>
                       <Form.Group className="form-field">
                         <Form.Label>Photo or inspiration <small>optional</small></Form.Label>
-                        <MediaUpload ref={mediaUploadRef} onChange={(media) => updateCustomization('media', media)} onBusyChange={setMediaBusy} />
+                        {/* Remounting per slug runs the unmount cleanup, which releases any
+                            photo uploaded for the previous piece instead of carrying it over. */}
+                        <MediaUpload key={slug} ref={mediaUploadRef} onChange={(media) => updateCustomization('media', media)} onBusyChange={setMediaBusy} />
                         {mediaSubmitError && <p className="field-message" role="alert">{mediaSubmitError}</p>}
                       </Form.Group>
                     </fieldset>

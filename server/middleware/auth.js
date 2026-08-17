@@ -35,10 +35,10 @@ const resolveUser = async (request, { required }) => {
 
   const email = (storedUser?.email || payload.email || "").toLowerCase();
   if (!email) throw unauthorized();
-  const role =
-    env.adminEmail && email === env.adminEmail && storedUser.role === "admin"
-      ? "admin"
-      : "buyer";
+  // ADMIN_EMAIL is the single source of truth for admin access. The stored role is only a
+  // cache refreshed at login, so requiring it too locked out a newly designated admin
+  // until they signed out and back in.
+  const role = env.adminEmail && email === env.adminEmail ? "admin" : "buyer";
   request.user = {
     id: storedUser?.id || payload.sub,
     email,

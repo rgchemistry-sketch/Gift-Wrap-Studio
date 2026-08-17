@@ -98,9 +98,10 @@ export const productQuerySchema = z
   .object({
     search: optionalBlank(text(1, 100)),
     category: optionalBlank(text(1, 80)),
+    occasion: optionalBlank(text(1, 80)),
     featured: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
     page: integerInput({ min: 1, max: 10_000 }).default(1),
-    limit: integerInput({ min: 1, max: 50 }).default(12),
+    limit: integerInput({ min: 1, max: 100 }).default(50),
   })
   .strict();
 
@@ -151,6 +152,7 @@ const productUpdateFields = {
   slug: z.string().trim().toLowerCase().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(160),
   name: text(2, 140),
   category: text(2, 80),
+  occasion: z.string().trim().max(80),
   shortDescription: text(10, 240),
   description: z.string().trim().max(4_000),
   sku: skuSchema,
@@ -174,6 +176,7 @@ const productUpdateFields = {
 export const createProductSchema = z
   .object({
     ...productUpdateFields,
+    occasion: productUpdateFields.occasion.default(""),
     description: productUpdateFields.description.default(""),
     sku: productUpdateFields.sku.default(""),
     compareAtPrice: productUpdateFields.compareAtPrice.default(null),

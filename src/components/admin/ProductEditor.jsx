@@ -6,6 +6,7 @@ import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../Icon';
 import SmartImage from '../SmartImage';
 import { api } from '../../api/client';
+import { occasions } from '../../data/catalog';
 import {
   imageFromReusableUrl,
   imageKey,
@@ -18,6 +19,7 @@ const emptyProduct = {
   name: '',
   slug: '',
   category: 'Personalized gifts',
+  occasion: '',
   shortDescription: '',
   description: '',
   price: '',
@@ -578,6 +580,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
       name: productName,
       slug: makeSlug(draft.slug || draft.name),
       category: draft.category,
+      occasion: draft.occasion,
       shortDescription,
       description: draft.description.trim(),
       price: sellingPrice,
@@ -727,6 +730,15 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                 )}
               </Form.Group>
               <Form.Group controlId="product-category"><Form.Label>Collection</Form.Label><Form.Select value={draft.category} isInvalid={Boolean(fieldErrors.category)} onChange={(event) => setField('category', event.target.value)}>{categories.map((category) => <option key={category}>{category}</option>)}</Form.Select><Form.Control.Feedback type="invalid">{fieldErrors.category}</Form.Control.Feedback></Form.Group>
+              <Form.Group controlId="product-occasion">
+                <Form.Label>Occasion</Form.Label>
+                <Form.Select value={draft.occasion || ''} isInvalid={Boolean(fieldErrors.occasion)} onChange={(event) => setField('occasion', event.target.value)}>
+                  <option value="">No specific occasion</option>
+                  {occasions.map((occasion) => <option key={occasion} value={occasion}>{occasion}</option>)}
+                </Form.Select>
+                <Form.Control.Feedback type="invalid">{fieldErrors.occasion}</Form.Control.Feedback>
+                <Form.Text>Powers the storefront’s occasion navigation and shop filters.</Form.Text>
+              </Form.Group>
               <Form.Group controlId="product-short-description" className="span-2"><Form.Label>Short description</Form.Label><Form.Control required minLength={10} maxLength={240} value={draft.shortDescription} isInvalid={Boolean(fieldErrors.shortDescription)} onChange={(event) => setField('shortDescription', event.target.value)} placeholder="A concise line for catalogue cards." /><Form.Control.Feedback type="invalid">{fieldErrors.shortDescription}</Form.Control.Feedback></Form.Group>
               <Form.Group controlId="product-description" className="span-2"><Form.Label>Full story</Form.Label><Form.Control as="textarea" rows={4} maxLength={4000} value={draft.description} isInvalid={Boolean(fieldErrors.description)} onChange={(event) => setField('description', event.target.value)} placeholder="Materials, finish, dimensions and the story behind this piece…" /><Form.Control.Feedback type="invalid">{fieldErrors.description}</Form.Control.Feedback></Form.Group>
             </div>
