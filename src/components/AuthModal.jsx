@@ -211,16 +211,17 @@ export default function AuthModal() {
         const paintButton = ({ force = false } = {}) => {
           const target = googleButtonRef.current;
           if (!active || !target) return false;
-          const entry = target.closest('.auth-dialog__entry');
-          const availableWidth = Math.floor(entry?.getBoundingClientRect().width || target.getBoundingClientRect().width);
+          const availableWidth = Math.floor(target.getBoundingClientRect().width);
           const nextWidth = Math.min(400, Math.max(200, availableWidth || 320));
           if (!force && target.contains(document.activeElement)) return true;
-          if (!force && paintedWidth && Math.abs(nextWidth - paintedWidth) < 12) return true;
+          if (!force && paintedWidth && Math.abs(nextWidth - paintedWidth) < 2) return true;
           try {
             target.replaceChildren();
             window.google.accounts.id.renderButton(target, {
               theme: 'outline',
-              size: 'large',
+              // Google does not expose a direct personalization switch. Its
+              // documented medium size always uses the generic button label.
+              size: 'medium',
               shape: 'rectangular',
               text: authIntent === 'signup' ? 'signup_with' : 'continue_with',
               logo_alignment: 'left',

@@ -308,8 +308,8 @@ button.social-auth-button:hover:not(:disabled) { border-color:rgba(91,32,52,.45)
 .social-auth-button--google.is-ready { border-color:transparent; background:transparent; overflow:hidden; }
 .social-auth-button--google.is-disabled:not(.is-ready) { display:grid; padding:.35rem .75rem; }
 .social-auth-button--google .google-signin-target { display:flex; width:100%; min-width:0; min-height:44px; align-items:center; justify-content:center; overflow:hidden; }
-.social-auth-button--google .google-signin-target>div { max-width:100%!important; }
-.social-auth-button--google iframe { width:100%!important; max-width:400px!important; }
+.social-auth-button--google .google-signin-target>div { width:min(100%,400px)!important; max-width:100%!important; }
+.social-auth-button--google iframe { max-width:none!important; }
 .social-auth-button.is-disabled { pointer-events:none; }
 .social-auth-loading,.social-auth-busy { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; border-radius:.4rem; font-size:.65rem; }
 .social-auth-loading { color:var(--muted); background:rgba(255,255,255,.96); }
