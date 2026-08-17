@@ -43,9 +43,7 @@ function loadScript(key, src, attributes = {}) {
   return promise;
 }
 
-function SocialMark({ provider }) {
-  if (provider === 'facebook') return <span className="social-mark social-mark--facebook" aria-hidden="true">f</span>;
-  if (provider === 'apple') return <span className="social-mark social-mark--apple" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M17.05 12.54c-.02-2.52 2.06-3.74 2.15-3.8a4.62 4.62 0 0 0-3.64-1.97c-1.53-.16-3.02.92-3.8.92-.8 0-2-.9-3.3-.87a4.84 4.84 0 0 0-4.08 2.49c-1.76 3.04-.45 7.51 1.23 9.97.84 1.2 1.82 2.55 3.12 2.5 1.27-.05 1.75-.8 3.28-.8 1.52 0 1.97.8 3.3.77 1.36-.02 2.22-1.2 3.03-2.42a9.95 9.95 0 0 0 1.39-2.82 4.38 4.38 0 0 1-2.68-3.97ZM14.56 5.15a4.44 4.44 0 0 0 1.02-3.18 4.52 4.52 0 0 0-2.93 1.51 4.27 4.27 0 0 0-1.05 3.07 3.74 3.74 0 0 0 2.96-1.4Z" /></svg></span>;
+function SocialMark() {
   return <span className="social-mark social-mark--google" aria-hidden="true">G</span>;
 }
 
@@ -64,9 +62,6 @@ export default function AuthModal() {
     openAuth,
     closeAuth,
     authenticateGoogle,
-    authenticateFacebook,
-    prepareAppleAuthentication,
-    authenticateApple,
     startEmailAuthentication,
     verifyEmailAuthentication,
     resetEmailChallenge,
@@ -78,7 +73,7 @@ export default function AuthModal() {
   const codeInputRef = useRef(null);
   const providerBusyRef = useRef(false);
   const providerFlowRef = useRef(0);
-  const [sdkReady, setSdkReady] = useState({ google: false, facebook: false, apple: false });
+  const [sdkReady, setSdkReady] = useState({ google: false });
   const [sdkErrors, setSdkErrors] = useState({});
   const [sdkRetry, setSdkRetry] = useState(0);
   const [providerStarting, setProviderStarting] = useState('');
@@ -92,8 +87,6 @@ export default function AuthModal() {
   const emailValid = emailPattern.test(email.trim());
   const nameValid = authIntent !== 'signup' || name.trim().length >= 2;
   const googleConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID) && providers.google;
-  const facebookConfigured = Boolean(import.meta.env.VITE_FACEBOOK_APP_ID) && providers.facebook;
-  const appleConfigured = Boolean(import.meta.env.VITE_APPLE_CLIENT_ID && import.meta.env.VITE_APPLE_REDIRECT_URI) && providers.apple;
   const uiBusy = authenticating || Boolean(providerStarting);
   const providerErrors = Object.entries(sdkErrors).filter(([, message]) => Boolean(message));
 
@@ -133,7 +126,7 @@ export default function AuthModal() {
   const retryProviderSdks = () => {
     if (uiBusy) return;
     setSdkErrors({});
-    setSdkReady({ google: false, facebook: false, apple: false });
+    setSdkReady({ google: false });
     setSdkRetry((current) => current + 1);
     refreshAuthStatus().catch(() => {});
   };
@@ -201,46 +194,6 @@ export default function AuthModal() {
   }, [authIntent, authModalOpen, authStatus.loading, beginProviderFlow, finishProviderFlow, googleConfigured, sdkRetry]);
 
   useEffect(() => {
-    if (!authModalOpen || !facebookConfigured) return undefined;
-    let active = true;
-    loadScript('facebook', 'https://connect.facebook.net/en_US/sdk.js', { crossOrigin: 'anonymous' })
-      .then(() => {
-        if (!active || !window.FB) return;
-        window.FB.init({
-          appId: import.meta.env.VITE_FACEBOOK_APP_ID,
-          cookie: false,
-          xfbml: false,
-          version: import.meta.env.VITE_FACEBOOK_API_VERSION || 'v25.0',
-        });
-        setSdkReady((current) => ({ ...current, facebook: true }));
-        setSdkErrors((current) => ({ ...current, facebook: '' }));
-      })
-      .catch(() => {
-        if (active) setSdkErrors((current) => ({ ...current, facebook: 'Facebook sign-in could not load.' }));
-      });
-    return () => {
-      active = false;
-    };
-  }, [authModalOpen, facebookConfigured, sdkRetry]);
-
-  useEffect(() => {
-    if (!authModalOpen || !appleConfigured) return undefined;
-    let active = true;
-    loadScript('apple', 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js')
-      .then(() => {
-        if (!active || !window.AppleID?.auth) return;
-        setSdkReady((current) => ({ ...current, apple: true }));
-        setSdkErrors((current) => ({ ...current, apple: '' }));
-      })
-      .catch(() => {
-        if (active) setSdkErrors((current) => ({ ...current, apple: 'Apple sign-in could not load.' }));
-      });
-    return () => {
-      active = false;
-    };
-  }, [appleConfigured, authModalOpen, sdkRetry]);
-
-  useEffect(() => {
     if (!emailChallenge) return undefined;
     setResendSeconds(Number(emailChallenge.retryAfterSeconds || 60));
     setCode('');
@@ -298,62 +251,6 @@ export default function AuthModal() {
       });
     } catch {
       // AuthContext presents the safe server response.
-    }
-  };
-
-  const signInFacebook = async () => {
-    if (!window.FB || !sdkReady.facebook) return;
-    const flowId = beginProviderFlow('facebook');
-    if (!flowId) return;
-    try {
-      const response = await new Promise((resolve) => {
-        window.FB.login(resolve, { scope: 'public_profile,email', return_scopes: true });
-      });
-      if (flowId !== providerFlowRef.current) return;
-      const accessToken = response?.authResponse?.accessToken;
-      if (!accessToken) {
-        setLocalError('Facebook sign-in was cancelled.');
-        return;
-      }
-      await authenticateFacebook(accessToken);
-    } catch {
-      // AuthContext presents provider errors.
-    } finally {
-      finishProviderFlow(flowId);
-    }
-  };
-
-  const signInApple = async () => {
-    if (!window.AppleID?.auth || !sdkReady.apple) return;
-    const flowId = beginProviderFlow('apple');
-    if (!flowId) return;
-    try {
-      const nonceChallenge = await prepareAppleAuthentication();
-      if (flowId !== providerFlowRef.current) return;
-      window.AppleID.auth.init({
-        clientId: import.meta.env.VITE_APPLE_CLIENT_ID,
-        scope: 'name email',
-        redirectURI: import.meta.env.VITE_APPLE_REDIRECT_URI,
-        nonce: nonceChallenge.nonce,
-        usePopup: true,
-      });
-      const response = await window.AppleID.auth.signIn();
-      if (flowId !== providerFlowRef.current) return;
-      const idToken = response?.authorization?.id_token;
-      if (!idToken) {
-        setLocalError('Apple sign-in was cancelled.');
-        return;
-      }
-      const appleName = [response?.user?.name?.firstName, response?.user?.name?.lastName]
-        .filter(Boolean)
-        .join(' ');
-      await authenticateApple({ idToken, nonceId: nonceChallenge.nonceId, name: appleName });
-    } catch (error) {
-      if (!error?.error || error.error !== 'popup_closed_by_user') {
-        setLocalError('Apple sign-in was not completed. Please try again.');
-      }
-    } finally {
-      finishProviderFlow(flowId);
     }
   };
 
@@ -448,7 +345,7 @@ export default function AuthModal() {
 
             <div className="auth-divider"><span>or continue with</span></div>
 
-            <div className="social-auth-list" role="group" aria-label="Social sign-in options">
+            <div className="social-auth-list" role="group" aria-label="Google sign-in option">
               <div
                 className={`social-auth-button social-auth-button--google ${authStatus.loading || !googleConfigured || sdkErrors.google || (uiBusy && providerStarting !== 'google' && authMethod !== 'google') ? 'is-disabled' : ''}`}
                 aria-busy={providerStarting === 'google' || authMethod === 'google'}
@@ -456,25 +353,13 @@ export default function AuthModal() {
                 inert={uiBusy ? true : undefined}
               >
                 {authStatus.loading
-                  ? <><SocialMark provider="google" /><span>Checking Google…</span></>
+                  ? <><SocialMark /><span>Checking Google…</span></>
                   : googleConfigured && !sdkErrors.google
                     ? <div className="google-signin-target" ref={googleButtonRef} />
-                    : <><SocialMark provider="google" /><span>Continue with Google</span><small>{sdkErrors.google ? 'Unavailable' : 'Not configured'}</small></>}
+                    : <><SocialMark /><span>Continue with Google</span><small>{sdkErrors.google ? 'Unavailable' : 'Not configured'}</small></>}
                 {googleConfigured && !sdkReady.google && !sdkErrors.google && !authStatus.loading && <span className="social-auth-loading" role="status">Preparing Google…</span>}
                 {(providerStarting === 'google' || authMethod === 'google') && <span className="social-auth-busy" role="status" aria-label="Signing in with Google"><Spinner size="sm" /></span>}
               </div>
-              <button type="button" className="social-auth-button social-auth-button--facebook" onClick={signInFacebook} disabled={uiBusy || authStatus.loading || !facebookConfigured || !sdkReady.facebook}>
-                <SocialMark provider="facebook" />
-                <span>{authStatus.loading ? 'Checking Facebook…' : 'Continue with Facebook'}</span>
-                {!authStatus.loading && (!facebookConfigured || sdkErrors.facebook) && <small>{sdkErrors.facebook ? 'Unavailable' : 'Not configured'}</small>}
-                {(providerStarting === 'facebook' || authMethod === 'facebook') && <Spinner size="sm" role="status" aria-label="Signing in with Facebook" />}
-              </button>
-              <button type="button" className="social-auth-button social-auth-button--apple" onClick={signInApple} disabled={uiBusy || authStatus.loading || !appleConfigured || !sdkReady.apple}>
-                <SocialMark provider="apple" />
-                <span>{authStatus.loading ? 'Checking Apple…' : 'Continue with Apple'}</span>
-                {!authStatus.loading && (!appleConfigured || sdkErrors.apple) && <small>{sdkErrors.apple ? 'Unavailable' : 'Not configured'}</small>}
-                {(providerStarting === 'apple' || authMethod === 'apple') && <Spinner size="sm" role="status" aria-label="Signing in with Apple" />}
-              </button>
             </div>
 
             {import.meta.env.VITE_ENABLE_DEMO_AUTH === 'true' && (

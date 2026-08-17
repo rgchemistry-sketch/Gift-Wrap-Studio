@@ -192,7 +192,11 @@ test("only the configured admin identity can access admin APIs", async () => {
   assert.equal(dashboard.body.data.products, 10);
 
   const products = await admin.get("/api/admin/products").expect(200);
-  const original = products.body.data[0];
+  const productRow = products.body.data[0];
+  const originalResponse = await admin
+    .get(`/api/admin/products/${productRow.id}`)
+    .expect(200);
+  const original = originalResponse.body.data;
   const changed = await admin
     .patch(`/api/admin/products/${original.id}`)
     .send({ name: `${original.name} Updated` })

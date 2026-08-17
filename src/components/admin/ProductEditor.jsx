@@ -58,6 +58,23 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+const FIELD_CONTROL_IDS = {
+  name: 'product-name',
+  slug: 'product-slug',
+  category: 'product-category',
+  occasion: 'product-occasion',
+  shortDescription: 'product-short-description',
+  description: 'product-description',
+  price: 'product-price',
+  compareAtPrice: 'product-compare-price',
+  inventory: 'product-inventory',
+  sku: 'product-sku',
+  leadTimeDays: 'product-lead-time',
+  sortOrder: 'product-sort-order',
+  tags: 'product-tags',
+  customizationOptions: 'product-customization',
+};
+
 const splitList = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
 const makeSlug = (value) => String(value || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const numericOrNull = (value) => value === '' || value == null ? null : Number(value);
@@ -94,6 +111,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   const dialogRef = useRef(null);
   const fileInputRef = useRef(null);
   const previousFocusRef = useRef(null);
+  const focusedErrorRef = useRef('');
   const pendingUploadIdsRef = useRef(new Set());
   const pendingRetirementIdsRef = useRef(new Set());
   const mountedRef = useRef(true);
@@ -296,6 +314,31 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [busy, isDirty]);
+
+  useEffect(() => {
+    const field = Object.keys(fieldErrors)[0];
+    if (!field) {
+      focusedErrorRef.current = '';
+      return undefined;
+    }
+    const signature = `${field}:${fieldErrors[field]}`;
+    if (focusedErrorRef.current === signature) return undefined;
+    focusedErrorRef.current = signature;
+    const focusFrame = window.requestAnimationFrame(() => {
+      const target = FIELD_CONTROL_IDS[field]
+        ? document.getElementById(FIELD_CONTROL_IDS[field])
+        : field === 'variants'
+          ? dialogRef.current?.querySelector('.variant-row .form-control, .variant-list button')
+          : field === 'imageUrl'
+            ? dialogRef.current?.querySelector('.product-image-url .form-control')
+            : field === 'images'
+              ? dialogRef.current?.querySelector('.product-image-upload')
+              : null;
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target?.focus?.({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [fieldErrors]);
 
   const title = editing ? 'Edit studio piece' : 'Create a new piece';
   const completion = useMemo(() => {
@@ -772,10 +815,11 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                         : (
                           <button
                             type="button"
-                            className="product-image-tile__make-cover"
-                            disabled={busy}
-                            onClick={() => moveImage(index, 0)}
-                          >Make cover</button>
+                             className="product-image-tile__make-cover"
+                             disabled={busy}
+                             onClick={() => moveImage(index, 0)}
+                             aria-label={`Make image ${index + 1} the product cover`}
+                           >Make cover</button>
                         )}
                       {broken && <span className="product-image-tile__broken">Broken URL</span>}
                     </div>
@@ -801,15 +845,6 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               <label
                 className="product-image-upload"
                 htmlFor="product-image-upload"
-                role="button"
-                tabIndex={busy || draft.images.length >= MAX_GALLERY_IMAGES ? -1 : 0}
-                aria-disabled={busy || draft.images.length >= MAX_GALLERY_IMAGES}
-                onKeyDown={(event) => {
-                  if (!busy && draft.images.length < MAX_GALLERY_IMAGES && (event.key === 'Enter' || event.key === ' ')) {
-                    event.preventDefault();
-                    fileInputRef.current?.click();
-                  }
-                }}
               >
                 <input
                   ref={fileInputRef}
@@ -817,7 +852,6 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   multiple
-                  tabIndex={-1}
                   onChange={uploadImages}
                   disabled={busy || draft.images.length >= MAX_GALLERY_IMAGES}
                   aria-label="Upload product images"

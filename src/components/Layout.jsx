@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
@@ -9,12 +9,11 @@ import Navbar from 'react-bootstrap/Navbar';
 import Offcanvas from 'react-bootstrap/Offcanvas';
 import Dropdown from 'react-bootstrap/Dropdown';
 import Icon from './Icon';
-import AuthModal from './AuthModal';
-import OfferPopup from './OfferPopup';
 import { ToastStack } from './Feedback';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 import { resolveStudioContact } from '../utils/studio-contact';
+import '../details.css';
 
 const navItems = [
   ['Shop', '/shop'],
@@ -25,6 +24,8 @@ const navItems = [
 ];
 
 const CANONICAL_ORIGIN = 'https://www.giftnwrapstudio.com';
+const AuthModal = lazy(() => import('./AuthModal'));
+const OfferPopup = lazy(() => import('./OfferPopup'));
 
 const configuredValue = (settings, group, key, legacyKey, fallback) => {
   if (!settings) return fallback;
@@ -53,8 +54,8 @@ export default function Layout() {
   const [query, setQuery] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
-  const { cartCount, notify, studioSettings } = useShop();
-  const { user, openAuth, signOut, signingOut } = useAuth();
+  const { cartCount, notify, studioSettings, welcomeOffer } = useShop();
+  const { user, openAuth, signOut, signingOut, authModalOpen } = useAuth();
   const announcement = studioSettings?.announcement || {};
   const contact = resolveStudioContact(studioSettings);
   const announcementEnabled = announcement.enabled ?? true;
@@ -208,8 +209,8 @@ export default function Layout() {
       </main>
 
       <Footer settings={studioSettings} />
-      <AuthModal />
-      <OfferPopup />
+      {authModalOpen && <Suspense fallback={null}><AuthModal /></Suspense>}
+      {welcomeOffer && <Suspense fallback={null}><OfferPopup /></Suspense>}
       <ToastStack />
     </div>
   );
@@ -229,7 +230,6 @@ function Footer({ settings }) {
             <p>We preserve names, flowers, photographs and stories in thoughtful resin art—one handmade piece at a time.</p>
             <div className="d-flex flex-column align-items-start gap-2">
               {contact.instagramUrl && <a href={contact.instagramUrl} target="_blank" rel="noreferrer" className="social-link"><Icon name="instagram" /> {contact.instagramLabel || 'Instagram'}</a>}
-              {contact.facebookUrl && <a href={contact.facebookUrl} target="_blank" rel="noreferrer" className="social-link"><Icon name="facebook" /> {contact.facebookLabel || 'Facebook'}</a>}
             </div>
           </div>
           <div>

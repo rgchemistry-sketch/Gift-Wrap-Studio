@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
-import { v2 as cloudinary } from "cloudinary";
 import { rateLimit } from "express-rate-limit";
 import { env } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
@@ -22,6 +21,20 @@ export {
 } from "../services/upload-cleanup.js";
 
 export const uploadsRouter = Router();
+
+let cloudinaryPromise;
+
+const getCloudinary = () => {
+  if (!cloudinaryPromise) {
+    cloudinaryPromise = import("cloudinary")
+      .then(({ v2 }) => v2)
+      .catch((error) => {
+        cloudinaryPromise = undefined;
+        throw error;
+      });
+  }
+  return cloudinaryPromise;
+};
 
 const requireCloudinaryConfig = ({ uploadPreset = true } = {}) => {
   const missing = [
@@ -58,6 +71,7 @@ uploadsRouter.post(
   protectProductUploads,
   asyncHandler(async (request, response) => {
     requireCloudinaryConfig();
+    const cloudinary = await getCloudinary();
     await waitForUploadCleanupBudget(scheduleExpiredUploadGrantSweep());
 
     const timestamp = Math.floor(Date.now() / 1_000);

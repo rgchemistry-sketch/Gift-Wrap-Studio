@@ -7,7 +7,9 @@ const authIdentitySchema = new mongoose.Schema(
     provider: {
       type: String,
       required: true,
-      enum: ["email", "google", "facebook", "apple"],
+      trim: true,
+      lowercase: true,
+      maxlength: 50,
       index: true,
     },
     subject: { type: String, required: true, trim: true, maxlength: 512 },

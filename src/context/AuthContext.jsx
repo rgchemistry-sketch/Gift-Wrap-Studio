@@ -22,11 +22,12 @@ export function AuthProvider({ children }) {
   const [authStatus, setAuthStatus] = useState({
     loading: true,
     error: false,
-    providers: { google: false, facebook: false, apple: false, email: false },
+    providers: { google: false, email: false },
   });
   const [emailChallenge, setEmailChallenge] = useState(null);
   const authGenerationRef = useRef(0);
   const authInFlightRef = useRef(0);
+  const authStatusRequestedRef = useRef(false);
 
   const updateUser = useCallback((nextUser) => {
     setUser(nextUser || null);
@@ -60,6 +61,7 @@ export function AuthProvider({ children }) {
   }, [updateUser]);
 
   const refreshAuthStatus = useCallback(async () => {
+    authStatusRequestedRef.current = true;
     setAuthStatus((current) => ({ ...current, loading: true, error: false }));
     try {
       const status = dataFrom(await api.getAuthStatus()) || {};
@@ -69,8 +71,6 @@ export function AuthProvider({ children }) {
         error: false,
         providers: {
           google: providerEnabled(status.providers?.google),
-          facebook: providerEnabled(status.providers?.facebook),
-          apple: providerEnabled(status.providers?.apple),
           email: providerEnabled(status.providers?.email),
         },
       });
@@ -82,24 +82,24 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    refreshAuthStatus().catch(() => {});
-  }, [refreshAuthStatus]);
-
-  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authState = params.get('auth');
     if (authState === 'error') {
       setAuthMessage('Sign-in could not be completed. Please try again.');
       setAuthModalOpen(true);
+      refreshAuthStatus().catch(() => {});
     }
-  }, []);
+  }, [refreshAuthStatus]);
 
   const openAuth = useCallback((message = '', intent = 'login') => {
     setAuthMessage(message);
     setAuthIntent(intent === 'signup' ? 'signup' : 'login');
     setEmailChallenge(null);
     setAuthModalOpen(true);
-  }, []);
+    if (!authStatusRequestedRef.current || authStatus.error) {
+      refreshAuthStatus().catch(() => {});
+    }
+  }, [authStatus.error, refreshAuthStatus]);
 
   const closeAuth = useCallback(() => {
     if (authenticating) return;
@@ -154,47 +154,6 @@ export function AuthProvider({ children }) {
       'google',
       () => api.authenticateGoogle(credential, authIntent),
       'Google sign-in could not be completed. Please try again.',
-    ),
-    [authIntent, runAuthentication],
-  );
-
-  const authenticateFacebook = useCallback(
-    (accessToken) => runAuthentication(
-      'facebook',
-      () => api.authenticateFacebook(accessToken, authIntent),
-      'Facebook sign-in could not be completed. Please try again.',
-    ),
-    [authIntent, runAuthentication],
-  );
-
-  const prepareAppleAuthentication = useCallback(async () => {
-    if (authInFlightRef.current) {
-      const busyError = new Error('Another sign-in is already in progress. Please wait a moment.');
-      setAuthMessage(busyError.message);
-      throw busyError;
-    }
-    const operationToken = Symbol('apple-prepare');
-    authInFlightRef.current = operationToken;
-    setAuthMessage('');
-    try {
-      const challenge = dataFrom(await api.requestAppleNonce());
-      if (!challenge?.nonceId || !challenge?.nonce) throw new Error('Apple sign-in could not be prepared.');
-      return challenge;
-    } catch (error) {
-      if (authInFlightRef.current === operationToken) {
-        setAuthMessage(error.message || 'Apple sign-in could not be prepared. Please try again.');
-      }
-      throw error;
-    } finally {
-      if (authInFlightRef.current === operationToken) authInFlightRef.current = 0;
-    }
-  }, []);
-
-  const authenticateApple = useCallback(
-    ({ idToken, nonceId, name }) => runAuthentication(
-      'apple',
-      () => api.authenticateApple({ idToken, nonceId, name, intent: authIntent }),
-      'Apple sign-in could not be completed. Please try again.',
     ),
     [authIntent, runAuthentication],
   );
@@ -299,9 +258,6 @@ export function AuthProvider({ children }) {
       openAuth,
       closeAuth,
       authenticateGoogle,
-      authenticateFacebook,
-      prepareAppleAuthentication,
-      authenticateApple,
       startEmailAuthentication,
       verifyEmailAuthentication,
       resetEmailChallenge,
@@ -309,7 +265,7 @@ export function AuthProvider({ children }) {
       signOut,
       setUser: updateUser,
     }),
-    [user, loading, authModalOpen, authMessage, authIntent, authenticating, authMethod, signingOut, authStatus, emailChallenge, refreshAuthStatus, openAuth, closeAuth, authenticateGoogle, authenticateFacebook, prepareAppleAuthentication, authenticateApple, startEmailAuthentication, verifyEmailAuthentication, resetEmailChallenge, authenticateDemo, signOut, updateUser],
+    [user, loading, authModalOpen, authMessage, authIntent, authenticating, authMethod, signingOut, authStatus, emailChallenge, refreshAuthStatus, openAuth, closeAuth, authenticateGoogle, startEmailAuthentication, verifyEmailAuthentication, resetEmailChallenge, authenticateDemo, signOut, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

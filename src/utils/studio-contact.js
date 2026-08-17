@@ -1,13 +1,9 @@
-import {
-  normalizeFacebookProfile,
-  normalizeInstagramProfile,
-} from '../../shared/social-profiles.js';
+import { normalizeInstagramProfile } from '../../shared/social-profiles.js';
 
 export const DEFAULT_STUDIO_CONTACT = Object.freeze({
   email: 'info@giftnwrapstudio.com',
   phone: '+919588281126',
   instagram: '@giftnwrapstudio',
-  facebook: '',
 });
 
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
@@ -38,6 +34,16 @@ export function formatPhoneLabel(value) {
 }
 
 export function resolveStudioContact(settings) {
+  if (!settings) {
+    return {
+      email: '',
+      phone: '',
+      phoneHref: '',
+      phoneLabel: '',
+      instagramUrl: '',
+      instagramLabel: '',
+    };
+  }
   const phone = String(configuredValue(
     settings,
     'phone',
@@ -54,10 +60,6 @@ export function resolveStudioContact(settings) {
   const instagram = normalizeInstagramProfile(
     socialInput(settings, 'instagram', DEFAULT_STUDIO_CONTACT.instagram),
   );
-  const facebook = normalizeFacebookProfile(
-    socialInput(settings, 'facebook', DEFAULT_STUDIO_CONTACT.facebook),
-  );
-
   return {
     email,
     phone,
@@ -65,7 +67,5 @@ export function resolveStudioContact(settings) {
     phoneLabel: configuredPhoneLabel || formatPhoneLabel(phone),
     instagramUrl: instagram?.url || '',
     instagramLabel: instagram?.label || '',
-    facebookUrl: facebook?.url || '',
-    facebookLabel: facebook?.label || '',
   };
 }

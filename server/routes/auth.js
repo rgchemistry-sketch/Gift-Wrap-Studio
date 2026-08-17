@@ -11,19 +11,13 @@ import {
   signSession,
   verifySession,
 } from "../services/auth.js";
-import { consumeAppleNonce, issueAppleNonce } from "../services/apple-auth-challenge.js";
 import { startEmailAuthentication, verifyEmailAuthentication } from "../services/email-auth.js";
 import { authenticateSocialIdentity } from "../services/identity-auth.js";
 import { verifySocialIdentity } from "../services/social-auth.js";
 import { getUserById, revokeUserSessions, upsertGoogleUser } from "../services/store.js";
 import { cleanupUnconsumedUploadsForUser } from "../services/upload-cleanup.js";
 import { demoLoginSchema, googleLoginSchema } from "../validation/schemas.js";
-import {
-  appleLoginSchema,
-  emailAuthStartSchema,
-  emailAuthVerifySchema,
-  facebookLoginSchema,
-} from "../validation/auth.js";
+import { emailAuthStartSchema, emailAuthVerifySchema } from "../validation/auth.js";
 
 export const authRouter = Router();
 
@@ -77,8 +71,6 @@ authRouter.get("/status", (_request, response) => {
     data: {
       providers: {
         google: details.google.enabled,
-        facebook: details.facebook.enabled,
-        apple: details.apple.enabled,
         email: details.email.enabled,
       },
       details,
@@ -106,28 +98,6 @@ authRouter.post(
   }),
 );
 
-authRouter.post("/facebook", ...socialLogin("facebook", facebookLoginSchema));
-authRouter.post(
-  "/apple/nonce",
-  verificationLimiter(20, "Too many Apple sign-in attempts. Please wait before trying again"),
-  asyncHandler(async (_request, response) => {
-    response.json({ data: await issueAppleNonce() });
-  }),
-);
-authRouter.post(
-  "/apple",
-  loginLimiter,
-  validate({ body: appleLoginSchema }),
-  asyncHandler(async (request, response) => {
-    const expectedNonceHash = await consumeAppleNonce(request.validated.body.nonceId);
-    const profile = await verifySocialIdentity("apple", {
-      ...request.validated.body,
-      expectedNonceHash,
-    });
-    const user = await authenticateSocialIdentity(profile, request.validated.body.intent);
-    issueSession(response, user);
-  }),
-);
 authRouter.post("/social/google", ...socialLogin("google", googleLoginSchema));
 
 authRouter.post(
