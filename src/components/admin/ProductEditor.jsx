@@ -725,6 +725,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
 
           <section className="product-form-section">
             <div className="product-form-section__intro"><span>01</span><div><h3>Identity</h3><p>The details customers see first.</p></div></div>
+            <div className="product-form-section__body">
             <div className="product-form-grid">
               <Form.Group controlId="product-name" className="span-2">
                 <Form.Label>Product name</Form.Label>
@@ -785,10 +786,12 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               <Form.Group controlId="product-short-description" className="span-2"><Form.Label>Short description</Form.Label><Form.Control required minLength={10} maxLength={240} value={draft.shortDescription} isInvalid={Boolean(fieldErrors.shortDescription)} onChange={(event) => setField('shortDescription', event.target.value)} placeholder="A concise line for catalogue cards." /><Form.Control.Feedback type="invalid">{fieldErrors.shortDescription}</Form.Control.Feedback></Form.Group>
               <Form.Group controlId="product-description" className="span-2"><Form.Label>Full story</Form.Label><Form.Control as="textarea" rows={4} maxLength={4000} value={draft.description} isInvalid={Boolean(fieldErrors.description)} onChange={(event) => setField('description', event.target.value)} placeholder="Materials, finish, dimensions and the story behind this piece…" /><Form.Control.Feedback type="invalid">{fieldErrors.description}</Form.Control.Feedback></Form.Group>
             </div>
+            </div>
           </section>
 
           <section className="product-form-section">
             <div className="product-form-section__intro"><span>02</span><div><h3>Gallery</h3><p>Lead with a clear, beautifully lit image.</p></div></div>
+            <div className="product-form-section__body product-gallery-editor">
             <div className="product-image-grid">
               {draft.images.map((image, index) => {
                 const key = imageKey(image) || `${image.url}-${index}`;
@@ -845,6 +848,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               <label
                 className="product-image-upload"
                 htmlFor="product-image-upload"
+                aria-disabled={busy || draft.images.length >= MAX_GALLERY_IMAGES}
               >
                 <input
                   ref={fileInputRef}
@@ -890,10 +894,12 @@ export default function ProductEditor({ product, onClose, onSaved }) {
              </div>
              {(fieldErrors.imageUrl || imageUrlFormatError) && <div className="invalid-feedback d-block" role="alert">{fieldErrors.imageUrl || imageUrlFormatError}</div>}
              <Form.Text id="product-image-url-help">The URL is loaded and verified before it can join the gallery. Use Cloudinary HTTPS or a site-relative path beginning with /.</Form.Text>
+            </div>
           </section>
 
           <section className="product-form-section">
             <div className="product-form-section__intro"><span>03</span><div><h3>Pricing & inventory</h3><p>Control the selling price and availability.</p></div></div>
+            <div className="product-form-section__body">
             <div className="product-form-grid">
               <Form.Group controlId="product-price"><Form.Label>Price (₹)</Form.Label><Form.Control required min="0" max="10000000" step="1" type="number" value={draft.price} isInvalid={Boolean(fieldErrors.price)} onChange={(event) => setField('price', event.target.value)} /><Form.Control.Feedback type="invalid">{fieldErrors.price}</Form.Control.Feedback></Form.Group>
               <Form.Group controlId="product-compare-price"><Form.Label>Compare-at price (₹)</Form.Label><Form.Control min="0" max="10000000" step="1" type="number" value={draft.compareAtPrice} isInvalid={Boolean(fieldErrors.compareAtPrice)} onChange={(event) => setField('compareAtPrice', event.target.value)} placeholder="Optional" /><Form.Control.Feedback type="invalid">{fieldErrors.compareAtPrice}</Form.Control.Feedback></Form.Group>
@@ -902,10 +908,12 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               <Form.Group controlId="product-lead-time"><Form.Label>Lead time (days)</Form.Label><Form.Control required min="1" max="60" type="number" value={draft.leadTimeDays} isInvalid={Boolean(fieldErrors.leadTimeDays)} onChange={(event) => setField('leadTimeDays', event.target.value)} /><Form.Control.Feedback type="invalid">{fieldErrors.leadTimeDays}</Form.Control.Feedback></Form.Group>
               <Form.Group controlId="product-sort-order"><Form.Label>Catalogue order</Form.Label><Form.Control min="-10000" max="10000" type="number" value={draft.sortOrder} isInvalid={Boolean(fieldErrors.sortOrder)} onChange={(event) => setField('sortOrder', event.target.value)} /><Form.Control.Feedback type="invalid">{fieldErrors.sortOrder}</Form.Control.Feedback></Form.Group>
             </div>
+            </div>
           </section>
 
           <section className="product-form-section">
             <div className="product-form-section__intro"><span>04</span><div><h3>Options</h3><p>Make personalized choices easy to understand.</p></div></div>
+            <div className="product-form-section__body">
             <div className="product-form-grid">
               <Form.Group controlId="product-tags" className="span-2"><Form.Label>Search tags</Form.Label><Form.Control value={draft.tags} isInvalid={Boolean(fieldErrors.tags)} onChange={(event) => setField('tags', event.target.value)} placeholder="wedding, floral, personalized"/><Form.Control.Feedback type="invalid">{fieldErrors.tags}</Form.Control.Feedback><Form.Text>Separate each tag with a comma.</Form.Text></Form.Group>
               <Form.Group controlId="product-customization" className="span-2"><Form.Label>Customization choices</Form.Label><Form.Control value={draft.customizationOptions} isInvalid={Boolean(fieldErrors.customizationOptions)} onChange={(event) => setField('customizationOptions', event.target.value)} placeholder="Name, Date, Flower palette"/><Form.Control.Feedback type="invalid">{fieldErrors.customizationOptions}</Form.Control.Feedback></Form.Group>
@@ -925,14 +933,17 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               {!draft.variants.length && <p className="variant-list__empty">One design, one price — no variants added.</p>}
               {fieldErrors.variants && <div className="invalid-feedback d-block">{fieldErrors.variants}</div>}
             </div>
+            </div>
           </section>
 
           <section className="product-form-section">
             <div className="product-form-section__intro"><span>05</span><div><h3>Publishing</h3><p>Choose how this piece appears in the shop.</p></div></div>
+            <div className="product-form-section__body">
             <div className="product-publish-grid">
               <Form.Check type="switch" id="product-active" label={<><strong>Published</strong><small>Visible and available on the storefront</small></>} checked={draft.active} onChange={(event) => setField('active', event.target.checked)}/>
               <Form.Check type="switch" id="product-featured" label={<><strong>Featured piece</strong><small>Give it priority in curated sections</small></>} checked={draft.featured} onChange={(event) => setField('featured', event.target.checked)}/>
               <Form.Check type="switch" id="product-made-order" label={<><strong>Made to order</strong><small>Created after the customer orders</small></>} checked={draft.madeToOrder} onChange={(event) => setField('madeToOrder', event.target.checked)}/>
+            </div>
             </div>
           </section>
 

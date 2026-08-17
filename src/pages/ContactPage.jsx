@@ -12,6 +12,10 @@ import Icon from '../components/Icon';
 import { api } from '../api/client';
 import { useShop } from '../context/ShopContext';
 import { resolveStudioContact } from '../utils/studio-contact';
+import {
+  INDIAN_MOBILE_MESSAGE,
+  normalizeIndianMobile,
+} from '../../shared/indian-phone.js';
 
 const faq = [
   ['Can I customize every product?', 'Most products marked “Customizable” support names, dates, colours, finishes and other product-specific details.'],
@@ -21,6 +25,18 @@ const faq = [
   ['Do you deliver across India?', 'Yes. Every piece is carefully packaged for PAN India delivery.'],
   ['Can I request a completely new design?', 'Absolutely. Begin a custom request and describe what you have in mind.'],
 ];
+
+const contactFieldNames = new Set(['name', 'email', 'phone', 'subject', 'message']);
+const fieldErrorsFrom = (details) => Object.fromEntries(
+  (Array.isArray(details) ? details : [])
+    .filter((issue) => contactFieldNames.has(issue?.field) && issue?.message)
+    .map((issue) => [issue.field, issue.message]),
+);
+
+const focusContactField = (field) => {
+  if (!field) return;
+  window.requestAnimationFrame(() => document.getElementById(`contact-${field}`)?.focus());
+};
 
 export default function ContactPage() {
   const { studioSettings } = useShop();
@@ -33,23 +49,57 @@ export default function ContactPage() {
     message: '',
   });
   const [state, setState] = useState({ submitting: false, error: '', sent: false });
+  const [fieldErrors, setFieldErrors] = useState({});
 
-  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const update = (key, value) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    setFieldErrors((current) => current[key] ? { ...current, [key]: '' } : current);
+    setState((current) => current.error || current.sent
+      ? { ...current, error: '', sent: false }
+      : current);
+  };
   const submit = async (event) => {
     event.preventDefault();
-    if (!event.currentTarget.checkValidity()) {
-      event.currentTarget.classList.add('was-validated');
+    const formElement = event.currentTarget;
+    const normalizedPhone = form.phone.trim() ? normalizeIndianMobile(form.phone) : '';
+    const clientFieldErrors = {
+      ...(form.name.trim().length < 2 ? { name: 'Enter at least 2 characters.' } : {}),
+      ...(normalizedPhone === null ? { phone: INDIAN_MOBILE_MESSAGE } : {}),
+      ...(form.message.trim().length < 10
+        ? { message: 'Write at least 10 characters so we can understand how to help.' }
+        : {}),
+    };
+    if (!formElement.checkValidity() || Object.keys(clientFieldErrors).length) {
+      formElement.classList.add('was-validated');
+      setFieldErrors(clientFieldErrors);
+      setState({
+        submitting: false,
+        error: 'Please correct the highlighted fields. Your message has not been sent.',
+        sent: false,
+      });
+      focusContactField(Object.keys(clientFieldErrors)[0]);
+      if (!Object.keys(clientFieldErrors).length) {
+        window.requestAnimationFrame(() => formElement.querySelector(':invalid')?.focus());
+      }
       return;
     }
+    formElement.classList.remove('was-validated');
+    setFieldErrors({});
     setState({ submitting: true, error: '', sent: false });
     try {
-      await api.submitContact(form);
+      await api.submitContact({ ...form, phone: normalizedPhone });
       setState({ submitting: false, error: '', sent: true });
       setForm({ name: '', email: '', phone: '', subject: 'Product question', message: '' });
     } catch (error) {
+      const serverFieldErrors = fieldErrorsFrom(error.details);
+      const hasFieldErrors = Object.keys(serverFieldErrors).length > 0;
+      setFieldErrors(serverFieldErrors);
+      focusContactField(Object.keys(serverFieldErrors)[0]);
       setState({
         submitting: false,
-        error: `${error.message} Your message was not sent; please try again${contact.phone ? ' or call the studio' : ''}.`,
+        error: hasFieldErrors
+          ? 'Please correct the highlighted fields. Your message has not been sent.'
+          : `${error.message} Your message was not sent. Please try again${contact.phone ? ' or call the studio' : ''}.`,
         sent: false,
       });
     }
@@ -93,14 +143,45 @@ export default function ContactPage() {
             <Form noValidate onSubmit={submit} className="contact-form">
               <p className="eyebrow">Send a note</p>
               <h2>What can we make easier?</h2>
-              {state.error && <Alert variant="danger" className="soft-alert">{state.error}</Alert>}
-              {state.sent && <Alert variant="success" className="soft-alert"><Icon name="check" /> Your message reached the studio. We’ll reply as soon as we can.</Alert>}
+              {state.error && <Alert variant="danger" className="soft-alert" role="alert">{state.error}</Alert>}
+              {state.sent && <Alert variant="success" className="soft-alert" role="status"><Icon name="check" /> Your message reached the studio. We’ll reply as soon as we can.</Alert>}
               <Row className="g-3">
-                <Col sm={6}><Form.Group controlId="contact-name"><Form.Label>Name</Form.Label><Form.Control required value={form.name} onChange={(event) => update('name', event.target.value)} /><Form.Control.Feedback type="invalid">Enter your name.</Form.Control.Feedback></Form.Group></Col>
-                <Col sm={6}><Form.Group controlId="contact-phone"><Form.Label>Mobile <small>optional</small></Form.Label><Form.Control inputMode="numeric" value={form.phone} onChange={(event) => update('phone', event.target.value.replace(/\D/g, '').slice(0, 10))} /></Form.Group></Col>
-                <Col xs={12}><Form.Group controlId="contact-email"><Form.Label>Email</Form.Label><Form.Control required type="email" value={form.email} onChange={(event) => update('email', event.target.value)} /><Form.Control.Feedback type="invalid">Enter a valid email.</Form.Control.Feedback></Form.Group></Col>
-                <Col xs={12}><Form.Group controlId="contact-subject"><Form.Label>About</Form.Label><Form.Select value={form.subject} onChange={(event) => update('subject', event.target.value)}><option>Product question</option><option>Existing order</option><option>Custom design</option><option>Corporate or bulk gifting</option><option>Delivery and care</option></Form.Select></Form.Group></Col>
-                <Col xs={12}><Form.Group controlId="contact-message"><Form.Label>Message</Form.Label><Form.Control required as="textarea" rows={6} maxLength={1200} value={form.message} onChange={(event) => update('message', event.target.value)} placeholder="Include the product, occasion or order number if you have one." /><Form.Control.Feedback type="invalid">Tell us how we can help.</Form.Control.Feedback></Form.Group></Col>
+                <Col sm={6}>
+                  <Form.Group controlId="contact-name">
+                    <Form.Label>Name</Form.Label>
+                    <Form.Control required minLength={2} maxLength={100} autoComplete="name" value={form.name} onChange={(event) => update('name', event.target.value)} isInvalid={Boolean(fieldErrors.name)} aria-invalid={fieldErrors.name ? true : undefined} aria-describedby="contact-name-error" />
+                    <Form.Control.Feedback id="contact-name-error" type="invalid">{fieldErrors.name || 'Enter at least 2 characters.'}</Form.Control.Feedback>
+                  </Form.Group>
+                </Col>
+                <Col sm={6}>
+                  <Form.Group controlId="contact-phone">
+                    <Form.Label>Mobile <small>optional</small></Form.Label>
+                    <Form.Control type="tel" inputMode="tel" autoComplete="tel-national" maxLength={24} value={form.phone} onChange={(event) => update('phone', event.target.value)} isInvalid={Boolean(fieldErrors.phone)} aria-invalid={fieldErrors.phone ? true : undefined} aria-describedby={`contact-phone-help${fieldErrors.phone ? ' contact-phone-error' : ''}`} placeholder="09876543210 or +91 98765 43210" />
+                    <Form.Control.Feedback id="contact-phone-error" type="invalid">{fieldErrors.phone || INDIAN_MOBILE_MESSAGE}</Form.Control.Feedback>
+                    <Form.Text id="contact-phone-help">Use a 10-digit Indian mobile, optionally beginning with 0 or +91.</Form.Text>
+                  </Form.Group>
+                </Col>
+                <Col xs={12}>
+                  <Form.Group controlId="contact-email">
+                    <Form.Label>Email</Form.Label>
+                    <Form.Control required type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} isInvalid={Boolean(fieldErrors.email)} aria-invalid={fieldErrors.email ? true : undefined} aria-describedby="contact-email-error" />
+                    <Form.Control.Feedback id="contact-email-error" type="invalid">{fieldErrors.email || 'Enter a valid email.'}</Form.Control.Feedback>
+                  </Form.Group>
+                </Col>
+                <Col xs={12}>
+                  <Form.Group controlId="contact-subject">
+                    <Form.Label>About</Form.Label>
+                    <Form.Select value={form.subject} onChange={(event) => update('subject', event.target.value)} isInvalid={Boolean(fieldErrors.subject)} aria-invalid={fieldErrors.subject ? true : undefined} aria-describedby={fieldErrors.subject ? 'contact-subject-error' : undefined}><option>Product question</option><option>Existing order</option><option>Custom design</option><option>Corporate or bulk gifting</option><option>Delivery and care</option></Form.Select>
+                    <Form.Control.Feedback id="contact-subject-error" type="invalid">{fieldErrors.subject}</Form.Control.Feedback>
+                  </Form.Group>
+                </Col>
+                <Col xs={12}>
+                  <Form.Group controlId="contact-message">
+                    <Form.Label>Message</Form.Label>
+                    <Form.Control required as="textarea" rows={6} minLength={10} maxLength={3000} value={form.message} onChange={(event) => update('message', event.target.value)} isInvalid={Boolean(fieldErrors.message)} aria-invalid={fieldErrors.message ? true : undefined} aria-describedby="contact-message-error" placeholder="Include the product, occasion or order number if you have one." />
+                    <Form.Control.Feedback id="contact-message-error" type="invalid">{fieldErrors.message || 'Write at least 10 characters so we can understand how to help.'}</Form.Control.Feedback>
+                  </Form.Group>
+                </Col>
               </Row>
               <Button type="submit" className="button-burgundy" disabled={state.submitting}>
                 {state.submitting ? <><Spinner size="sm" /> Sending…</> : <>Send message <Icon name="arrow" /></>}

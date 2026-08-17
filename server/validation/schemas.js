@@ -3,6 +3,10 @@ import {
   INSTAGRAM_PROFILE_MESSAGE,
   normalizeInstagramProfile,
 } from "../../shared/social-profiles.js";
+import {
+  INDIAN_MOBILE_MESSAGE,
+  normalizeIndianMobile,
+} from "../../shared/indian-phone.js";
 
 const text = (min, max) => z.string().trim().min(min).max(max);
 const email = z.string().trim().toLowerCase().email().max(254);
@@ -16,17 +20,9 @@ const integerInput = ({ min, max }) => numberInput(z.number().int().min(min).max
 const phone = z
   .string()
   .trim()
-  .regex(/^\+?[0-9\s()-]+$/, "Enter a valid Indian mobile number")
-  .refine((value) => {
-    const digits = value.replace(/\D/g, "");
-    const local = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
-    return /^[6-9][0-9]{9}$/.test(local);
-  }, "Enter a valid 10-digit Indian mobile number")
-  .transform((value) => {
-    const digits = value.replace(/\D/g, "");
-    const local = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
-    return `+91${local}`;
-  });
+  .max(24, INDIAN_MOBILE_MESSAGE)
+  .refine((value) => normalizeIndianMobile(value) !== null, INDIAN_MOBILE_MESSAGE)
+  .transform((value) => normalizeIndianMobile(value));
 const relativeOrAbsoluteUrl = z
   .string()
   .trim()

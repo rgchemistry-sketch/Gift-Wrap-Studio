@@ -36,9 +36,9 @@ const configuredValue = (settings, group, key, legacyKey, fallback) => {
   return fallback;
 };
 
-function Brand() {
+function Brand({ onNavigate }) {
   return (
-    <Link to="/" className="brand" aria-label="Gift N Wrap Studio home">
+    <Link to="/" className="brand" aria-label="Gift N Wrap Studio home" onClick={onNavigate}>
       <span className="brand__seal" aria-hidden="true">G<span>·</span>W</span>
       <span className="brand__words">
         <strong>Gift N Wrap</strong>
@@ -82,6 +82,7 @@ export default function Layout() {
   );
 
   const handleSignOut = async () => {
+    setMenuOpen(false);
     try {
       await signOut();
       navigate('/');
@@ -182,23 +183,23 @@ export default function Layout() {
 
       <Offcanvas show={menuOpen} onHide={() => setMenuOpen(false)} placement="start" className="mobile-menu">
         <Offcanvas.Header>
-          <Brand />
+          <Brand onNavigate={() => setMenuOpen(false)} />
           <button type="button" className="icon-button" onClick={() => setMenuOpen(false)} aria-label="Close menu"><Icon name="close" /></button>
         </Offcanvas.Header>
         <Offcanvas.Body>
           <nav aria-label="Mobile navigation">
             {navItems.map(([label, to], index) => (
-              <NavLink key={label} to={to} className="mobile-menu__link">
+              <NavLink key={label} to={to} className="mobile-menu__link" onClick={() => setMenuOpen(false)}>
                 <span>0{index + 1}</span>{label}<Icon name="arrow" />
               </NavLink>
             ))}
-            <NavLink to="/custom-order" className="mobile-menu__feature">
+            <NavLink to="/custom-order" className="mobile-menu__feature" onClick={() => setMenuOpen(false)}>
               <span><Icon name="spark" /> Have an idea?</span>
               <strong>Commission something completely new.</strong>
             </NavLink>
           </nav>
           <div className="mobile-menu__footer">
-            {user ? <><button type="button" className="plain-link" onClick={() => navigate('/account')}><Icon name="user" /> My account</button>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => navigate('/admin')}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="close" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></> : <><button type="button" className="plain-link" onClick={() => openAuth('', 'login')}><Icon name="user" /> Log in</button><button type="button" className="plain-link" onClick={() => openAuth('', 'signup')}><Icon name="spark" /> Create account</button></>}
+            {user ? <><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/account'); }}><Icon name="user" /> My account</button>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/admin'); }}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="close" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></> : <><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); openAuth('', 'login'); }}><Icon name="user" /> Log in</button><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); openAuth('', 'signup'); }}><Icon name="spark" /> Create account</button></>}
             {contact.phoneHref && <a href={contact.phoneHref}><Icon name="phone" /> {contact.phoneLabel}</a>}
           </div>
         </Offcanvas.Body>
@@ -244,7 +245,6 @@ function Footer({ settings }) {
             <Link to="/care-and-delivery">Care & delivery</Link>
             <Link to="/contact">Contact the studio</Link>
             <Link to="/contact#faq">Common questions</Link>
-            <Link to="/account">Track an order</Link>
           </div>
           <div className="footer-contact">
             <p className="footer-heading">Visit & contact</p>

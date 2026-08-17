@@ -153,10 +153,19 @@ export default function AuthModal() {
   useEffect(() => {
     if (authStatus.loading || !authModalOpen || !googleConfigured || !googleButtonRef.current) return undefined;
     let active = true;
+    let resizeTimer;
+    let repaintOnResize;
+    let paintedWidth = 0;
+    const markGoogleUnavailable = () => {
+      if (!active) return;
+      setSdkReady((current) => ({ ...current, google: false }));
+      setSdkErrors((current) => ({ ...current, google: 'Google sign-in could not load.' }));
+    };
     const renderGoogle = async () => {
       try {
         await loadScript('google', 'https://accounts.google.com/gsi/client');
-        if (!active || !window.google?.accounts?.id || !googleButtonRef.current) return;
+        if (!active || !googleButtonRef.current) return;
+        if (!window.google?.accounts?.id) throw new Error('Google Identity Services was unavailable.');
         if (!googleInitializedRef.current) {
           window.google.accounts.id.initialize({
             client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
@@ -171,25 +180,47 @@ export default function AuthModal() {
           });
           googleInitializedRef.current = true;
         }
-        googleButtonRef.current.replaceChildren();
-        window.google.accounts.id.renderButton(googleButtonRef.current, {
-          theme: 'outline',
-          size: 'large',
-          shape: 'rectangular',
-          text: authIntent === 'signup' ? 'signup_with' : 'continue_with',
-          // Google shows the browser's previously used account on buttons 200px or wider.
-          // Keep the official button just below that threshold so it remains generic.
-          width: 199,
-        });
+        const paintButton = ({ force = false } = {}) => {
+          const target = googleButtonRef.current;
+          if (!active || !target) return false;
+          const availableWidth = Math.floor(target.getBoundingClientRect().width);
+          const nextWidth = Math.min(400, Math.max(200, availableWidth || 320));
+          if (!force && target.contains(document.activeElement)) return true;
+          if (!force && paintedWidth && Math.abs(nextWidth - paintedWidth) < 12) return true;
+          try {
+            target.replaceChildren();
+            window.google.accounts.id.renderButton(target, {
+              theme: 'outline',
+              size: 'large',
+              shape: 'rectangular',
+              text: authIntent === 'signup' ? 'signup_with' : 'continue_with',
+              logo_alignment: 'left',
+              width: nextWidth,
+            });
+            paintedWidth = nextWidth;
+            return true;
+          } catch {
+            markGoogleUnavailable();
+            return false;
+          }
+        };
+        if (!paintButton({ force: true })) return;
+        repaintOnResize = () => {
+          window.clearTimeout(resizeTimer);
+          resizeTimer = window.setTimeout(paintButton, 120);
+        };
+        window.addEventListener('resize', repaintOnResize);
         setSdkReady((current) => ({ ...current, google: true }));
         setSdkErrors((current) => ({ ...current, google: '' }));
       } catch {
-        if (active) setSdkErrors((current) => ({ ...current, google: 'Google sign-in could not load.' }));
+        markGoogleUnavailable();
       }
     };
     renderGoogle();
     return () => {
       active = false;
+      window.clearTimeout(resizeTimer);
+      if (repaintOnResize) window.removeEventListener('resize', repaintOnResize);
     };
   }, [authIntent, authModalOpen, authStatus.loading, beginProviderFlow, finishProviderFlow, googleConfigured, sdkRetry]);
 
@@ -271,13 +302,15 @@ export default function AuthModal() {
         </button>
 
         {!emailChallenge ? (
-          <>
-            <div className="auth-modal__brand" aria-hidden="true">
-              <span>G</span><i>·</i><span>W</span>
-            </div>
-            <div className="auth-mode-tabs" role="group" aria-label="Choose account action">
-              <button type="button" disabled={uiBusy} aria-pressed={authIntent === 'login'} className={authIntent === 'login' ? 'is-active' : ''} onClick={() => chooseIntent('login')}>Log in</button>
-              <button type="button" disabled={uiBusy} aria-pressed={authIntent === 'signup'} className={authIntent === 'signup' ? 'is-active' : ''} onClick={() => chooseIntent('signup')}>Create account</button>
+          <div className="auth-dialog__entry">
+            <div className="auth-modal__topline">
+              <div className="auth-modal__brand" aria-hidden="true">
+                <span>G</span><i>·</i><span>W</span>
+              </div>
+              <div className="auth-mode-tabs" role="group" aria-label="Choose account action">
+                <button type="button" disabled={uiBusy} aria-pressed={authIntent === 'login'} className={authIntent === 'login' ? 'is-active' : ''} onClick={() => chooseIntent('login')}>Log in</button>
+                <button type="button" disabled={uiBusy} aria-pressed={authIntent === 'signup'} className={authIntent === 'signup' ? 'is-active' : ''} onClick={() => chooseIntent('signup')}>Create account</button>
+              </div>
             </div>
 
             <div className="auth-heading">
@@ -301,53 +334,9 @@ export default function AuthModal() {
               </Alert>
             )}
 
-            <Form className="email-auth-form" onSubmit={submitEmail} noValidate>
-              {authIntent === 'signup' && (
-                <Form.Group controlId="account-name">
-                  <Form.Label>Your name</Form.Label>
-                  <Form.Control
-                    type="text"
-                    value={name}
-                    onChange={(event) => setName(event.target.value.slice(0, 100))}
-                    autoComplete="name"
-                    placeholder="How should we address you?"
-                    isInvalid={name.length > 0 && !nameValid}
-                    aria-invalid={name.length > 0 && !nameValid}
-                    aria-describedby={name.length > 0 && !nameValid ? 'account-name-error' : undefined}
-                    disabled={uiBusy}
-                  />
-                  <Form.Control.Feedback id="account-name-error" type="invalid">Enter at least 2 characters.</Form.Control.Feedback>
-                </Form.Group>
-              )}
-              <Form.Group controlId="account-email">
-                <Form.Label>Email address</Form.Label>
-                <div className="email-auth-form__field">
-                  <Icon name="mail" size={18} />
-                  <Form.Control
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    autoComplete="email"
-                    placeholder="you@example.com"
-                    isInvalid={email.length > 2 && !emailValid}
-                    aria-invalid={email.length > 2 && !emailValid}
-                    aria-describedby={email.length > 2 && !emailValid ? 'account-email-error' : undefined}
-                    disabled={uiBusy}
-                  />
-                </div>
-                {email.length > 2 && !emailValid && <div id="account-email-error" className="invalid-feedback d-block">Enter a valid email address.</div>}
-              </Form.Group>
-              <Button type="submit" className="button-burgundy auth-email-submit" disabled={uiBusy || authStatus.loading || !providers.email}>
-                {authenticating && authMethod === 'email' ? <><Spinner size="sm" /> Sending code…</> : <>Email me a verification code <Icon name="arrow" size={17} /></>}
-              </Button>
-              {!authStatus.loading && !providers.email && <p className="auth-provider-note">Email verification is awaiting activation by the studio.</p>}
-            </Form>
-
-            <div className="auth-divider"><span>or continue with</span></div>
-
             <div className="social-auth-list" role="group" aria-label="Google sign-in option">
               <div
-                className={`social-auth-button social-auth-button--google ${authStatus.loading || !googleConfigured || sdkErrors.google || (uiBusy && providerStarting !== 'google' && authMethod !== 'google') ? 'is-disabled' : ''}`}
+                className={`social-auth-button social-auth-button--google ${googleConfigured && !sdkErrors.google ? 'is-ready' : ''} ${authStatus.loading || !googleConfigured || sdkErrors.google || (uiBusy && providerStarting !== 'google' && authMethod !== 'google') ? 'is-disabled' : ''}`}
                 aria-busy={providerStarting === 'google' || authMethod === 'google'}
                 aria-disabled={uiBusy || authStatus.loading || !googleConfigured || Boolean(sdkErrors.google)}
                 inert={uiBusy ? true : undefined}
@@ -362,11 +351,57 @@ export default function AuthModal() {
               </div>
             </div>
 
+            <div className="auth-divider"><span>or use your email</span></div>
+
+            <Form className={`email-auth-form ${authIntent === 'signup' ? 'is-signup' : ''}`} onSubmit={submitEmail} noValidate>
+              {authIntent === 'signup' && (
+                <Form.Group className="email-auth-form__group" controlId="account-name">
+                  <Form.Label>Your name</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={name}
+                    onChange={(event) => setName(event.target.value.slice(0, 100))}
+                    autoComplete="name"
+                    placeholder="How should we address you?"
+                    isInvalid={name.length > 0 && !nameValid}
+                    aria-invalid={name.length > 0 && !nameValid}
+                    aria-describedby={name.length > 0 && !nameValid ? 'account-name-error' : undefined}
+                    disabled={uiBusy}
+                    autoFocus
+                  />
+                  <Form.Control.Feedback id="account-name-error" type="invalid">Enter at least 2 characters.</Form.Control.Feedback>
+                </Form.Group>
+              )}
+              <Form.Group className="email-auth-form__group" controlId="account-email">
+                <Form.Label>Email address</Form.Label>
+                <div className="email-auth-form__field">
+                  <Icon name="mail" size={18} />
+                  <Form.Control
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    autoComplete="email"
+                    placeholder="you@example.com"
+                    isInvalid={email.length > 2 && !emailValid}
+                    aria-invalid={email.length > 2 && !emailValid}
+                    aria-describedby={email.length > 2 && !emailValid ? 'account-email-error' : undefined}
+                    disabled={uiBusy}
+                    autoFocus={authIntent === 'login'}
+                  />
+                </div>
+                {email.length > 2 && !emailValid && <div id="account-email-error" className="invalid-feedback d-block">Enter a valid email address.</div>}
+              </Form.Group>
+              <Button type="submit" className="button-burgundy auth-email-submit" disabled={uiBusy || authStatus.loading || !providers.email}>
+                {authenticating && authMethod === 'email' ? <><Spinner size="sm" /> Sending code…</> : <>Email me a verification code <Icon name="arrow" size={17} /></>}
+              </Button>
+              {!authStatus.loading && !providers.email && <p className="auth-provider-note">Email verification is awaiting activation by the studio.</p>}
+            </Form>
+
             {import.meta.env.VITE_ENABLE_DEMO_AUTH === 'true' && (
               <div className="demo-auth"><span>Local preview only</span><div><button type="button" disabled={uiBusy} onClick={() => authenticateDemo('buyer').catch(() => {})}>Preview buyer</button><button type="button" disabled={uiBusy} onClick={() => authenticateDemo('admin').catch(() => {})}>Preview admin</button></div></div>
             )}
             <p className="privacy-note"><Icon name="lock" size={13} /> Password-free sign-in. We only use verified identity details to secure your account.</p>
-          </>
+          </div>
         ) : (
           <Form className="auth-otp auth-otp--email" onSubmit={verifyCode}>
             <div className="auth-modal__mark" aria-hidden="true"><Icon name="mail" size={25} /></div>

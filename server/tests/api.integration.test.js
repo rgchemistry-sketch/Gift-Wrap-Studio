@@ -89,6 +89,35 @@ test("validation errors use the stable API error envelope", async () => {
   assert.ok(response.body.error.requestId);
 });
 
+test("contact messages accept an optional Indian trunk prefix and store one canonical mobile", async () => {
+  const submitted = await request(app)
+    .post("/api/contact")
+    .send({
+      name: "Arpit Agarwal",
+      email: "customer@example.com",
+      phone: "09588281126",
+      subject: "Product question",
+      message: "I need help choosing a personalized gift.",
+    })
+    .expect(201);
+
+  const admin = request.agent(app);
+  await admin.post("/api/auth/demo").send({ role: "admin" }).expect(200);
+  const inbox = await admin.get("/api/admin/contacts").expect(200);
+  const stored = inbox.body.data.find((message) => message.id === submitted.body.data.id);
+  assert.equal(stored.phone, "+919588281126");
+
+  await request(app)
+    .post("/api/contact")
+    .send({
+      name: "No Phone Buyer",
+      email: "no-phone@example.com",
+      subject: "Custom design",
+      message: "Please share the available design options.",
+    })
+    .expect(201);
+});
+
 test("the storefront inquiry payload is normalized and accepted", async () => {
   const response = await request(app)
     .post("/api/custom-inquiries")
@@ -330,7 +359,7 @@ test("buyer inquiry history never exposes the administrator note", async () => {
 });
 
 test("strict India contact, PIN, numeric, and URL validation rejects ambiguous input", async () => {
-  await request(app)
+  const invalidPhone = await request(app)
     .post("/api/contact")
     .send({
       name: "Test User",
@@ -338,6 +367,24 @@ test("strict India contact, PIN, numeric, and URL validation rejects ambiguous i
       phone: "1------2",
       subject: "A valid subject",
       message: "This message is long enough to otherwise pass validation.",
+    })
+    .expect(422);
+  assert.deepEqual(
+    invalidPhone.body.error.details.find((issue) => issue.field === "phone"),
+    {
+      field: "phone",
+      message: "Enter a valid Indian mobile number (10 digits, with optional 0 or +91)",
+    },
+  );
+
+  await request(app)
+    .post("/api/contact")
+    .send({
+      name: "Test User",
+      email: "test@example.com",
+      phone: "01234567890",
+      subject: "A valid subject",
+      message: "A leading zero must still be followed by a valid Indian mobile.",
     })
     .expect(422);
 
