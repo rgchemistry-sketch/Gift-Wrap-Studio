@@ -18,6 +18,13 @@ export const unauthorized = (message = "Authentication required") =>
 export const forbidden = (message = "You do not have permission to perform this action") =>
   new AppError(403, "FORBIDDEN", message);
 
+export const sessionIdentityChanged = () =>
+  new AppError(
+    409,
+    "SESSION_IDENTITY_CHANGED",
+    "Your signed-in account changed. Please review this request before sending it again",
+  );
+
 export const notFound = (resource = "Resource") =>
   new AppError(404, "NOT_FOUND", `${resource} not found`);
 

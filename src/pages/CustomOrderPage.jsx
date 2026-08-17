@@ -9,16 +9,25 @@ import Row from 'react-bootstrap/Row';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../components/Icon';
 import SmartImage from '../components/SmartImage';
+import { RouteLoader } from '../components/Feedback';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { useShop } from '../context/ShopContext';
+import {
+  loadScopedDraft,
+  removeScopedDraft,
+  saveScopedDraft,
+  scopedDraftOwner,
+} from '../utils/scoped-draft';
+import {
+  INDIAN_MOBILE_MESSAGE,
+  normalizeIndianMobile,
+} from '../../shared/indian-phone.js';
 
 const DRAFT_KEY = 'gnw-custom-order-draft';
 const initialForm = {
   productType: '', occasion: '', description: '', palette: '', personalization: '', budget: '', neededBy: '', referenceUrl: '', name: '', email: '', phone: '', contactPreference: 'WhatsApp',
 };
-
-function loadDraft() {
-  try { return JSON.parse(window.localStorage.getItem(DRAFT_KEY) || 'null'); } catch { return null; }
-}
 
 const stepMeta = [
   ['The idea', 'What are we making?'],
@@ -28,46 +37,161 @@ const stepMeta = [
 ];
 
 export default function CustomOrderPage() {
+  const {
+    user,
+    sessionOwnerId,
+    loading: authLoading,
+    requireAuth,
+    refreshSession,
+  } = useAuth();
+  const { notify } = useShop();
+  const draftUserId = String(sessionOwnerId || user?.id || '');
+  const draftOwner = scopedDraftOwner(draftUserId);
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState(() => ({ ...initialForm, ...(loadDraft() || {}) }));
+  const [form, setForm] = useState(initialForm);
+  const [draftReady, setDraftReady] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(null);
+  const [hydratedDraftOwner, setHydratedDraftOwner] = useState('pending');
 
-  useEffect(() => window.localStorage.setItem(DRAFT_KEY, JSON.stringify(form)), [form]);
+  useEffect(() => {
+    if (authLoading) return;
+    const previousOwner = hydratedDraftOwner;
+    if (previousOwner === draftOwner && draftReady) return;
+    const transferGuest = Boolean(draftUserId)
+      && (previousOwner === 'pending' || previousOwner === 'guest');
+    const savedDraft = loadScopedDraft(DRAFT_KEY, draftUserId, {
+      transferGuest,
+      migrateLegacy: previousOwner === 'pending' && Boolean(draftUserId),
+    });
+    setForm({ ...initialForm, ...(savedDraft || {}) });
+    setStep(0);
+    setError('');
+    setSubmitting(false);
+    setSubmitted(null);
+    setHydratedDraftOwner(draftOwner);
+    setDraftReady(true);
+  }, [authLoading, draftOwner, draftReady, draftUserId, hydratedDraftOwner]);
+  useEffect(() => {
+    if (!draftReady || !user) return;
+    setForm((current) => ({
+      ...current,
+      name: current.name || user.name || '',
+      email: user.email || current.email,
+      phone: current.phone || user.phone || '',
+    }));
+  }, [draftReady, user]);
+  useEffect(() => {
+    if (!draftReady || hydratedDraftOwner !== draftOwner) return;
+    saveScopedDraft(DRAFT_KEY, draftUserId, form);
+  }, [draftOwner, draftReady, draftUserId, form, hydratedDraftOwner]);
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
-  const validateStep = () => {
-    if (step === 0 && (!form.productType || !form.description.trim())) return 'Choose a product direction and tell us a little about the idea.';
-    if (step === 1 && !form.personalization.trim()) return 'Tell us which names, dates, photos, logo or details should be included.';
-    if (step === 2) {
-      if (!form.name.trim() || !/^\S+@\S+\.\S+$/.test(form.email) || !/^[6-9]\d{9}$/.test(form.phone)) return 'Enter your name, a valid email and a 10-digit Indian mobile number.';
+  const validateStep = (targetStep = step) => {
+    if (targetStep === 0 && (!form.productType || form.description.trim().length < 10)) {
+      return 'Choose a product direction and describe your idea in at least 10 characters.';
+    }
+    if (targetStep === 1) {
+      if (!form.personalization.trim()) return 'Tell us which names, dates, photos, logo or details should be included.';
+      if (form.referenceUrl.trim()) {
+        try {
+          const reference = new URL(form.referenceUrl);
+          if (!['http:', 'https:'].includes(reference.protocol)) throw new Error('invalid');
+        } catch {
+          return 'Enter a complete HTTP or HTTPS reference link.';
+        }
+      }
+    }
+    if (targetStep === 2) {
+      if (form.name.trim().length < 2) return 'Enter your name using at least 2 characters.';
+      if (!/^\S+@\S+\.\S+$/.test(form.email)) return 'Enter a valid email address.';
+      if (!normalizeIndianMobile(form.phone)) return INDIAN_MOBILE_MESSAGE;
     }
     return '';
   };
 
   const next = () => {
     const issue = validateStep();
-    if (issue) { setError(issue); return; }
+    if (issue) { setError(issue); notify(issue, 'error'); return; }
     setError('');
     setStep((value) => Math.min(3, value + 1));
     window.scrollTo({ top: 260, behavior: 'smooth' });
   };
 
-  const submit = async () => {
+  const sendRequest = async (authenticatedUser) => {
+    for (let targetStep = 0; targetStep <= 2; targetStep += 1) {
+      const issue = validateStep(targetStep);
+      if (issue) {
+        setStep(targetStep);
+        setError(issue);
+        notify(issue, 'error');
+        return;
+      }
+    }
     setError('');
     setSubmitting(true);
     try {
-      const result = await api.submitCustomRequest(form);
+      const result = await api.submitCustomRequest({
+        ...form,
+        email: authenticatedUser.email,
+        phone: normalizeIndianMobile(form.phone),
+      }, authenticatedUser.id);
       setSubmitted(result.data || result);
-      window.localStorage.removeItem(DRAFT_KEY);
+      removeScopedDraft(DRAFT_KEY, authenticatedUser.id);
+      notify('Your custom brief reached the studio securely.');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (requestError) {
-      setError(`${requestError.message} Your draft is still saved on this device.`);
+      if (requestError.code === 'SESSION_IDENTITY_CHANGED') {
+        await refreshSession();
+        const message = 'Your signed-in account changed, so this brief was not sent. Please review the current account’s saved draft.';
+        setError(message);
+        notify(message, 'error');
+        return;
+      }
+      if (requestError.status === 401) {
+        requireAuth({
+          force: true,
+          message: 'Your session expired. Log in again to send this custom brief; your draft is still saved.',
+          onAuthenticated: sendRequest,
+          onAccountMismatch: () => {
+            const message = 'You signed in to a different account, so the previous account’s brief was not sent. Please review the saved draft before trying again.';
+            setError(message);
+            notify(message, 'error');
+          },
+        });
+        return;
+      }
+      const firstIssue = Array.isArray(requestError.details) ? requestError.details[0] : null;
+      const issueField = String(firstIssue?.field || '');
+      if (/^(productId|category|productType|occasion|idea|description)$/.test(issueField)) setStep(0);
+      else if (/^(customization|personalization|palette|budget|neededBy|reference)/.test(issueField)) setStep(1);
+      else if (/^(name|email|phone|contactPreference)$/.test(issueField)) setStep(2);
+      const message = `${firstIssue?.message || requestError.message} Your draft is still saved on this device.`;
+      setError(message);
+      notify(message, 'error');
     } finally {
       setSubmitting(false);
     }
   };
+
+  const submit = () => {
+    if (!user) {
+      requireAuth({
+        message: 'Log in or create an account before sending this custom brief. Your complete draft will stay here.',
+        onAuthenticated: sendRequest,
+        onAccountMismatch: () => {
+          const message = 'Your signed-in account changed. Please review this account’s saved brief before sending it.';
+          setError(message);
+          notify(message, 'warning');
+        },
+      });
+      return;
+    }
+    void sendRequest(user);
+  };
+
+  if (!draftReady || hydratedDraftOwner !== draftOwner) return <RouteLoader />;
 
   if (submitted) {
     return (
@@ -124,7 +248,8 @@ function StepDetails({ form, update }) {
 }
 
 function StepContact({ form, update }) {
-  return <div className="wizard-step"><p className="eyebrow">Stay in the loop</p><h3>How should we continue the conversation?</h3><Row className="g-3"><Col sm={6}><Form.Group controlId="inquiry-name"><Form.Label>Your name</Form.Label><Form.Control value={form.name} onChange={(event) => update('name', event.target.value)} autoComplete="name" /></Form.Group></Col><Col sm={6}><Form.Group controlId="inquiry-phone"><Form.Label>Mobile number</Form.Label><Form.Control inputMode="numeric" value={form.phone} onChange={(event) => update('phone', event.target.value.replace(/\D/g, '').slice(0, 10))} autoComplete="tel" placeholder="10-digit number" /></Form.Group></Col><Col xs={12}><Form.Group controlId="inquiry-email"><Form.Label>Email address</Form.Label><Form.Control type="email" value={form.email} onChange={(event) => update('email', event.target.value)} autoComplete="email" /></Form.Group></Col><Col xs={12}><Form.Group controlId="inquiry-contact"><Form.Label>Preferred contact</Form.Label><div className="inline-choices">{['WhatsApp', 'Phone call', 'Email'].map((option) => <Form.Check key={option} inline type="radio" name="contactPreference" id={`contact-${option}`} label={option} checked={form.contactPreference === option} onChange={() => update('contactPreference', option)} />)}</div></Form.Group></Col></Row><Alert variant="info" className="soft-alert privacy-inline"><Icon name="shield" /> Your contact details are used only to respond to this request.</Alert></div>;
+  const { user } = useAuth();
+  return <div className="wizard-step"><p className="eyebrow">Stay in the loop</p><h3>How should we continue the conversation?</h3><Row className="g-3"><Col sm={6}><Form.Group controlId="inquiry-name"><Form.Label>Your name</Form.Label><Form.Control value={form.name} maxLength={100} onChange={(event) => update('name', event.target.value)} autoComplete="name" /></Form.Group></Col><Col sm={6}><Form.Group controlId="inquiry-phone"><Form.Label>Mobile number</Form.Label><Form.Control type="tel" inputMode="tel" maxLength={24} value={form.phone} onChange={(event) => update('phone', event.target.value)} autoComplete="tel" placeholder="09876543210 or +91 98765 43210" /><Form.Text>Use a 10-digit Indian mobile, optionally beginning with 0 or +91.</Form.Text></Form.Group></Col><Col xs={12}><Form.Group controlId="inquiry-email"><Form.Label>Email address</Form.Label><Form.Control readOnly={Boolean(user)} type="email" maxLength={254} value={form.email} onChange={(event) => update('email', event.target.value)} autoComplete="email" />{user && <Form.Text>Replies will go to your verified account email.</Form.Text>}</Form.Group></Col><Col xs={12}><Form.Group controlId="inquiry-contact"><Form.Label>Preferred contact</Form.Label><div className="inline-choices">{['WhatsApp', 'Phone call', 'Email'].map((option) => <Form.Check key={option} inline type="radio" name="contactPreference" id={`contact-${option}`} label={option} checked={form.contactPreference === option} onChange={() => update('contactPreference', option)} />)}</div></Form.Group></Col></Row><Alert variant="info" className="soft-alert privacy-inline"><Icon name="shield" /> Your contact details are used only to respond to this request.</Alert></div>;
 }
 
 function StepReview({ form, edit }) {

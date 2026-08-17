@@ -6,7 +6,7 @@ A responsive React storefront and lightweight Express API for handmade resin art
 
 - Editorial, mobile-first storefront built with React, React Router, React-Bootstrap, Bootstrap, and custom design tokens
 - Searchable/filterable product catalogue, product customization, cart, wishlist, and order-request checkout
-- Delayed first-order offer (`FIRST10`, 10% up to ₹500) with eligibility checked by the API
+- Immediate first-order offer (`FIRST10`, 10% up to ₹500) with eligibility checked by the API
 - Passwordless email codes sent from a fixed, verified Resend sender
 - Google sign-in with server-side credential verification
 - Buyer account and one-admin dashboard; admin access comes only from `ADMIN_EMAIL`

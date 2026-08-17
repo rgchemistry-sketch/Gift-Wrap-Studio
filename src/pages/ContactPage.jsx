@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Accordion from 'react-bootstrap/Accordion';
 import Alert from 'react-bootstrap/Alert';
@@ -10,6 +10,7 @@ import Row from 'react-bootstrap/Row';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../components/Icon';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 import { resolveStudioContact } from '../utils/studio-contact';
 import {
@@ -38,18 +39,46 @@ const focusContactField = (field) => {
   window.requestAnimationFrame(() => document.getElementById(`contact-${field}`)?.focus());
 };
 
+const emptyContactForm = {
+  name: '',
+  email: '',
+  phone: '',
+  subject: 'Product question',
+  message: '',
+};
+
 export default function ContactPage() {
-  const { studioSettings } = useShop();
+  const { user, sessionOwnerId, requireAuth, refreshSession } = useAuth();
+  const { studioSettings, notify } = useShop();
   const contact = resolveStudioContact(studioSettings);
-  const [form, setForm] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    subject: 'Product question',
-    message: '',
-  });
+  const formRef = useRef(null);
+  const formOwnerRef = useRef('guest');
+  const [form, setForm] = useState(emptyContactForm);
   const [state, setState] = useState({ submitting: false, error: '', sent: false });
   const [fieldErrors, setFieldErrors] = useState({});
+
+  useEffect(() => {
+    const nextOwner = String(sessionOwnerId || user?.id || '') || 'guest';
+    const previousOwner = formOwnerRef.current;
+    if (previousOwner !== nextOwner && previousOwner !== 'guest') {
+      setForm({
+        ...emptyContactForm,
+        name: user?.name || '',
+        email: user?.email || '',
+      });
+      setFieldErrors({});
+      setState({ submitting: false, error: '', sent: false });
+      formOwnerRef.current = nextOwner;
+      return;
+    }
+    formOwnerRef.current = nextOwner;
+    if (!user) return;
+    setForm((current) => ({
+      ...current,
+      name: current.name || user.name || '',
+      email: user.email || current.email,
+    }));
+  }, [sessionOwnerId, user]);
 
   const update = (key, value) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -58,9 +87,8 @@ export default function ContactPage() {
       ? { ...current, error: '', sent: false }
       : current);
   };
-  const submit = async (event) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
+  const sendMessage = async (formElement, authenticatedUser) => {
+    if (!formElement) return;
     const normalizedPhone = form.phone.trim() ? normalizeIndianMobile(form.phone) : '';
     const clientFieldErrors = {
       ...(form.name.trim().length < 2 ? { name: 'Enter at least 2 characters.' } : {}),
@@ -77,6 +105,7 @@ export default function ContactPage() {
         error: 'Please correct the highlighted fields. Your message has not been sent.',
         sent: false,
       });
+      notify('Please correct the highlighted fields before sending your message.', 'error');
       focusContactField(Object.keys(clientFieldErrors)[0]);
       if (!Object.keys(clientFieldErrors).length) {
         window.requestAnimationFrame(() => formElement.querySelector(':invalid')?.focus());
@@ -87,22 +116,73 @@ export default function ContactPage() {
     setFieldErrors({});
     setState({ submitting: true, error: '', sent: false });
     try {
-      await api.submitContact({ ...form, phone: normalizedPhone });
+      await api.submitContact({
+        ...form,
+        email: authenticatedUser.email,
+        phone: normalizedPhone,
+      }, authenticatedUser.id);
       setState({ submitting: false, error: '', sent: true });
-      setForm({ name: '', email: '', phone: '', subject: 'Product question', message: '' });
+      setForm({
+        name: authenticatedUser.name || form.name,
+        email: authenticatedUser.email,
+        phone: '',
+        subject: 'Product question',
+        message: '',
+      });
+      notify('Your message reached the studio. We’ll reply as soon as we can.');
     } catch (error) {
+      if (error.code === 'SESSION_IDENTITY_CHANGED') {
+        await refreshSession();
+        const message = 'Your signed-in account changed, so this message was not sent. Please review the current account details and try again.';
+        setState({ submitting: false, error: message, sent: false });
+        notify(message, 'error');
+        return;
+      }
+      if (error.status === 401) {
+        setState({ submitting: false, error: '', sent: false });
+        requireAuth({
+          force: true,
+          message: 'Your session expired. Log in again to send this message; everything you wrote is still here.',
+          onAuthenticated: (nextUser) => sendMessage(formRef.current, nextUser),
+          onAccountMismatch: () => {
+            const message = 'You signed in to a different account, so this message was not sent. Please review the details before trying again.';
+            setState({ submitting: false, error: message, sent: false });
+            notify(message, 'error');
+          },
+        });
+        return;
+      }
       const serverFieldErrors = fieldErrorsFrom(error.details);
       const hasFieldErrors = Object.keys(serverFieldErrors).length > 0;
       setFieldErrors(serverFieldErrors);
       focusContactField(Object.keys(serverFieldErrors)[0]);
+      const message = hasFieldErrors
+        ? 'Please correct the highlighted fields. Your message has not been sent.'
+        : `${error.message} Your message was not sent. Please try again${contact.phone ? ' or call the studio' : ''}.`;
       setState({
         submitting: false,
-        error: hasFieldErrors
-          ? 'Please correct the highlighted fields. Your message has not been sent.'
-          : `${error.message} Your message was not sent. Please try again${contact.phone ? ' or call the studio' : ''}.`,
+        error: message,
         sent: false,
       });
+      notify(message, 'error');
     }
+  };
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (!user) {
+      requireAuth({
+        message: 'Log in or create an account before sending this message. Everything you wrote will stay here.',
+        onAuthenticated: (nextUser) => sendMessage(formRef.current, nextUser),
+        onAccountMismatch: () => {
+          const message = 'Your signed-in account changed. Please review the current account details before sending this message.';
+          setState({ submitting: false, error: message, sent: false });
+          notify(message, 'warning');
+        },
+      });
+      return;
+    }
+    void sendMessage(event.currentTarget, user);
   };
 
   return <>
@@ -140,7 +220,7 @@ export default function ContactPage() {
             </div>
           </Col>
           <Col lg={{ span: 6, offset: 1 }}>
-            <Form noValidate onSubmit={submit} className="contact-form">
+            <Form ref={formRef} noValidate onSubmit={submit} className="contact-form">
               <p className="eyebrow">Send a note</p>
               <h2>What can we make easier?</h2>
               {state.error && <Alert variant="danger" className="soft-alert" role="alert">{state.error}</Alert>}
@@ -164,8 +244,9 @@ export default function ContactPage() {
                 <Col xs={12}>
                   <Form.Group controlId="contact-email">
                     <Form.Label>Email</Form.Label>
-                    <Form.Control required type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} isInvalid={Boolean(fieldErrors.email)} aria-invalid={fieldErrors.email ? true : undefined} aria-describedby="contact-email-error" />
+                    <Form.Control required readOnly={Boolean(user)} type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} isInvalid={Boolean(fieldErrors.email)} aria-invalid={fieldErrors.email ? true : undefined} aria-describedby={`contact-email-error${user ? ' contact-email-help' : ''}`} />
                     <Form.Control.Feedback id="contact-email-error" type="invalid">{fieldErrors.email || 'Enter a valid email.'}</Form.Control.Feedback>
+                    {user && <Form.Text id="contact-email-help">Replies will go to your verified account email.</Form.Text>}
                   </Form.Group>
                 </Col>
                 <Col xs={12}>

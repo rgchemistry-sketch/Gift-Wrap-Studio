@@ -34,7 +34,7 @@ app.use(
       origin: allowed ? origin || true : false,
       credentials: true,
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "Idempotency-Key"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "Idempotency-Key", "X-Expected-User-Id"],
       maxAge: 86_400,
     });
   }),

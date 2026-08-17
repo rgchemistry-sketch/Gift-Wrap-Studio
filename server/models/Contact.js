@@ -3,6 +3,7 @@ import { jsonTransform } from "./helpers.js";
 
 const contactSchema = new mongoose.Schema(
   {
+    userId: { type: String, required: true, index: true },
     name: { type: String, required: true, trim: true, maxlength: 100 },
     email: { type: String, required: true, lowercase: true, trim: true, maxlength: 254 },
     phone: { type: String, default: "", trim: true, maxlength: 20 },

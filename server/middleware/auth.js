@@ -5,6 +5,7 @@ import {
   configurationError,
   databaseUnavailable,
   forbidden,
+  sessionIdentityChanged,
   unauthorized,
 } from "../lib/errors.js";
 import { sessionCookieOptions, verifySession } from "../services/auth.js";
@@ -86,6 +87,14 @@ export const requireAdmin = (request, _response, next) => {
   if (!env.adminEmail) return next(configurationError(["ADMIN_EMAIL"]));
   if (request.user?.role !== "admin" || request.user.email !== env.adminEmail) {
     return next(forbidden("Administrator access required"));
+  }
+  return next();
+};
+
+export const requireExpectedUser = (request, _response, next) => {
+  const expectedUserId = request.get("x-expected-user-id")?.trim();
+  if (expectedUserId && expectedUserId !== String(request.user?.id || "")) {
+    return next(sessionIdentityChanged());
   }
   return next();
 };

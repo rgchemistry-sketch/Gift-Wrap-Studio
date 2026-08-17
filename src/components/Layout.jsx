@@ -9,6 +9,7 @@ import Navbar from 'react-bootstrap/Navbar';
 import Offcanvas from 'react-bootstrap/Offcanvas';
 import Dropdown from 'react-bootstrap/Dropdown';
 import Icon from './Icon';
+import OfferPopup from './OfferPopup';
 import { ToastStack } from './Feedback';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
@@ -25,7 +26,6 @@ const navItems = [
 
 const CANONICAL_ORIGIN = 'https://www.giftnwrapstudio.com';
 const AuthModal = lazy(() => import('./AuthModal'));
-const OfferPopup = lazy(() => import('./OfferPopup'));
 
 const configuredValue = (settings, group, key, legacyKey, fallback) => {
   if (!settings) return fallback;
@@ -54,7 +54,7 @@ export default function Layout() {
   const [query, setQuery] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
-  const { cartCount, notify, studioSettings, welcomeOffer } = useShop();
+  const { cartCount, notify, studioSettings } = useShop();
   const { user, openAuth, signOut, signingOut, authModalOpen } = useAuth();
   const announcement = studioSettings?.announcement || {};
   const contact = resolveStudioContact(studioSettings);
@@ -211,7 +211,7 @@ export default function Layout() {
 
       <Footer settings={studioSettings} />
       {authModalOpen && <Suspense fallback={null}><AuthModal /></Suspense>}
-      {welcomeOffer && <Suspense fallback={null}><OfferPopup /></Suspense>}
+      <OfferPopup />
       <ToastStack />
     </div>
   );

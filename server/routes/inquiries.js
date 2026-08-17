@@ -2,7 +2,7 @@ import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { env } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
-import { authenticate, optionalAuth } from "../middleware/auth.js";
+import { authenticate, requireExpectedUser } from "../middleware/auth.js";
 import { rateLimitHandler } from "../middleware/rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import { createCustomInquiry, listBuyerInquiries } from "../services/store.js";
@@ -29,8 +29,9 @@ inquiriesRouter.get(
 
 inquiriesRouter.post(
   "/",
+  authenticate,
+  requireExpectedUser,
   inquiryLimiter,
-  optionalAuth,
   validate({ body: customInquirySchema }),
   asyncHandler(async (request, response) => {
     const inquiry = await createCustomInquiry(request.validated.body, request.user);

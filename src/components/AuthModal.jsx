@@ -6,6 +6,7 @@ import Modal from 'react-bootstrap/Modal';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from './Icon';
 import { useAuth } from '../context/AuthContext';
+import { useShop } from '../context/ShopContext';
 
 const sdkPromises = new Map();
 
@@ -49,10 +50,21 @@ function SocialMark() {
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const errorMessage = (error, fallback) => String(error?.message || fallback);
+
+function signedInMessage(user, intent) {
+  const firstName = String(user?.name || '').trim().split(/\s+/)[0];
+  const greeting = firstName ? `, ${firstName}` : '';
+  return intent === 'signup'
+    ? `Welcome${greeting}. Your studio account is ready.`
+    : `Welcome back${greeting}. You’re signed in securely.`;
+}
+
 export default function AuthModal() {
   const {
     authModalOpen,
     authMessage,
+    authMessageTone,
     authIntent,
     authenticating,
     authMethod,
@@ -67,12 +79,16 @@ export default function AuthModal() {
     resetEmailChallenge,
     authenticateDemo,
   } = useAuth();
+  const { notify } = useShop();
   const googleButtonRef = useRef(null);
   const googleInitializedRef = useRef(false);
   const authenticateGoogleRef = useRef(authenticateGoogle);
+  const authIntentRef = useRef(authIntent);
+  const notifyRef = useRef(notify);
   const codeInputRef = useRef(null);
   const providerBusyRef = useRef(false);
   const providerFlowRef = useRef(0);
+  const googleErrorToastRef = useRef(-1);
   const [sdkReady, setSdkReady] = useState({ google: false });
   const [sdkErrors, setSdkErrors] = useState({});
   const [sdkRetry, setSdkRetry] = useState(0);
@@ -82,6 +98,7 @@ export default function AuthModal() {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [resendSeconds, setResendSeconds] = useState(0);
+  const [entrySubmitted, setEntrySubmitted] = useState(false);
 
   const providers = authStatus.providers || {};
   const emailValid = emailPattern.test(email.trim());
@@ -92,7 +109,9 @@ export default function AuthModal() {
 
   useEffect(() => {
     authenticateGoogleRef.current = authenticateGoogle;
-  }, [authenticateGoogle]);
+    authIntentRef.current = authIntent;
+    notifyRef.current = notify;
+  }, [authenticateGoogle, authIntent, notify]);
 
   const beginProviderFlow = useCallback((provider) => {
     if (providerBusyRef.current) return 0;
@@ -128,7 +147,9 @@ export default function AuthModal() {
     setSdkErrors({});
     setSdkReady({ google: false });
     setSdkRetry((current) => current + 1);
-    refreshAuthStatus().catch(() => {});
+    refreshAuthStatus().catch((error) => {
+      notify(errorMessage(error, 'Secure sign-in options could not be refreshed.'), 'error');
+    });
   };
 
   useEffect(() => {
@@ -141,12 +162,14 @@ export default function AuthModal() {
       setCode('');
       setLocalError('');
       setResendSeconds(0);
+      setEntrySubmitted(false);
     }
   }, [authModalOpen]);
 
   useEffect(() => {
     setCode('');
     setLocalError('');
+    setEntrySubmitted(false);
     if (authIntent === 'login') setName('');
   }, [authIntent]);
 
@@ -160,6 +183,10 @@ export default function AuthModal() {
       if (!active) return;
       setSdkReady((current) => ({ ...current, google: false }));
       setSdkErrors((current) => ({ ...current, google: 'Google sign-in could not load.' }));
+      if (googleErrorToastRef.current !== sdkRetry) {
+        googleErrorToastRef.current = sdkRetry;
+        notifyRef.current('Google sign-in is unavailable right now. You can still use a secure email code.', 'warning');
+      }
     };
     const renderGoogle = async () => {
       try {
@@ -174,7 +201,8 @@ export default function AuthModal() {
               const flowId = beginProviderFlow('google');
               if (!flowId) return;
               authenticateGoogleRef.current(credential)
-                .catch(() => {})
+                .then((user) => notifyRef.current(signedInMessage(user, authIntentRef.current)))
+                .catch((error) => notifyRef.current(errorMessage(error, 'Google sign-in could not be completed. Please try again.'), 'error'))
                 .finally(() => finishProviderFlow(flowId));
             },
           });
@@ -183,7 +211,8 @@ export default function AuthModal() {
         const paintButton = ({ force = false } = {}) => {
           const target = googleButtonRef.current;
           if (!active || !target) return false;
-          const availableWidth = Math.floor(target.getBoundingClientRect().width);
+          const entry = target.closest('.auth-dialog__entry');
+          const availableWidth = Math.floor(entry?.getBoundingClientRect().width || target.getBoundingClientRect().width);
           const nextWidth = Math.min(400, Math.max(200, availableWidth || 320));
           if (!force && target.contains(document.activeElement)) return true;
           if (!force && paintedWidth && Math.abs(nextWidth - paintedWidth) < 12) return true;
@@ -237,6 +266,7 @@ export default function AuthModal() {
 
   const submitEmail = async (event) => {
     event.preventDefault();
+    setEntrySubmitted(true);
     if (!emailValid) {
       setLocalError('Enter a valid email address.');
       return;
@@ -247,13 +277,15 @@ export default function AuthModal() {
     }
     setLocalError('');
     try {
+      const normalizedEmail = email.trim().toLowerCase();
       await startEmailAuthentication({
-        email: email.trim().toLowerCase(),
+        email: normalizedEmail,
         name: authIntent === 'signup' ? name.trim() : '',
         intent: authIntent,
       });
-    } catch {
-      // AuthContext presents the safe server response.
+      notify(`Verification code sent to ${normalizedEmail}.`, 'info');
+    } catch (error) {
+      notify(errorMessage(error, 'The verification email could not be sent. Please try again.'), 'error');
     }
   };
 
@@ -265,9 +297,10 @@ export default function AuthModal() {
     }
     setLocalError('');
     try {
-      await verifyEmailAuthentication(code);
-    } catch {
-      // AuthContext presents the safe server response.
+      const user = await verifyEmailAuthentication(code);
+      notify(signedInMessage(user, authIntent));
+    } catch (error) {
+      notify(errorMessage(error, 'That verification code could not be confirmed.'), 'error');
     }
   };
 
@@ -280,10 +313,22 @@ export default function AuthModal() {
         name: authIntent === 'signup' ? name.trim() : '',
         intent: authIntent,
       });
-    } catch {
-      // AuthContext presents the safe server response.
+      notify('A new verification code is on its way.', 'info');
+    } catch (error) {
+      notify(errorMessage(error, 'A new verification code could not be sent yet.'), 'error');
     }
   };
+
+  const previewAccount = async (role) => {
+    try {
+      const user = await authenticateDemo(role);
+      notify(signedInMessage(user, 'login'));
+    } catch (error) {
+      notify(errorMessage(error, 'Preview sign-in could not be completed.'), 'error');
+    }
+  };
+
+  const authMessageVariant = authMessageTone === 'info' ? 'info' : 'danger';
 
   return (
     <Modal
@@ -323,10 +368,19 @@ export default function AuthModal() {
               </p>
             </div>
 
-            {(authMessage || localError) && <Alert variant="danger" className="soft-alert" role="alert">{authMessage || localError}</Alert>}
+            {(authMessage || localError) && (
+              <Alert
+                variant={localError ? 'danger' : authMessageVariant}
+                className={`soft-alert ${!localError && authMessageTone === 'info' ? 'auth-intent-note' : ''}`}
+                role={localError || authMessageTone !== 'info' ? 'alert' : 'status'}
+              >
+                <Icon name={localError || authMessageTone !== 'info' ? 'shield' : 'lock'} size={16} />
+                <span>{authMessage || localError}</span>
+              </Alert>
+            )}
             {authStatus.loading && <Alert variant="info" className="soft-alert auth-service-note" role="status"><Spinner size="sm" /> Checking secure sign-in options…</Alert>}
             {(authStatus.error || providerErrors.length > 0) && !authMessage && !localError && (
-              <Alert variant="warning" className="soft-alert auth-service-note">
+              <Alert variant="warning" className="soft-alert auth-service-note" role="alert">
                 <Icon name="shield" /> {providerErrors.length
                   ? `${providerErrors.map(([provider]) => provider[0].toUpperCase() + provider.slice(1)).join(', ')} sign-in could not load.`
                   : 'Sign-in availability could not be checked.'}{' '}
@@ -353,19 +407,22 @@ export default function AuthModal() {
 
             <div className="auth-divider"><span>or use your email</span></div>
 
-            <Form className={`email-auth-form ${authIntent === 'signup' ? 'is-signup' : ''}`} onSubmit={submitEmail} noValidate>
+            <Form className={`email-auth-form ${authIntent === 'signup' ? 'is-signup' : ''}`} onSubmit={submitEmail} noValidate aria-busy={authenticating && authMethod === 'email'}>
               {authIntent === 'signup' && (
                 <Form.Group className="email-auth-form__group" controlId="account-name">
                   <Form.Label>Your name</Form.Label>
                   <Form.Control
                     type="text"
                     value={name}
-                    onChange={(event) => setName(event.target.value.slice(0, 100))}
+                    onChange={(event) => {
+                      setName(event.target.value.slice(0, 100));
+                      if (localError) setLocalError('');
+                    }}
                     autoComplete="name"
                     placeholder="How should we address you?"
-                    isInvalid={name.length > 0 && !nameValid}
-                    aria-invalid={name.length > 0 && !nameValid}
-                    aria-describedby={name.length > 0 && !nameValid ? 'account-name-error' : undefined}
+                    isInvalid={(entrySubmitted || name.length > 0) && !nameValid}
+                    aria-invalid={(entrySubmitted || name.length > 0) && !nameValid}
+                    aria-describedby={(entrySubmitted || name.length > 0) && !nameValid ? 'account-name-error' : undefined}
                     disabled={uiBusy}
                     autoFocus
                   />
@@ -379,17 +436,20 @@ export default function AuthModal() {
                   <Form.Control
                     type="email"
                     value={email}
-                    onChange={(event) => setEmail(event.target.value)}
+                    onChange={(event) => {
+                      setEmail(event.target.value.slice(0, 254));
+                      if (localError) setLocalError('');
+                    }}
                     autoComplete="email"
                     placeholder="you@example.com"
-                    isInvalid={email.length > 2 && !emailValid}
-                    aria-invalid={email.length > 2 && !emailValid}
-                    aria-describedby={email.length > 2 && !emailValid ? 'account-email-error' : undefined}
+                    isInvalid={(entrySubmitted || email.length > 2) && !emailValid}
+                    aria-invalid={(entrySubmitted || email.length > 2) && !emailValid}
+                    aria-describedby={(entrySubmitted || email.length > 2) && !emailValid ? 'account-email-error' : undefined}
                     disabled={uiBusy}
                     autoFocus={authIntent === 'login'}
                   />
                 </div>
-                {email.length > 2 && !emailValid && <div id="account-email-error" className="invalid-feedback d-block">Enter a valid email address.</div>}
+                {(entrySubmitted || email.length > 2) && !emailValid && <div id="account-email-error" className="invalid-feedback d-block">Enter a valid email address.</div>}
               </Form.Group>
               <Button type="submit" className="button-burgundy auth-email-submit" disabled={uiBusy || authStatus.loading || !providers.email}>
                 {authenticating && authMethod === 'email' ? <><Spinner size="sm" /> Sending code…</> : <>Email me a verification code <Icon name="arrow" size={17} /></>}
@@ -398,7 +458,7 @@ export default function AuthModal() {
             </Form>
 
             {import.meta.env.VITE_ENABLE_DEMO_AUTH === 'true' && (
-              <div className="demo-auth"><span>Local preview only</span><div><button type="button" disabled={uiBusy} onClick={() => authenticateDemo('buyer').catch(() => {})}>Preview buyer</button><button type="button" disabled={uiBusy} onClick={() => authenticateDemo('admin').catch(() => {})}>Preview admin</button></div></div>
+              <div className="demo-auth"><span>Local preview only</span><div><button type="button" disabled={uiBusy} onClick={() => previewAccount('buyer')}>Preview buyer</button><button type="button" disabled={uiBusy} onClick={() => previewAccount('admin')}>Preview admin</button></div></div>
             )}
             <p className="privacy-note"><Icon name="lock" size={13} /> Password-free sign-in. We only use verified identity details to secure your account.</p>
           </div>
@@ -408,7 +468,12 @@ export default function AuthModal() {
             <p className="eyebrow">Check your inbox</p>
             <h2 id="auth-dialog-title">One small code, then you’re in.</h2>
             <p className="muted-copy" id="auth-dialog-description">Enter the 6-digit verification code sent to <strong>{emailChallenge.emailMasked || emailChallenge.email || email}</strong>.</p>
-            {(authMessage || localError) && <Alert variant="danger" className="soft-alert" role="alert">{authMessage || localError}</Alert>}
+            {(authMessage || localError) && (
+              <Alert variant="danger" className="soft-alert auth-otp__alert" role="alert">
+                <Icon name="shield" size={16} />
+                <span>{authMessage || localError}</span>
+              </Alert>
+            )}
             {emailChallenge.previewCode && (
               <Alert variant="info" className="soft-alert auth-preview-code"><strong>Local preview code:</strong> <code>{emailChallenge.previewCode}</code></Alert>
             )}
@@ -420,13 +485,17 @@ export default function AuthModal() {
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 value={code}
-                onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={(event) => {
+                  setCode(event.target.value.replace(/\D/g, '').slice(0, 6));
+                  if (localError) setLocalError('');
+                }}
                 placeholder="000000"
                 maxLength={6}
-                aria-describedby="email-code-help"
+                aria-describedby={`email-code-help${code.length > 0 && code.length !== 6 ? ' email-code-error' : ''}`}
                 aria-invalid={code.length > 0 && code.length !== 6}
                 disabled={uiBusy}
               />
+              {code.length > 0 && code.length !== 6 && <div id="email-code-error" className="invalid-feedback d-block">Enter all 6 digits from the email.</div>}
               <Form.Text id="email-code-help">The code expires in {emailChallenge.expiresInMinutes || 10} minutes and works once.</Form.Text>
             </Form.Group>
             <Button type="submit" className="button-burgundy w-100" disabled={uiBusy || code.length !== 6}>
