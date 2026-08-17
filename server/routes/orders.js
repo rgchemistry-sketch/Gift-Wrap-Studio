@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/async-handler.js";
 import { badRequest, forbidden } from "../lib/errors.js";
-import { authenticate } from "../middleware/auth.js";
+import { authenticate, requireExpectedUser } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { createOrder, getOrder, listBuyerOrders } from "../services/store.js";
 import { createOrderSchema, idParamsSchema, orderQuerySchema } from "../validation/schemas.js";
@@ -11,6 +11,7 @@ ordersRouter.use(authenticate);
 
 ordersRouter.post(
   "/",
+  requireExpectedUser,
   validate({ body: createOrderSchema }),
   asyncHandler(async (request, response) => {
     const idempotencyKey = request.get("idempotency-key")?.trim() || "";

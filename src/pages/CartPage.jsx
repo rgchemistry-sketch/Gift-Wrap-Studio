@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
 import Col from 'react-bootstrap/Col';
@@ -9,10 +9,13 @@ import SmartImage from '../components/SmartImage';
 import ProductCard from '../components/ProductCard';
 import { formatCurrency } from '../data/catalog';
 import { useCatalog } from '../data/useCatalog';
+import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 
 export default function CartPage() {
-  const { cart, subtotal, updateQuantity, removeFromCart, claimedOfferCode, welcomeOffer, studioSettings } = useShop();
+  const navigate = useNavigate();
+  const { user, requireAuth } = useAuth();
+  const { cart, subtotal, updateQuantity, removeFromCart, claimedOfferCode, welcomeOffer, studioSettings, notify } = useShop();
   const { products: catalog } = useCatalog();
   const suggestions = [...catalog]
     .sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.inStock) - Number(a.inStock))
@@ -22,6 +25,19 @@ export default function CartPage() {
   const contactDigits = String(contactPhone).replace(/\D/g, '');
   const contactLocal = contactDigits.length > 10 ? contactDigits.slice(-10) : contactDigits;
   const contactLabel = contactLocal.length === 10 ? `${contactLocal.slice(0, 5)} ${contactLocal.slice(5)}` : contactPhone;
+  const continueToCheckout = () => {
+    if (user) {
+      navigate('/checkout');
+      return;
+    }
+    requireAuth({
+      message: 'Log in or create an account to continue with your order. Everything in your bag will be waiting for you.',
+      onAuthenticated: () => navigate('/checkout'),
+      onAccountMismatch: () => {
+        notify('Your signed-in account changed. Please review this account’s bag before continuing.', 'warning');
+      },
+    });
+  };
 
   if (!cart.length) {
     return (
@@ -77,7 +93,7 @@ export default function CartPage() {
               <h2>Your summary</h2>
               {claimedOffer && <Alert variant="success" className="offer-claimed"><Icon name="spark" /> {claimedOffer} saved. Eligibility will be checked before final confirmation.</Alert>}
               <dl><div><dt>Pieces ({cart.reduce((count, line) => count + line.quantity, 0)})</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed by studio</dd></div><div className="summary-total"><dt>Current item total</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
-              <Button as={Link} to="/checkout" className="button-burgundy w-100">Continue to order request <Icon name="arrow" /></Button>
+              <Button type="button" onClick={continueToCheckout} className="button-burgundy w-100">Continue to order request <Icon name="arrow" /></Button>
               <p className="summary-note"><Icon name="lock" size={14} /> No payment is taken on this page. The studio confirms customization, delivery and final amount first.</p>
               <div className="summary-contact"><p>Need help with your design?</p><a href={`tel:${contactPhone.replace(/[^+\d]/g, '')}`}>Call the studio · {contactLabel}</a></div>
             </aside>

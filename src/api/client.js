@@ -267,13 +267,24 @@ export const api = {
   }),
   authenticateDemo: (role) => request('/auth/demo', { method: 'POST', body: { role } }),
   signOut: () => request('/auth/logout', { method: 'POST' }),
-  submitOrderRequest: (payload, idempotencyKey) => request('/orders', {
+  submitOrderRequest: (payload, idempotencyKey, expectedUserId) => request('/orders', {
     method: 'POST',
     body: payload,
-    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+    headers: {
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      ...(expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {}),
+    },
   }),
-  submitCustomRequest: (payload) => request('/custom-inquiries', { method: 'POST', body: payload }),
-  submitContact: (payload) => request('/contact', { method: 'POST', body: payload }),
+  submitCustomRequest: (payload, expectedUserId) => request('/custom-inquiries', {
+    method: 'POST',
+    body: payload,
+    headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
+  }),
+  submitContact: (payload, expectedUserId) => request('/contact', {
+    method: 'POST',
+    body: payload,
+    headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
+  }),
   getBuyerOrders: (params = {}) => {
     const query = searchQuery(params);
     return request(`/orders/my${query ? `?${query}` : ''}`);

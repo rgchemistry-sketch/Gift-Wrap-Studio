@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
@@ -9,21 +9,34 @@ import Row from 'react-bootstrap/Row';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../components/Icon';
 import SmartImage from '../components/SmartImage';
+import { RouteLoader } from '../components/Feedback';
 import { api } from '../api/client';
 import { formatCurrency } from '../data/catalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
+import {
+  loadScopedDraft,
+  removeScopedDraft,
+  saveScopedDraft,
+  scopedDraftOwner,
+} from '../utils/scoped-draft';
+import {
+  INDIAN_MOBILE_MESSAGE,
+  normalizeIndianMobile,
+} from '../../shared/indian-phone.js';
 
 const DRAFT_KEY = 'gnw-checkout-draft';
 const IDEMPOTENCY_KEY = 'gnw-checkout-idempotency';
-
-function readDraft() {
-  try {
-    return JSON.parse(window.localStorage.getItem(DRAFT_KEY) || 'null');
-  } catch {
-    return null;
-  }
-}
+const checkoutFieldIds = {
+  'shippingAddress.recipientName': 'checkout-name',
+  'shippingAddress.phone': 'checkout-phone',
+  'shippingAddress.line1': 'checkout-address-1',
+  'shippingAddress.line2': 'checkout-address-2',
+  'shippingAddress.city': 'checkout-city',
+  'shippingAddress.state': 'checkout-state',
+  'shippingAddress.postalCode': 'checkout-pin',
+  note: 'checkout-notes',
+};
 
 function getCheckoutKey() {
   const existing = window.sessionStorage.getItem(IDEMPOTENCY_KEY);
@@ -48,30 +61,68 @@ const emptyForm = {
 };
 
 export default function CheckoutPage() {
-  const { cart, subtotal, clearCart, claimedOfferCode, welcomeOffer, studioSettings } = useShop();
-  const { user, openAuth } = useAuth();
-  const [form, setForm] = useState(() => ({ ...emptyForm, ...(readDraft() || {}) }));
+  const { cart, subtotal, clearCart, claimedOfferCode, welcomeOffer, studioSettings, notify } = useShop();
+  const { user, sessionOwnerId, loading: authLoading, requireAuth, refreshSession } = useAuth();
+  const draftUserId = String(sessionOwnerId || user?.id || '');
+  const draftOwner = scopedDraftOwner(draftUserId);
+  const [form, setForm] = useState(emptyForm);
+  const [draftReady, setDraftReady] = useState(false);
   const [validated, setValidated] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [order, setOrder] = useState(null);
   const [idempotencyKey] = useState(getCheckoutKey);
+  const formRef = useRef(null);
+  const promptedForAuthRef = useRef(false);
+  const [hydratedDraftOwner, setHydratedDraftOwner] = useState('pending');
 
   useEffect(() => {
-    if (!user) return;
+    if (authLoading) return;
+    const previousOwner = hydratedDraftOwner;
+    if (previousOwner === draftOwner && draftReady) return;
+    const transferGuest = Boolean(draftUserId)
+      && (previousOwner === 'pending' || previousOwner === 'guest');
+    const savedDraft = loadScopedDraft(DRAFT_KEY, draftUserId, {
+      transferGuest,
+      migrateLegacy: previousOwner === 'pending' && Boolean(draftUserId),
+    });
+    setForm({ ...emptyForm, ...(savedDraft || {}) });
+    setValidated(false);
+    setPhoneError('');
+    setError('');
+    setOrder(null);
+    setHydratedDraftOwner(draftOwner);
+    setDraftReady(true);
+  }, [authLoading, draftOwner, draftReady, draftUserId, hydratedDraftOwner]);
+
+  useEffect(() => {
+    if (authLoading || user || !cart.length || promptedForAuthRef.current) return;
+    promptedForAuthRef.current = true;
+    requireAuth({
+      message: 'Log in or create an account to continue with your saved order. Your bag and delivery draft will stay on this device.',
+    });
+  }, [authLoading, cart.length, requireAuth, user]);
+
+  useEffect(() => {
+    if (!draftReady || !user) return;
     setForm((current) => ({
       ...current,
       fullName: current.fullName || user.name || '',
-      email: current.email || user.email || '',
+      email: user.email || current.email || '',
       phone: current.phone || user.phone || '',
     }));
-  }, [user]);
+  }, [draftReady, user]);
 
   useEffect(() => {
-    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(form));
-  }, [form]);
+    if (!draftReady || hydratedDraftOwner !== draftOwner) return;
+    saveScopedDraft(DRAFT_KEY, draftUserId, form);
+  }, [draftOwner, draftReady, draftUserId, form, hydratedDraftOwner]);
 
-  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const update = (key, value) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    if (key === 'phone' && phoneError) setPhoneError('');
+  };
   const offerCode = claimedOfferCode || (window.sessionStorage.getItem('gnw-first-offer-claimed') === 'true' ? welcomeOffer?.code || 'FIRST10' : '');
   const bulkThreshold = Number(welcomeOffer?.bulkOrderThreshold || studioSettings?.shipping?.bulkThreshold || 10);
   const offerClaimed = Boolean(offerCode && (welcomeOffer?.enabled ?? true));
@@ -82,28 +133,50 @@ export default function CheckoutPage() {
   const submit = async (event) => {
     event.preventDefault();
     const htmlForm = event.currentTarget;
+    if (!user) {
+      requireAuth({
+        message: 'Log in or create an account before sending this order request. Your bag and completed form will stay here.',
+        onAuthenticated: () => formRef.current?.requestSubmit(),
+        onAccountMismatch: () => {
+          const message = 'Your signed-in account changed. Please review this account’s bag and delivery details before continuing.';
+          setError(message);
+          notify(message, 'warning');
+        },
+      });
+      return;
+    }
     setValidated(true);
     setError('');
     if (!htmlForm.checkValidity()) {
       event.stopPropagation();
+      notify('Please complete the highlighted delivery details before continuing.', 'error');
       htmlForm.querySelector(':invalid')?.focus();
       return;
     }
-    if (!user) {
-      openAuth('Log in with an email verification code or Google to securely submit your saved order request.', 'login');
+    const normalizedPhone = normalizeIndianMobile(form.phone);
+    if (!normalizedPhone) {
+      setPhoneError(INDIAN_MOBILE_MESSAGE);
+      setError('Please correct the highlighted mobile number before sending your order request.');
+      notify(INDIAN_MOBILE_MESSAGE, 'error');
+      window.requestAnimationFrame(() => document.getElementById('checkout-phone')?.focus());
       return;
     }
+    setPhoneError('');
     const expiredUpload = cart.find((line) => {
       const expiresAt = Date.parse(line.customization?.media?.expiresAt || '');
       return Number.isFinite(expiresAt) && expiresAt <= Date.now();
     });
     if (expiredUpload) {
-      setError(`The secure photo attached to ${expiredUpload.product.title} expired. Remove that item and add it again with the photo.`);
+      const message = `The secure photo attached to ${expiredUpload.product.title} expired. Remove that item and add it again with the photo.`;
+      setError(message);
+      notify(message, 'error');
       return;
     }
     const pendingUpload = cart.find((line) => line.customization?.media?.pending);
     if (pendingUpload) {
-      setError(`Please return to ${pendingUpload.product.title} and securely reattach its photo before sending your request.`);
+      const message = `Please return to ${pendingUpload.product.title} and securely reattach its photo before sending your request.`;
+      setError(message);
+      notify(message, 'error');
       return;
     }
     setSubmitting(true);
@@ -118,7 +191,7 @@ export default function CheckoutPage() {
         })),
         shippingAddress: {
           recipientName: form.fullName,
-          phone: form.phone,
+          phone: normalizedPhone,
           line1: form.addressLine1,
           line2: form.addressLine2,
           city: form.city,
@@ -134,23 +207,48 @@ export default function CheckoutPage() {
         couponCode: offerClaimed && itemOfferEligible ? offerCode : undefined,
         paymentMethod: 'manual_confirmation',
       };
-      const result = await api.submitOrderRequest(payload, idempotencyKey);
+      const result = await api.submitOrderRequest(payload, idempotencyKey, user.id);
       const createdOrder = result.data || result.order || result;
       setOrder(createdOrder);
       clearCart();
-      window.localStorage.removeItem(DRAFT_KEY);
+      removeScopedDraft(DRAFT_KEY, draftUserId);
       window.sessionStorage.removeItem(IDEMPOTENCY_KEY);
+      notify(`Order request${createdOrder.orderNumber ? ` ${createdOrder.orderNumber}` : ''} was sent securely.`);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (requestError) {
-      if (requestError.status === 401) {
-        openAuth('Your session expired. Sign in again; your order form is still saved.');
+      if (requestError.code === 'SESSION_IDENTITY_CHANGED') {
+        await refreshSession();
+        const message = 'Your signed-in account changed, so this order was not sent. Please review the current account’s bag and delivery details.';
+        setError(message);
+        notify(message, 'error');
+      } else if (requestError.status === 401) {
+        requireAuth({
+          force: true,
+          message: 'Your session expired. Log in again to send this order request; your bag and form are still saved.',
+          onAuthenticated: () => formRef.current?.requestSubmit(),
+          onAccountMismatch: () => {
+            const message = 'You signed in to a different account, so the previous account’s order was not sent. Please review your bag and details before continuing.';
+            setError(message);
+            notify(message, 'error');
+          },
+        });
       } else {
-        setError(`${requestError.message} Nothing was charged and your form is still saved.`);
+        const firstIssue = Array.isArray(requestError.details) ? requestError.details[0] : null;
+        if (firstIssue?.field === 'shippingAddress.phone') {
+          setPhoneError(firstIssue.message || INDIAN_MOBILE_MESSAGE);
+        }
+        const message = `${firstIssue?.message || requestError.message} Nothing was charged and your form is still saved.`;
+        setError(message);
+        notify(message, 'error');
+        const fieldId = checkoutFieldIds[firstIssue?.field];
+        if (fieldId) window.requestAnimationFrame(() => document.getElementById(fieldId)?.focus());
       }
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (!draftReady || hydratedDraftOwner !== draftOwner) return <RouteLoader />;
 
   if (order) {
     return (
@@ -180,22 +278,22 @@ export default function CheckoutPage() {
           <Col lg={7}>
             <div className="checkout-heading"><p className="eyebrow">Order request</p><h1>Where should we send the beautiful thing?</h1><p>Share your delivery and occasion details. You’ll review the final design, total and payment instructions with the studio before production.</p></div>
             {error && <Alert variant="danger" className="soft-alert" role="alert">{error}</Alert>}
-            <Form noValidate validated={validated} onSubmit={submit} className="checkout-form">
+            <Form ref={formRef} noValidate validated={validated} onSubmit={submit} className="checkout-form">
               <fieldset>
                 <legend><span>01</span> Contact details</legend>
                 <Row className="g-3">
-                  <Col sm={6}><Form.Group controlId="checkout-name"><Form.Label>Full name</Form.Label><Form.Control required value={form.fullName} onChange={(event) => update('fullName', event.target.value)} autoComplete="name" /><Form.Control.Feedback type="invalid">Please enter your full name.</Form.Control.Feedback></Form.Group></Col>
-                  <Col sm={6}><Form.Group controlId="checkout-phone"><Form.Label>Mobile number</Form.Label><Form.Control required pattern="[6-9][0-9]{9}" inputMode="numeric" value={form.phone} onChange={(event) => update('phone', event.target.value.replace(/\D/g, '').slice(0, 10))} autoComplete="tel" placeholder="10-digit number" /><Form.Control.Feedback type="invalid">Enter a valid 10-digit Indian mobile number.</Form.Control.Feedback></Form.Group></Col>
-                  <Col xs={12}><Form.Group controlId="checkout-email"><Form.Label>Email address</Form.Label><Form.Control required type="email" value={form.email} onChange={(event) => update('email', event.target.value)} autoComplete="email" /><Form.Control.Feedback type="invalid">Enter a valid email address.</Form.Control.Feedback></Form.Group></Col>
+                  <Col sm={6}><Form.Group controlId="checkout-name"><Form.Label>Full name</Form.Label><Form.Control required minLength={2} maxLength={100} value={form.fullName} onChange={(event) => update('fullName', event.target.value)} autoComplete="name" /><Form.Control.Feedback type="invalid">Please enter your full name.</Form.Control.Feedback></Form.Group></Col>
+                  <Col sm={6}><Form.Group controlId="checkout-phone"><Form.Label>Mobile number</Form.Label><Form.Control required type="tel" inputMode="tel" maxLength={24} value={form.phone} onChange={(event) => update('phone', event.target.value)} autoComplete="tel" placeholder="09876543210 or +91 98765 43210" isInvalid={Boolean(phoneError)} aria-invalid={phoneError ? true : undefined} aria-describedby="checkout-phone-error checkout-phone-help" /><Form.Control.Feedback id="checkout-phone-error" type="invalid">{phoneError || INDIAN_MOBILE_MESSAGE}</Form.Control.Feedback><Form.Text id="checkout-phone-help">Use a 10-digit Indian mobile, optionally beginning with 0 or +91.</Form.Text></Form.Group></Col>
+                  <Col xs={12}><Form.Group controlId="checkout-email"><Form.Label>Email address</Form.Label><Form.Control required readOnly={Boolean(user)} type="email" maxLength={254} value={form.email} onChange={(event) => update('email', event.target.value)} autoComplete="email" /><Form.Control.Feedback type="invalid">Enter a valid email address.</Form.Control.Feedback>{user && <Form.Text>Order updates will be tied to your verified account email.</Form.Text>}</Form.Group></Col>
                 </Row>
               </fieldset>
               <fieldset>
                 <legend><span>02</span> Delivery address</legend>
                 <Row className="g-3">
-                  <Col xs={12}><Form.Group controlId="checkout-address-1"><Form.Label>House, building and street</Form.Label><Form.Control required value={form.addressLine1} onChange={(event) => update('addressLine1', event.target.value)} autoComplete="address-line1" /><Form.Control.Feedback type="invalid">Please enter the delivery address.</Form.Control.Feedback></Form.Group></Col>
-                  <Col xs={12}><Form.Group controlId="checkout-address-2"><Form.Label>Landmark or area <small>optional</small></Form.Label><Form.Control value={form.addressLine2} onChange={(event) => update('addressLine2', event.target.value)} autoComplete="address-line2" /></Form.Group></Col>
-                  <Col sm={5}><Form.Group controlId="checkout-city"><Form.Label>City</Form.Label><Form.Control required value={form.city} onChange={(event) => update('city', event.target.value)} autoComplete="address-level2" /><Form.Control.Feedback type="invalid">Enter your city.</Form.Control.Feedback></Form.Group></Col>
-                  <Col sm={4}><Form.Group controlId="checkout-state"><Form.Label>State</Form.Label><Form.Control required value={form.state} onChange={(event) => update('state', event.target.value)} autoComplete="address-level1" /><Form.Control.Feedback type="invalid">Enter your state.</Form.Control.Feedback></Form.Group></Col>
+                  <Col xs={12}><Form.Group controlId="checkout-address-1"><Form.Label>House, building and street</Form.Label><Form.Control required minLength={3} maxLength={200} value={form.addressLine1} onChange={(event) => update('addressLine1', event.target.value)} autoComplete="address-line1" /><Form.Control.Feedback type="invalid">Please enter the delivery address.</Form.Control.Feedback></Form.Group></Col>
+                  <Col xs={12}><Form.Group controlId="checkout-address-2"><Form.Label>Landmark or area <small>optional</small></Form.Label><Form.Control maxLength={200} value={form.addressLine2} onChange={(event) => update('addressLine2', event.target.value)} autoComplete="address-line2" /></Form.Group></Col>
+                  <Col sm={5}><Form.Group controlId="checkout-city"><Form.Label>City</Form.Label><Form.Control required minLength={2} maxLength={100} value={form.city} onChange={(event) => update('city', event.target.value)} autoComplete="address-level2" /><Form.Control.Feedback type="invalid">Enter your city.</Form.Control.Feedback></Form.Group></Col>
+                  <Col sm={4}><Form.Group controlId="checkout-state"><Form.Label>State</Form.Label><Form.Control required minLength={2} maxLength={100} value={form.state} onChange={(event) => update('state', event.target.value)} autoComplete="address-level1" /><Form.Control.Feedback type="invalid">Enter your state.</Form.Control.Feedback></Form.Group></Col>
                   <Col sm={3}><Form.Group controlId="checkout-pin"><Form.Label>PIN code</Form.Label><Form.Control required pattern="[1-9][0-9]{5}" inputMode="numeric" value={form.postalCode} onChange={(event) => update('postalCode', event.target.value.replace(/\D/g, '').slice(0, 6))} autoComplete="postal-code" /><Form.Control.Feedback type="invalid">Enter a 6-digit PIN.</Form.Control.Feedback></Form.Group></Col>
                 </Row>
               </fieldset>

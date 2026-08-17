@@ -3,6 +3,8 @@ import { api } from '../api/client';
 
 const AuthContext = createContext(null);
 const LEGACY_USER_KEY = 'gnw-user';
+const AUTH_SYNC_KEY = 'gnw-auth-sync';
+const AUTH_SYNC_CHANNEL = 'gift-n-wrap-auth';
 
 const userFrom = (result) => result?.user || result?.data?.user || null;
 const dataFrom = (result) => result?.data || result;
@@ -12,9 +14,11 @@ const providerEnabled = (provider) => Boolean(
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  const [sessionInvalid, setSessionInvalid] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMessage, setAuthMessage] = useState('');
+  const [authMessageTone, setAuthMessageTone] = useState('');
   const [authIntent, setAuthIntent] = useState('login');
   const [authenticating, setAuthenticating] = useState(false);
   const [authMethod, setAuthMethod] = useState('');
@@ -27,38 +31,180 @@ export function AuthProvider({ children }) {
   const [emailChallenge, setEmailChallenge] = useState(null);
   const authGenerationRef = useRef(0);
   const authInFlightRef = useRef(0);
+  const sessionCheckRef = useRef(0);
   const authStatusRequestedRef = useRef(false);
+  const pendingAuthActionRef = useRef(null);
+  const authChannelRef = useRef(null);
+  const tabIdRef = useRef('');
 
   const updateUser = useCallback((nextUser) => {
     setUser(nextUser || null);
+    setSessionInvalid(false);
     // Older builds cached account PII in localStorage. Sessions now live only in
     // the secure HttpOnly cookie, so remove that legacy copy whenever auth runs.
-    window.localStorage.removeItem(LEGACY_USER_KEY);
+    try {
+      window.localStorage.removeItem(LEGACY_USER_KEY);
+    } catch {
+      // Secure cookie sessions continue to work when browser storage is blocked.
+    }
   }, []);
+
+  const publishAuthChange = useCallback(() => {
+    if (!tabIdRef.current) {
+      tabIdRef.current = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+    }
+    const marker = `${tabIdRef.current}:${Date.now()}:${Math.random()}`;
+    try {
+      window.localStorage.setItem(AUTH_SYNC_KEY, marker);
+    } catch {
+      // BroadcastChannel remains available in browsers that block storage.
+    }
+    try {
+      authChannelRef.current?.postMessage(marker);
+    } catch {
+      // Focus/visibility synchronization is the final fallback.
+    }
+  }, []);
+
+  const completePendingAuthAction = useCallback((nextUser) => {
+    const pending = pendingAuthActionRef.current;
+    pendingAuthActionRef.current = null;
+    if (!pending) return;
+    const nextUserId = String(nextUser?.id || '');
+    if (pending.expectedUserId && pending.expectedUserId !== nextUserId) {
+      if (pending.onAccountMismatch) {
+        window.setTimeout(() => {
+          Promise.resolve()
+            .then(() => pending.onAccountMismatch(nextUser))
+            .catch(() => {});
+        }, 0);
+      }
+      return;
+    }
+    window.setTimeout(() => {
+      Promise.resolve()
+        .then(() => pending.action(nextUser))
+        // The initiating page owns operation-specific errors and keeps its draft.
+        .catch(() => {});
+    }, 0);
+  }, []);
+
+  // Authentication promises can resolve before React commits the new context
+  // value to consumers. Resume protected work only from an effect so DOM event
+  // handlers (notably requestSubmit on product/checkout forms) see the newly
+  // authenticated user instead of reopening the auth modal from a stale render.
+  useEffect(() => {
+    if (!user || sessionInvalid || !pendingAuthActionRef.current) return;
+    setAuthModalOpen(false);
+    setAuthMessage('');
+    setAuthMessageTone('');
+    completePendingAuthAction(user);
+  }, [completePendingAuthAction, sessionInvalid, user]);
+
+  const synchronizeSession = useCallback(async () => {
+    if (authInFlightRef.current) return;
+    const generation = authGenerationRef.current;
+    const sessionCheck = ++sessionCheckRef.current;
+    try {
+      const result = await api.getCurrentUser();
+      if (
+        generation !== authGenerationRef.current
+        || sessionCheck !== sessionCheckRef.current
+      ) return;
+      const nextUser = userFrom(result);
+      updateUser(nextUser);
+    } catch (error) {
+      if (
+        generation !== authGenerationRef.current
+        || sessionCheck !== sessionCheckRef.current
+      ) return;
+      if (error.status === 401 || error.status === 403) updateUser(null);
+    } finally {
+      if (
+        generation === authGenerationRef.current
+        && sessionCheck === sessionCheckRef.current
+      ) setLoading(false);
+    }
+  }, [updateUser]);
 
   useEffect(() => {
     let active = true;
     const generation = authGenerationRef.current;
-    window.localStorage.removeItem(LEGACY_USER_KEY);
+    const sessionCheck = ++sessionCheckRef.current;
+    try {
+      window.localStorage.removeItem(LEGACY_USER_KEY);
+    } catch {
+      // The HttpOnly session does not depend on local storage.
+    }
     api
       .getCurrentUser()
       .then((result) => {
-        if (active && generation === authGenerationRef.current) updateUser(userFrom(result));
+        if (
+          active
+          && generation === authGenerationRef.current
+          && sessionCheck === sessionCheckRef.current
+        ) {
+          const nextUser = userFrom(result);
+          updateUser(nextUser);
+        }
       })
       .catch((error) => {
-        if (!active || generation !== authGenerationRef.current) return;
+        if (
+          !active
+          || generation !== authGenerationRef.current
+          || sessionCheck !== sessionCheckRef.current
+        ) return;
         updateUser(null);
         if (error.status !== 401 && error.status !== 403) {
           setAuthMessage('We could not verify your saved session. Please sign in again.');
+          setAuthMessageTone('error');
         }
       })
       .finally(() => {
-        if (active && generation === authGenerationRef.current) setLoading(false);
+        if (
+          active
+          && generation === authGenerationRef.current
+          && sessionCheck === sessionCheckRef.current
+        ) setLoading(false);
       });
     return () => {
       active = false;
     };
   }, [updateUser]);
+
+  useEffect(() => {
+    let channel;
+    const syncFromAnotherTab = () => {
+      void synchronizeSession();
+    };
+    const syncOnStorage = (event) => {
+      if (event.key === AUTH_SYNC_KEY && event.newValue) syncFromAnotherTab();
+    };
+    const syncWhenVisible = () => {
+      if (document.visibilityState === 'visible') syncFromAnotherTab();
+    };
+
+    try {
+      if ('BroadcastChannel' in window) {
+        channel = new window.BroadcastChannel(AUTH_SYNC_CHANNEL);
+        channel.addEventListener('message', syncFromAnotherTab);
+        authChannelRef.current = channel;
+      }
+    } catch {
+      channel = null;
+    }
+    window.addEventListener('storage', syncOnStorage);
+    window.addEventListener('focus', syncFromAnotherTab);
+    document.addEventListener('visibilitychange', syncWhenVisible);
+    return () => {
+      window.removeEventListener('storage', syncOnStorage);
+      window.removeEventListener('focus', syncFromAnotherTab);
+      document.removeEventListener('visibilitychange', syncWhenVisible);
+      if (authChannelRef.current === channel) authChannelRef.current = null;
+      channel?.removeEventListener('message', syncFromAnotherTab);
+      channel?.close();
+    };
+  }, [synchronizeSession]);
 
   const refreshAuthStatus = useCallback(async () => {
     authStatusRequestedRef.current = true;
@@ -86,13 +232,15 @@ export function AuthProvider({ children }) {
     const authState = params.get('auth');
     if (authState === 'error') {
       setAuthMessage('Sign-in could not be completed. Please try again.');
+      setAuthMessageTone('error');
       setAuthModalOpen(true);
       refreshAuthStatus().catch(() => {});
     }
   }, [refreshAuthStatus]);
 
-  const openAuth = useCallback((message = '', intent = 'login') => {
+  const openAuth = useCallback((message = '', intent = 'login', tone = 'info') => {
     setAuthMessage(message);
+    setAuthMessageTone(message ? tone : '');
     setAuthIntent(intent === 'signup' ? 'signup' : 'login');
     setEmailChallenge(null);
     setAuthModalOpen(true);
@@ -101,23 +249,47 @@ export function AuthProvider({ children }) {
     }
   }, [authStatus.error, refreshAuthStatus]);
 
+  const requireAuth = useCallback(({
+    message = 'Log in or create an account to continue securely.',
+    intent = 'login',
+    onAuthenticated,
+    onAccountMismatch,
+    force = false,
+  } = {}) => {
+    if (user && !sessionInvalid && !force) return true;
+    pendingAuthActionRef.current = typeof onAuthenticated === 'function'
+      ? {
+        action: onAuthenticated,
+        expectedUserId: force || sessionInvalid ? String(user?.id || '') : '',
+        onAccountMismatch,
+      }
+      : null;
+    if (force) setSessionInvalid(true);
+    openAuth(message, intent, 'info');
+    return false;
+  }, [openAuth, sessionInvalid, user]);
+
   const closeAuth = useCallback(() => {
     if (authenticating) return;
     setAuthModalOpen(false);
     setAuthMessage('');
+    setAuthMessageTone('');
     setEmailChallenge(null);
     setAuthMethod('');
+    pendingAuthActionRef.current = null;
   }, [authenticating]);
 
   const runAuthentication = useCallback(async (method, operation, fallbackMessage) => {
     if (authInFlightRef.current) {
       const busyError = new Error('Another sign-in is already in progress. Please wait a moment.');
       setAuthMessage(busyError.message);
+      setAuthMessageTone('error');
       throw busyError;
     }
     const generation = ++authGenerationRef.current;
     authInFlightRef.current = generation;
     setAuthMessage('');
+    setAuthMessageTone('');
     setAuthenticating(true);
     setAuthMethod(method);
     try {
@@ -128,6 +300,9 @@ export function AuthProvider({ children }) {
         updateUser(nextUser);
         setEmailChallenge(null);
         setAuthModalOpen(false);
+        setAuthMessage('');
+        setAuthMessageTone('');
+        publishAuthChange();
       }
       return nextUser;
     } catch (error) {
@@ -137,6 +312,7 @@ export function AuthProvider({ children }) {
       if (generation === authGenerationRef.current) {
         if (error.code === 'ACCOUNT_LINK_REQUIRED') setAuthIntent('login');
         setAuthMessage(message);
+        setAuthMessageTone('error');
       }
       throw error;
     } finally {
@@ -147,7 +323,7 @@ export function AuthProvider({ children }) {
         setLoading(false);
       }
     }
-  }, [updateUser]);
+  }, [publishAuthChange, updateUser]);
 
   const authenticateGoogle = useCallback(
     (credential) => runAuthentication(
@@ -162,11 +338,13 @@ export function AuthProvider({ children }) {
     if (authInFlightRef.current) {
       const busyError = new Error('Another sign-in is already in progress. Please wait a moment.');
       setAuthMessage(busyError.message);
+      setAuthMessageTone('error');
       throw busyError;
     }
     const operationToken = Symbol('email-start');
     authInFlightRef.current = operationToken;
     setAuthMessage('');
+    setAuthMessageTone('');
     setAuthenticating(true);
     setAuthMethod('email');
     try {
@@ -185,6 +363,7 @@ export function AuthProvider({ children }) {
     } catch (error) {
       if (authInFlightRef.current === operationToken) {
         setAuthMessage(error.message || 'The email verification code could not be sent. Please try again.');
+        setAuthMessageTone('error');
       }
       throw error;
     } finally {
@@ -208,6 +387,7 @@ export function AuthProvider({ children }) {
   const resetEmailChallenge = useCallback(() => {
     setEmailChallenge(null);
     setAuthMessage('');
+    setAuthMessageTone('');
   }, []);
 
   const authenticateDemo = useCallback(
@@ -225,13 +405,18 @@ export function AuthProvider({ children }) {
     setAuthenticating(false);
     setAuthMethod('');
     setSigningOut(true);
+    pendingAuthActionRef.current = null;
     try {
       await api.signOut();
-      if (generation === authGenerationRef.current) updateUser(null);
+      if (generation === authGenerationRef.current) {
+        updateUser(null);
+        publishAuthChange();
+      }
       return true;
     } catch (error) {
       if (generation === authGenerationRef.current) {
         setAuthMessage('Sign-out could not be confirmed, so your session remains active. Please try again.');
+        setAuthMessageTone('error');
       }
       throw error;
     } finally {
@@ -240,14 +425,20 @@ export function AuthProvider({ children }) {
         setLoading(false);
       }
     }
-  }, [updateUser]);
+  }, [publishAuthChange, updateUser]);
+
+  const authenticatedUser = sessionInvalid ? null : user;
+  const sessionOwnerId = String(user?.id || '');
 
   const value = useMemo(
     () => ({
-      user,
+      user: authenticatedUser,
+      sessionOwnerId,
+      sessionInvalid,
       loading,
       authModalOpen,
       authMessage,
+      authMessageTone,
       authIntent,
       authenticating,
       authMethod,
@@ -255,7 +446,9 @@ export function AuthProvider({ children }) {
       authStatus,
       emailChallenge,
       refreshAuthStatus,
+      refreshSession: synchronizeSession,
       openAuth,
+      requireAuth,
       closeAuth,
       authenticateGoogle,
       startEmailAuthentication,
@@ -265,7 +458,7 @@ export function AuthProvider({ children }) {
       signOut,
       setUser: updateUser,
     }),
-    [user, loading, authModalOpen, authMessage, authIntent, authenticating, authMethod, signingOut, authStatus, emailChallenge, refreshAuthStatus, openAuth, closeAuth, authenticateGoogle, startEmailAuthentication, verifyEmailAuthentication, resetEmailChallenge, authenticateDemo, signOut, updateUser],
+    [authenticatedUser, sessionOwnerId, sessionInvalid, loading, authModalOpen, authMessage, authMessageTone, authIntent, authenticating, authMethod, signingOut, authStatus, emailChallenge, refreshAuthStatus, synchronizeSession, openAuth, requireAuth, closeAuth, authenticateGoogle, startEmailAuthentication, verifyEmailAuthentication, resetEmailChallenge, authenticateDemo, signOut, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

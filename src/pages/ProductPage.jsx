@@ -43,7 +43,7 @@ const MediaUpload = forwardRef(function MediaUpload({ onChange, onBusyChange }, 
   const [preview, setPreview] = useState('');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
-  const { user, openAuth } = useAuth();
+  const { user, requireAuth } = useAuth();
   const busy = status === 'uploading' || status === 'deleting';
 
   useEffect(() => {
@@ -119,6 +119,21 @@ const MediaUpload = forwardRef(function MediaUpload({ onChange, onBusyChange }, 
     } catch (uploadError) {
       if (!mountedRef.current) return;
       setStatus('local');
+      if (uploadError.status === 401) {
+        setError('Your session expired. Log in again to upload this preview securely.');
+        onChange({ name: selectedFile.name, pending: true });
+        requireAuth({
+          force: true,
+          message: 'Your session expired. Log in again to upload your customization photo; the preview will stay here.',
+          onAuthenticated: () => uploadSelectedFile(selectedFile),
+          onAccountMismatch: () => {
+            if (mountedRef.current) {
+              setError('You signed in to a different account. Review the preview, then choose “Try upload again” if you still want to use it.');
+            }
+          },
+        });
+        return;
+      }
       setError(`${uploadError.message} Your preview is still here; remove it or try again.`);
       onChange({ name: selectedFile.name, pending: true });
     }
@@ -164,7 +179,16 @@ const MediaUpload = forwardRef(function MediaUpload({ onChange, onBusyChange }, 
     onChange({ name: selectedFile.name, pending: true });
     if (!user) {
       setStatus('local');
-      setError('Preview ready. Sign in, then upload it securely before adding this piece.');
+      setError('Preview ready. Log in or create an account to upload it securely.');
+      requireAuth({
+        message: 'Log in or create an account to upload your customization photo securely. Your preview will stay here.',
+        onAuthenticated: () => uploadSelectedFile(selectedFile),
+        onAccountMismatch: () => {
+          if (mountedRef.current) {
+            setError('Your signed-in account changed. Review the preview, then choose “Try upload again” to continue.');
+          }
+        },
+      });
       return;
     }
     await uploadSelectedFile(selectedFile);
@@ -187,7 +211,15 @@ const MediaUpload = forwardRef(function MediaUpload({ onChange, onBusyChange }, 
   const retryUpload = async () => {
     if (!file || busy) return;
     if (!user) {
-      openAuth('Sign in to securely save your customization image.');
+      requireAuth({
+        message: 'Log in or create an account to securely save your customization image.',
+        onAuthenticated: () => uploadSelectedFile(file),
+        onAccountMismatch: () => {
+          if (mountedRef.current) {
+            setError('Your signed-in account changed. Review the preview, then choose “Try upload again” to continue.');
+          }
+        },
+      });
       return;
     }
     await uploadSelectedFile(file);
@@ -246,8 +278,24 @@ export default function ProductPage() {
   const [mediaBusy, setMediaBusy] = useState(false);
   const [mediaSubmitError, setMediaSubmitError] = useState('');
   const mediaUploadRef = useRef(null);
+  const purchaseFormRef = useRef(null);
   const { addToCart, wishlist, toggleWishlist } = useShop();
+  const { user, sessionOwnerId, requireAuth } = useAuth();
+  const currentFormOwner = String(sessionOwnerId || user?.id || '') || 'guest';
+  const [formOwner, setFormOwner] = useState('guest');
   const { products: catalog } = useCatalog();
+
+  useEffect(() => {
+    if (formOwner === currentFormOwner) return;
+    if (formOwner !== 'guest') {
+      setQuantity(1);
+      setValidated(false);
+      setCustomization(emptyCustomization());
+      setMediaBusy(false);
+      setMediaSubmitError('');
+    }
+    setFormOwner(currentFormOwner);
+  }, [currentFormOwner, formOwner]);
 
   useEffect(() => {
     let active = true;
@@ -278,7 +326,7 @@ export default function ProductPage() {
     [catalog, product],
   );
 
-  if (loading) return <RouteLoader />;
+  if (loading || (formOwner !== currentFormOwner && formOwner !== 'guest')) return <RouteLoader />;
   if (error || !product) {
     return (
       <Container className="access-state page-section">
@@ -301,6 +349,16 @@ export default function ProductPage() {
   const submit = (event) => {
     event.preventDefault();
     const form = event.currentTarget;
+    if (!user) {
+      requireAuth({
+        message: 'Log in or create an account before adding this piece to your bag. Your personalization will stay here.',
+        onAuthenticated: () => purchaseFormRef.current?.requestSubmit(),
+        onAccountMismatch: () => {
+          setMediaSubmitError('Your signed-in account changed. Review this account’s personalization before adding the piece.');
+        },
+      });
+      return;
+    }
     if (product.customizable && !form.checkValidity()) {
       event.stopPropagation();
       setValidated(true);
@@ -327,9 +385,14 @@ export default function ProductPage() {
         pending: Boolean(customization.media.pending),
       } : null,
     };
-    addToCart(product, { quantity, customization: product.customizable ? safeCustomization : {} });
-    mediaUploadRef.current?.commitAndReset();
-    setMediaSubmitError('');
+    addToCart(product, {
+      quantity,
+      customization: product.customizable ? safeCustomization : {},
+      onAdded: () => {
+        mediaUploadRef.current?.commitAndReset();
+        setMediaSubmitError('');
+      },
+    });
   };
 
   const saved = wishlist.includes(product.id);
@@ -370,7 +433,7 @@ export default function ProductPage() {
                   <span><Icon name="spark" size={15} /> {product.leadTime}</span>
                 </div>
 
-                <Form noValidate validated={validated} onSubmit={submit} className="personalization-form">
+                <Form ref={purchaseFormRef} noValidate validated={validated} onSubmit={submit} className="personalization-form">
                   {product.customizable && (
                     <fieldset>
                       <legend><span>01</span> Personalize your piece</legend>

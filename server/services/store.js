@@ -10,6 +10,7 @@ import {
   forbidden,
   notFound,
   rateLimited,
+  unauthorized,
 } from "../lib/errors.js";
 import { memoryStore } from "../lib/memory-store.js";
 import { maskPhone } from "./auth.js";
@@ -942,7 +943,7 @@ const defaultStudioSettings = () => ({
     code: env.welcomeCouponCode,
     percent: env.welcomeDiscountPercent,
     maxDiscount: env.welcomeDiscountMax,
-    delaySeconds: 5,
+    delaySeconds: 0,
   },
   shipping: {
     flatFee: env.flatShippingFee,
@@ -1449,6 +1450,14 @@ export const listBuyerOrders = async (buyerId, { status, page, limit }) => {
   return paginate(slicePage(records, page, limit).map(publicOrder), page, limit, records.length);
 };
 
+export const buyerHasOrders = async (buyerId) => {
+  const mode = await connectDatabase();
+  if (mode === "mongodb") {
+    return Boolean(await Order.exists({ buyerId }));
+  }
+  return Boolean(memoryStore.findOne("orders", (order) => order.buyerId === buyerId));
+};
+
 export const listAllOrders = async ({ status, page, limit }) => {
   const mode = await connectDatabase();
   if (mode === "mongodb") {
@@ -1578,8 +1587,15 @@ export const updateOrderStatus = async (id, { status, note }) => {
 };
 
 export const createCustomInquiry = async (input, user) => {
+  if (!user?.id || !user?.email) throw unauthorized();
   const mode = assertWritable(await connectDatabase());
-  const record = { ...input, userId: user?.id || "", status: "new", adminNote: "" };
+  const record = {
+    ...input,
+    userId: user.id,
+    email: user.email,
+    status: "new",
+    adminNote: "",
+  };
   return mode === "mongodb"
     ? plain(await CustomInquiry.create(record))
     : memoryStore.create("customInquiries", record);
@@ -1639,9 +1655,17 @@ export const listCustomInquiries = (query) =>
 export const updateCustomInquiry = (id, input) =>
   updateInbox("customInquiries", CustomInquiry, id, input, "Custom inquiry");
 
-export const createContact = async (input) => {
+export const createContact = async (input, user) => {
+  if (!user?.id || !user?.email) throw unauthorized();
   const mode = assertWritable(await connectDatabase());
-  const record = { ...input, phone: input.phone || "", status: "new", adminNote: "" };
+  const record = {
+    ...input,
+    userId: user.id,
+    email: user.email,
+    phone: input.phone || "",
+    status: "new",
+    adminNote: "",
+  };
   return mode === "mongodb" ? plain(await Contact.create(record)) : memoryStore.create("contacts", record);
 };
 

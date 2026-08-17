@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Button from 'react-bootstrap/Button';
 import Modal from 'react-bootstrap/Modal';
 import { useLocation } from 'react-router-dom';
@@ -8,45 +8,55 @@ import { useShop } from '../context/ShopContext';
 
 const DISMISSED_KEY = 'gnw-first-offer-dismissed';
 const CLAIMED_KEY = 'gnw-first-offer-claimed';
+const hasSessionFlag = (key) => {
+  try {
+    return window.sessionStorage.getItem(key) === 'true';
+  } catch {
+    return false;
+  }
+};
 
 export default function OfferPopup() {
-  const [show, setShow] = useState(false);
+  const [dismissed, setDismissed] = useState(() => hasSessionFlag(DISMISSED_KEY));
   const location = useLocation();
-  const { authModalOpen, user } = useAuth();
+  const { authModalOpen, loading: authLoading, user } = useAuth();
   const { notify, welcomeOffer, claimedOfferCode, claimWelcomeOffer } = useShop();
   const popup = welcomeOffer?.popup || welcomeOffer || {};
   const enabled = welcomeOffer?.enabled ?? popup.enabled ?? true;
   const eligible = welcomeOffer?.eligible ?? true;
   const code = String(welcomeOffer?.code || popup.code || 'FIRST10').toUpperCase();
   const percent = Number(welcomeOffer?.percent ?? popup.percent ?? 10);
-  const delaySeconds = Math.max(0, Number(popup.delaySeconds ?? welcomeOffer?.popupDelaySeconds ?? 7.5));
-  const claimed = Boolean(claimedOfferCode || window.sessionStorage.getItem(CLAIMED_KEY) === 'true');
+  const claimed = Boolean(claimedOfferCode || hasSessionFlag(CLAIMED_KEY));
   const suppressed = authModalOpen || location.pathname.startsWith('/admin') || location.pathname.startsWith('/account') || user?.role === 'admin';
-
-  useEffect(() => {
-    if (suppressed) {
-      setShow(false);
-      return undefined;
-    }
-    if (!welcomeOffer || !enabled || !eligible || window.sessionStorage.getItem(DISMISSED_KEY) || claimed) return undefined;
-    const timer = window.setTimeout(() => setShow(true), delaySeconds * 1000);
-    return () => window.clearTimeout(timer);
-  }, [claimed, delaySeconds, eligible, enabled, suppressed, welcomeOffer]);
+  const viewer = welcomeOffer?.viewer;
+  const viewerMatches = viewer
+    ? String(viewer.id || '') === String(user?.id || '')
+    : !authLoading;
+  const show = Boolean(
+    welcomeOffer && enabled && eligible && viewerMatches && !dismissed && !claimed && !suppressed,
+  );
 
   const dismiss = () => {
-    window.sessionStorage.setItem(DISMISSED_KEY, 'true');
-    setShow(false);
+    try {
+      window.sessionStorage.setItem(DISMISSED_KEY, 'true');
+    } catch {
+      // Local state still keeps the dialog closed for the current page.
+    }
+    setDismissed(true);
   };
 
   const claim = async () => {
     claimWelcomeOffer(code);
+    if (!navigator.clipboard?.writeText) {
+      notify(`Your offer code is ${code}. Eligibility is checked at checkout.`);
+      return;
+    }
     try {
-      await navigator.clipboard?.writeText(code);
+      await navigator.clipboard.writeText(code);
       notify(`Offer code ${code} copied. Eligibility is checked at checkout.`);
     } catch {
       notify(`Your offer code is ${code}. Eligibility is checked at checkout.`);
     }
-    setShow(false);
   };
 
   return (

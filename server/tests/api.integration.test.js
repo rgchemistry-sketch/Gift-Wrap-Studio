@@ -24,6 +24,12 @@ const [{ default: app }, { resetMemoryStore }, { createWebApp }] = await Promise
 
 beforeEach(() => resetMemoryStore());
 
+const authenticatedBuyer = async () => {
+  const buyer = request.agent(app);
+  const login = await buyer.post("/api/auth/demo").send({ role: "buyer" }).expect(200);
+  return { buyer, user: login.body.data.user };
+};
+
 test("the single-process web app serves the SPA without swallowing API 404s", async (context) => {
   const clientDirectory = await mkdtemp(path.join(tmpdir(), "gift-n-wrap-client-"));
   context.after(() => rm(clientDirectory, { recursive: true, force: true }));
@@ -79,7 +85,8 @@ test("catalog seeds demo products and supports detail lookup", async () => {
 });
 
 test("validation errors use the stable API error envelope", async () => {
-  const response = await request(app)
+  const { buyer } = await authenticatedBuyer();
+  const response = await buyer
     .post("/api/contact")
     .send({ name: "A", email: "not-an-email", subject: "Hi", message: "short" })
     .expect(422);
@@ -89,8 +96,50 @@ test("validation errors use the stable API error envelope", async () => {
   assert.ok(response.body.error.requestId);
 });
 
+test("orders, contact messages, and custom briefs require an authenticated account", async () => {
+  const order = await request(app).post("/api/orders").send({}).expect(401);
+  assert.equal(order.body.error.code, "UNAUTHORIZED");
+
+  const contact = await request(app)
+    .post("/api/contact")
+    .send({
+      name: "Anonymous Buyer",
+      email: "anonymous@example.com",
+      subject: "Product question",
+      message: "Please tell me more about this personalized product.",
+    })
+    .expect(401);
+  assert.equal(contact.body.error.code, "UNAUTHORIZED");
+
+  const inquiry = await request(app)
+    .post("/api/custom-inquiries")
+    .send({
+      name: "Anonymous Buyer",
+      email: "anonymous@example.com",
+      phone: "9876543210",
+      productType: "Name plaque",
+      description: "Please make a custom resin name plaque for my home.",
+    })
+    .expect(401);
+  assert.equal(inquiry.body.error.code, "UNAUTHORIZED");
+});
+
+test("protected writes reject a stale client after the signed-in account changes", async () => {
+  const { buyer, user } = await authenticatedBuyer();
+  const staleUserId = `${user.id}-previous-account`;
+  for (const pathName of ["/api/orders", "/api/contact", "/api/custom-inquiries"]) {
+    const response = await buyer
+      .post(pathName)
+      .set("X-Expected-User-Id", staleUserId)
+      .send({})
+      .expect(409);
+    assert.equal(response.body.error.code, "SESSION_IDENTITY_CHANGED");
+  }
+});
+
 test("contact messages accept an optional Indian trunk prefix and store one canonical mobile", async () => {
-  const submitted = await request(app)
+  const { buyer, user } = await authenticatedBuyer();
+  const submitted = await buyer
     .post("/api/contact")
     .send({
       name: "Arpit Agarwal",
@@ -106,8 +155,10 @@ test("contact messages accept an optional Indian trunk prefix and store one cano
   const inbox = await admin.get("/api/admin/contacts").expect(200);
   const stored = inbox.body.data.find((message) => message.id === submitted.body.data.id);
   assert.equal(stored.phone, "+919588281126");
+  assert.equal(stored.userId, user.id);
+  assert.equal(stored.email, user.email);
 
-  await request(app)
+  await buyer
     .post("/api/contact")
     .send({
       name: "No Phone Buyer",
@@ -119,7 +170,8 @@ test("contact messages accept an optional Indian trunk prefix and store one cano
 });
 
 test("the storefront inquiry payload is normalized and accepted", async () => {
-  const response = await request(app)
+  const { buyer, user } = await authenticatedBuyer();
+  const response = await buyer
     .post("/api/custom-inquiries")
     .send({
       name: "Aarav Sharma",
@@ -137,6 +189,9 @@ test("the storefront inquiry payload is normalized and accepted", async () => {
 
   assert.equal(response.body.data.status, "new");
   assert.ok(response.body.data.id);
+  const mine = await buyer.get("/api/custom-inquiries/mine").expect(200);
+  assert.equal(mine.body.data[0].userId, user.id);
+  assert.equal(mine.body.data[0].email, user.email);
 });
 
 test("demo buyer auth, server-priced first order, and one-time offer work together", async () => {
@@ -144,6 +199,11 @@ test("demo buyer auth, server-priced first order, and one-time offer work togeth
   const login = await buyer.post("/api/auth/demo").send({ role: "buyer" }).expect(200);
   assert.equal(login.body.data.user.role, "buyer");
   assert.match(login.headers["set-cookie"][0], /HttpOnly/i);
+
+  const availableOffer = await buyer.get("/api/offers/welcome").expect(200);
+  assert.equal(availableOffer.body.data.eligible, true);
+  assert.equal(availableOffer.body.data.viewer.authenticated, true);
+  assert.equal(availableOffer.body.data.viewer.id, login.body.data.user.id);
 
   const orderPayload = {
     items: [{ slug: "pressed-flower-name-plaque", quantity: 1, customization: "Name: Mira" }],
@@ -192,6 +252,10 @@ test("demo buyer auth, server-priced first order, and one-time offer work togeth
 
   const repeated = await buyer.post("/api/orders").send(orderPayload).expect(409);
   assert.equal(repeated.body.error.code, "CONFLICT");
+
+  const consumedOffer = await buyer.get("/api/offers/welcome").expect(200);
+  assert.equal(consumedOffer.body.data.eligible, false);
+  assert.equal(consumedOffer.body.data.viewer.id, login.body.data.user.id);
 });
 
 test("logout clears the session and protected account access", async () => {
@@ -323,6 +387,7 @@ test("expired optional auth is cleared and public routes remain usable", async (
     .set("Cookie", "gnw_session=not-a-valid-token")
     .expect(200);
   assert.equal(offer.body.data.code, "FIRST10");
+  assert.deepEqual(offer.body.data.viewer, { authenticated: false, id: "" });
   assert.match(offer.headers["set-cookie"][0], /gnw_session=;/);
 });
 
@@ -359,7 +424,8 @@ test("buyer inquiry history never exposes the administrator note", async () => {
 });
 
 test("strict India contact, PIN, numeric, and URL validation rejects ambiguous input", async () => {
-  const invalidPhone = await request(app)
+  const { buyer } = await authenticatedBuyer();
+  const invalidPhone = await buyer
     .post("/api/contact")
     .send({
       name: "Test User",
@@ -377,7 +443,7 @@ test("strict India contact, PIN, numeric, and URL validation rejects ambiguous i
     },
   );
 
-  await request(app)
+  await buyer
     .post("/api/contact")
     .send({
       name: "Test User",
@@ -388,7 +454,7 @@ test("strict India contact, PIN, numeric, and URL validation rejects ambiguous i
     })
     .expect(422);
 
-  await request(app)
+  await buyer
     .post("/api/custom-inquiries")
     .send({
       name: "Test User",

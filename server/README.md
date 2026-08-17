@@ -59,12 +59,12 @@ Public:
   the account's other issued sessions.
 - Login and signup are distinct intents. Signup rejects an existing identity, login rejects a
   missing identity, and matching email text alone never silently links two provider accounts.
-- `POST /api/custom-inquiries`; authenticated buyers can also use `GET /api/custom-inquiries/mine`
-- `POST /api/contact`
 
 Authenticated buyer:
 
 - `POST /api/orders`, `GET /api/orders/my`, `GET /api/orders/:id`. Send a stable `Idempotency-Key` header (8-100 letters, digits, `.`, `_`, `:`, or `-`) for each checkout attempt; a safe retry returns the original order with `Idempotency-Replayed: true`.
+- `POST /api/custom-inquiries`, `GET /api/custom-inquiries/mine`. The server binds each brief to the verified session account and never trusts a submitted email as account identity.
+- `POST /api/contact`. The saved message is linked to the verified session account.
 - `POST /api/uploads/signature` with `{ purpose: "custom-inquiries" | "orders" | "profiles" }`.
   Every returned snake_case field (`folder`, `public_id`, `overwrite`, `upload_preset`,
   `allowed_formats`, and `transformation`) is signed and must be included in the Cloudinary form.

@@ -10,9 +10,40 @@ const WISHLIST_KEY = 'gnw-wishlist';
 const OFFER_CLAIMED_KEY = 'gnw-first-offer-claimed';
 const OFFER_CODE_KEY = 'gnw-first-offer-code';
 
+// Start the small, eligibility-aware offer request as soon as the application
+// bundle executes. Keeping the settled promise here means React StrictMode's
+// development remount cannot issue the request twice.
+let welcomeOfferBootstrap;
+
+const isAdminPath = (pathname = '') => pathname === '/admin' || pathname.startsWith('/admin/');
+
+const settledRequest = (request) => request.then(
+  (value) => ({ status: 'fulfilled', value }),
+  (reason) => ({ status: 'rejected', reason }),
+);
+
+const primeWelcomeOffer = () => {
+  if (!welcomeOfferBootstrap) {
+    welcomeOfferBootstrap = settledRequest(api.getWelcomeOffer());
+  }
+  return welcomeOfferBootstrap;
+};
+
+if (typeof window !== 'undefined' && !isAdminPath(window.location.pathname)) {
+  primeWelcomeOffer();
+}
+
 function readStorage(key, fallback) {
   try {
     return JSON.parse(window.localStorage.getItem(key) || JSON.stringify(fallback));
+  } catch {
+    return fallback;
+  }
+}
+
+function readSessionValue(key, fallback = '') {
+  try {
+    return window.sessionStorage.getItem(key) || fallback;
   } catch {
     return fallback;
   }
@@ -55,9 +86,9 @@ function makeLineId(product, customization = {}) {
 }
 
 export function ShopProvider({ children }) {
-  const { user, loading: authLoading } = useAuth();
+  const { user, sessionOwnerId, loading: authLoading, requireAuth } = useAuth();
   const { pathname } = useLocation();
-  const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
+  const isAdminRoute = isAdminPath(pathname);
   const [cart, setCart] = useState(() => readStorage(cartKeyFor(), []));
   const [wishlist, setWishlist] = useState(() => readStorage(WISHLIST_KEY, []));
   const [toasts, setToasts] = useState([]);
@@ -65,11 +96,12 @@ export function ShopProvider({ children }) {
   const [studioSettingsState, setStudioSettingsState] = useState({ loading: true, error: '' });
   const [welcomeOffer, setWelcomeOffer] = useState(null);
   const [claimedOfferCode, setClaimedOfferCode] = useState(
-    () => window.sessionStorage.getItem(OFFER_CODE_KEY) || '',
+    () => readSessionValue(OFFER_CODE_KEY),
   );
   const releasingUploadIdsRef = useRef(new Set());
   const cartRef = useRef(cart);
   const cartStorageKeyRef = useRef(cartKeyFor());
+  const welcomeOfferRef = useRef(null);
 
   useEffect(() => {
     cartRef.current = cart;
@@ -77,7 +109,7 @@ export function ShopProvider({ children }) {
 
   useEffect(() => {
     if (authLoading) return;
-    const nextOwnerId = String(user?.id || '');
+    const nextOwnerId = String(sessionOwnerId || user?.id || '');
     const previousOwnerId = window.localStorage.getItem(CART_OWNER_KEY) || '';
     const guestKey = cartKeyFor();
     const nextKey = cartKeyFor(nextOwnerId);
@@ -130,7 +162,7 @@ export function ShopProvider({ children }) {
     setCart(nextCart);
     if (nextCart.length) window.localStorage.setItem(nextKey, JSON.stringify(nextCart));
     else window.localStorage.removeItem(nextKey);
-  }, [authLoading, user?.id]);
+  }, [authLoading, sessionOwnerId, user?.id]);
 
   const applyStudioSettings = useCallback((value) => {
     if (value) {
@@ -154,28 +186,79 @@ export function ShopProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    // The protected workspace has its own settings loader. Keep storefront-only
-    // settings and offer requests off the admin's critical rendering path.
+    // The protected workspace has its own settings loader. Storefront settings
+    // are independent from offer eligibility, so neither response waits for the
+    // other before it can update the page.
     if (isAdminRoute) return undefined;
     let active = true;
     setStudioSettingsState((current) => ({ ...current, loading: true, error: '' }));
-    Promise.allSettled([api.getPublicSettings(), api.getWelcomeOffer()]).then(([settingsResult, offerResult]) => {
-      if (!active) return;
-      if (settingsResult.status === 'fulfilled') {
-        setStudioSettings(settingsResult.value.data || settingsResult.value);
+    api.getPublicSettings()
+      .then((result) => {
+        if (!active) return;
+        setStudioSettings(result.data || result);
         setStudioSettingsState({ loading: false, error: '' });
-      } else {
+      })
+      .catch((error) => {
+        if (!active) return;
         setStudioSettingsState({
           loading: false,
-          error: settingsResult.reason?.message || 'Settings unavailable',
+          error: error.message || 'Settings unavailable',
         });
-      }
-      if (offerResult.status === 'fulfilled') {
-        setWelcomeOffer(offerResult.value.data || offerResult.value);
+      });
+    return () => { active = false; };
+  }, [isAdminRoute]);
+
+  useEffect(() => {
+    if (isAdminRoute) return undefined;
+    let active = true;
+    const viewerId = String(user?.id || '');
+    const loadedOffer = welcomeOfferRef.current;
+    const resolvedViewerId = loadedOffer?.viewer
+      ? String(loadedOffer.viewer.id || '')
+      : null;
+    const offerMatchesViewer = resolvedViewerId !== null && resolvedViewerId === viewerId;
+
+    // The bootstrap response is already in flight on an initial storefront
+    // visit. A login, logout or account change always receives a fresh,
+    // server-evaluated eligibility result.
+    const offerRequest = !loadedOffer
+      ? primeWelcomeOffer()
+      : offerMatchesViewer
+        ? null
+        : settledRequest(api.getWelcomeOffer());
+
+    if (!offerMatchesViewer && loadedOffer) {
+      welcomeOfferRef.current = null;
+      setWelcomeOffer(null);
+    }
+    offerRequest?.then((result) => {
+      if (!active) return;
+      if (result.status === 'fulfilled') {
+        const nextOffer = result.value.data || result.value;
+        const responseViewerId = nextOffer?.viewer
+          ? String(nextOffer.viewer.id || '')
+          : null;
+        // During the initial auth check the response is itself authoritative.
+        // After auth has settled, discard any response raced by a login/logout.
+        if (!authLoading && responseViewerId !== viewerId) {
+          settledRequest(api.getWelcomeOffer()).then((retryResult) => {
+            if (!active || retryResult.status !== 'fulfilled') return;
+            const retriedOffer = retryResult.value.data || retryResult.value;
+            if (String(retriedOffer?.viewer?.id || '') !== viewerId) return;
+            welcomeOfferRef.current = retriedOffer;
+            setWelcomeOffer(retriedOffer);
+          });
+          return;
+        }
+        welcomeOfferRef.current = nextOffer;
+        setWelcomeOffer(nextOffer);
+      } else if (offerRequest === welcomeOfferBootstrap) {
+        // Permit a later storefront navigation to retry a failed bootstrap.
+        welcomeOfferBootstrap = undefined;
       }
     });
     return () => { active = false; };
-  }, [isAdminRoute]);
+  }, [authLoading, isAdminRoute, user?.id]);
 
   const persistCart = useCallback((next) => {
     cartRef.current = next;
@@ -186,7 +269,20 @@ export function ShopProvider({ children }) {
 
   const notify = useCallback((message, tone = 'success') => {
     const id = `${Date.now()}-${Math.random()}`;
-    setToasts((current) => [...current, { id, message, tone }]);
+    const normalizedMessage = String(message || 'Your request has been updated.').trim();
+    const normalizedTone = ['success', 'error', 'warning', 'info', 'neutral'].includes(tone)
+      ? tone
+      : 'neutral';
+    setToasts((current) => {
+      const withoutDuplicate = current.filter((toast) => (
+        toast.message !== normalizedMessage || toast.tone !== normalizedTone
+      ));
+      return [...withoutDuplicate.slice(-3), {
+        id,
+        message: normalizedMessage,
+        tone: normalizedTone,
+      }];
+    });
     return id;
   }, []);
 
@@ -197,8 +293,12 @@ export function ShopProvider({ children }) {
   const claimWelcomeOffer = useCallback((code) => {
     const normalizedCode = String(code || '').trim().toUpperCase();
     if (!normalizedCode) return;
-    window.sessionStorage.setItem(OFFER_CLAIMED_KEY, 'true');
-    window.sessionStorage.setItem(OFFER_CODE_KEY, normalizedCode);
+    try {
+      window.sessionStorage.setItem(OFFER_CLAIMED_KEY, 'true');
+      window.sessionStorage.setItem(OFFER_CODE_KEY, normalizedCode);
+    } catch {
+      // The in-memory claim still works when privacy settings block storage.
+    }
     setClaimedOfferCode(normalizedCode);
   }, []);
 
@@ -216,27 +316,43 @@ export function ShopProvider({ children }) {
   }, [notify]);
 
   const addToCart = useCallback(
-    (product, { quantity = 1, customization = {} } = {}) => {
-      const lineId = makeLineId(product, customization);
-      const next = [...cart];
-      const existingIndex = next.findIndex((item) => item.lineId === lineId);
-      if (existingIndex >= 0) {
-        next[existingIndex] = {
-          ...next[existingIndex],
-          quantity: Math.min(10, next[existingIndex].quantity + quantity),
-        };
-      } else {
-        next.push({
-          lineId,
-          product,
-          quantity,
-          customization,
+    (product, { quantity = 1, customization = {}, onAdded } = {}) => {
+      const commit = () => {
+        const lineId = makeLineId(product, customization);
+        const next = [...cartRef.current];
+        const existingIndex = next.findIndex((item) => item.lineId === lineId);
+        if (existingIndex >= 0) {
+          next[existingIndex] = {
+            ...next[existingIndex],
+            quantity: Math.min(10, next[existingIndex].quantity + quantity),
+          };
+        } else {
+          next.push({
+            lineId,
+            product,
+            quantity,
+            customization,
+          });
+        }
+        persistCart(next);
+        notify(`${product.title} was added to your bag.`);
+        onAdded?.();
+      };
+
+      if (!user) {
+        requireAuth({
+          message: 'Log in or create an account before adding a piece to your bag. Your choices will stay right here.',
+          onAuthenticated: commit,
+          onAccountMismatch: () => {
+            notify('Your signed-in account changed. Review this account’s bag before adding the piece again.', 'warning');
+          },
         });
+        return false;
       }
-      persistCart(next);
-      notify(`${product.title} was added to your bag.`);
+      commit();
+      return true;
     },
-    [cart, notify, persistCart],
+    [notify, persistCart, requireAuth, user],
   );
 
   const updateQuantity = useCallback(

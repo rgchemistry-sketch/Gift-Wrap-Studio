@@ -21,7 +21,7 @@ const defaults = {
     code: 'FIRST10',
     percent: 10,
     maxDiscount: 500,
-    delaySeconds: 5,
+    delaySeconds: 0,
   },
   shipping: { flatFee: 99, freeThreshold: 2000, bulkThreshold: 10 },
   announcement: { enabled: true, text: 'Every piece handmade with care', linkLabel: 'PAN India delivery', linkUrl: '/shop' },
@@ -258,7 +258,9 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
           code: draft.offer.code,
           percent: numericPayloadValue(draft.offer.percent),
           maxDiscount: numericPayloadValue(draft.offer.maxDiscount),
-          delaySeconds: numericPayloadValue(draft.offer.delaySeconds),
+          // Eligibility is already checked by the server, so an artificial
+          // storefront delay only makes the promotion feel unresponsive.
+          delaySeconds: 0,
         },
         shipping: {
           flatFee: numericPayloadValue(draft.shipping.flatFee),
@@ -302,7 +304,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
       <div className="settings-editor__forms">
         <section className="admin-panel setting-card">
           <div className="setting-card__head"><span><Icon name="spark"/></span><div><p className="eyebrow">Storefront moment</p><h3>Welcome offer popup</h3><p>Control the first message new customers see.</p></div><Form.Check type="switch" id="offer-enabled" label={draft.offer.enabled ? 'Live' : 'Hidden'} checked={draft.offer.enabled} onChange={(event) => update('offer', 'enabled', event.target.checked)}/></div>
-          <div className="admin-setting-row"><Form.Group controlId="offer-eyebrow"><Form.Label>Eyebrow</Form.Label><Form.Control maxLength={80} value={draft.offer.eyebrow} onChange={(event) => update('offer', 'eyebrow', event.target.value)}/></Form.Group><Form.Group controlId="offer-delay"><Form.Label>Popup delay (seconds)</Form.Label><Form.Control required type="number" min="0" max="60" step="1" value={draft.offer.delaySeconds} onChange={(event) => update('offer', 'delaySeconds', numericDraftValue(event))}/></Form.Group></div>
+          <div className="admin-setting-row"><Form.Group controlId="offer-eyebrow"><Form.Label>Eyebrow</Form.Label><Form.Control maxLength={80} value={draft.offer.eyebrow} onChange={(event) => update('offer', 'eyebrow', event.target.value)}/></Form.Group><Form.Group controlId="offer-timing"><Form.Label>Popup timing</Form.Label><Form.Control readOnly value="Immediately after eligibility is confirmed"/><Form.Text>No artificial delay is added.</Form.Text></Form.Group></div>
           <Form.Group controlId="offer-title"><Form.Label>Headline</Form.Label><Form.Control maxLength={140} value={draft.offer.title} onChange={(event) => update('offer', 'title', event.target.value)}/></Form.Group>
           <Form.Group controlId="offer-body"><Form.Label>Message</Form.Label><Form.Control as="textarea" rows={3} maxLength={300} value={draft.offer.body} onChange={(event) => update('offer', 'body', event.target.value)}/></Form.Group>
           <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="offer-code"><Form.Label>Offer code</Form.Label><Form.Control required value={draft.offer.code} onChange={(event) => update('offer', 'code', event.target.value.toUpperCase().replace(/\s/g, ''))}/></Form.Group><Form.Group controlId="offer-percent"><Form.Label>Discount (%)</Form.Label><Form.Control required type="number" min="0" max="100" step="1" value={draft.offer.percent} onChange={(event) => update('offer', 'percent', numericDraftValue(event))}/></Form.Group><Form.Group controlId="offer-max-discount"><Form.Label>Maximum saving (₹)</Form.Label><Form.Control required type="number" min="0" max="100000" step="1" value={draft.offer.maxDiscount} onChange={(event) => update('offer', 'maxDiscount', numericDraftValue(event))}/></Form.Group></div>
@@ -384,7 +386,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
             <h3>{draft.offer.title}</h3>
             <p>{draft.offer.body}</p>
             <div><strong>{draft.offer.percent}% off</strong><code>{draft.offer.code}</code></div>
-            <small>Appears after {draft.offer.delaySeconds} seconds · maximum saving ₹{Number(draft.offer.maxDiscount || 0).toLocaleString('en-IN')}</small>
+            <small>Appears as soon as eligibility is confirmed · maximum saving ₹{Number(draft.offer.maxDiscount || 0).toLocaleString('en-IN')}</small>
             {!draft.offer.enabled && <b className="offer-preview__hidden">Popup hidden</b>}
           </div>
           {instagramPreview?.url && <div className="settings-preview-note settings-social-preview">
