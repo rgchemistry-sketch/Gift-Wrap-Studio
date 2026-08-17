@@ -8,10 +8,11 @@ Required for production authentication:
 
 - `MONGODB_URI` and optionally `MONGODB_DATABASE` (defaults to `gift_n_wrap`)
 - `JWT_SECRET` (at least 32 random characters in production)
-- Passwordless email: `RESEND_API_KEY`, a domain-verified fixed `AUTH_EMAIL_FROM`, and a separate
-  `EMAIL_OTP_SECRET` of at least 32 random characters
-- One or more social providers: `GOOGLE_CLIENT_ID`; `FACEBOOK_APP_ID` plus
-  `FACEBOOK_APP_SECRET`; and/or `APPLE_CLIENT_ID`
+- Passwordless email: `RESEND_API_KEY`, domain-verified
+  `AUTH_EMAIL_FROM="Gift N Wrap <info@giftnwrapstudio.com>"`,
+  `AUTH_EMAIL_REPLY_TO=info@giftnwrapstudio.com`, and a separate `EMAIL_OTP_SECRET` of at least
+  32 random characters
+- Google identity verification: `GOOGLE_CLIENT_ID`
 - `ADMIN_EMAIL` (the only email that receives the `admin` role)
 - `CLIENT_ORIGINS` (comma-separated origins when the frontend and API are on different hosts)
 
@@ -30,8 +31,6 @@ Optional tuning:
 - `AUTH_COOKIE_DAYS=7`, `COOKIE_SAME_SITE=lax`, `AUTH_COOKIE_NAME=gnw_session`
 - `EMAIL_OTP_CHALLENGE_MINUTES=10`, `EMAIL_OTP_RESEND_SECONDS=60`,
   `EMAIL_OTP_MAX_ATTEMPTS=5`, `AUTH_EMAIL_REPLY_TO`
-- `FACEBOOK_GRAPH_VERSION=v25.0`, `AUTH_NONCE_MINUTES=5`
-- `PHONE_AUTH_CHALLENGE_MINUTES=10` (2–30 minutes; challenges are single-use and allow five checks)
 - `FLAT_SHIPPING_FEE=99`, `FREE_SHIPPING_THRESHOLD=2000`, `BULK_ORDER_THRESHOLD=10`
 - `WELCOME_COUPON_CODE=FIRST10`, `WELCOME_DISCOUNT_PERCENT=10`, `WELCOME_DISCOUNT_MAX=500`
 - `ALLOW_DEMO_AUTH=true` enables `POST /api/auth/demo` only outside production. Never enable this on a public production deployment.
@@ -50,20 +49,16 @@ Public:
 - `GET /api/health`
 - `GET /api/products`, `GET /api/products/categories`, `GET /api/products/:slug`
 - `GET /api/offers/welcome`
-- `GET /api/auth/status` returns which email/social providers are ready without exposing secrets.
+- `GET /api/auth/status` returns whether Google and email-code sign-in are ready without exposing secrets.
 - `POST /api/auth/email/start` with `{ email, name?, intent: "login" | "signup" }`, then
   `POST /api/auth/email/verify` with `{ challengeId, code }`. Codes are HMAC-protected at rest,
   expire, have bounded checks/resends, and are consumed once. The sender is server-controlled.
-- `POST /api/auth/google`, `POST /api/auth/facebook`, and `POST /api/auth/apple` verify provider
-  credentials on the server. Apple first requires `POST /api/auth/apple/nonce`; its nonce is
-  short-lived and single-use.
+- `POST /api/auth/google` verifies Google credentials on the server.
 - `GET /api/auth/me` reads the secure cookie session. `POST /api/auth/logout` always clears the
   current cookie and, when the user record is reachable, increments the session version to revoke
   the account's other issued sessions.
 - Login and signup are distinct intents. Signup rejects an existing identity, login rejects a
   missing identity, and matching email text alone never silently links two provider accounts.
-- Optional legacy SMS routes remain at `/api/auth/phone/*` when Twilio Verify is configured, but
-  the storefront's primary passwordless flow is email.
 - `POST /api/custom-inquiries`; authenticated buyers can also use `GET /api/custom-inquiries/mine`
 - `POST /api/contact`
 
@@ -104,6 +99,6 @@ MongoDB Atlas (or another replica-set deployment) is required for the transactio
 
 ## Dependencies
 
-Runtime: `express`, `mongoose`, `google-auth-library`, `jose`, `jsonwebtoken`, `cookie-parser`,
+Runtime: `express`, `mongoose`, `google-auth-library`, `jsonwebtoken`, `cookie-parser`,
 `cloudinary`, `zod`, `helmet`, `cors`, `compression`, `express-rate-limit`, and `dotenv` (local
 launcher only). Tests use `supertest` and Node's built-in test runner.

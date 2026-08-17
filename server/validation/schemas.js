@@ -1,8 +1,6 @@
 import { z } from "zod";
 import {
-  FACEBOOK_PROFILE_MESSAGE,
   INSTAGRAM_PROFILE_MESSAGE,
-  normalizeFacebookProfile,
   normalizeInstagramProfile,
 } from "../../shared/social-profiles.js";
 
@@ -102,6 +100,15 @@ export const productQuerySchema = z
     featured: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
     page: integerInput({ min: 1, max: 10_000 }).default(1),
     limit: integerInput({ min: 1, max: 100 }).default(50),
+  })
+  .strict();
+
+export const adminProductQuerySchema = z
+  .object({
+    q: optionalBlank(text(1, 100)),
+    status: z.enum(["all", "current", "published", "draft", "archived"]).default("all"),
+    page: integerInput({ min: 1, max: 10_000 }).default(1),
+    limit: integerInput({ min: 1, max: 50 }).default(20),
   })
   .strict();
 
@@ -242,11 +249,6 @@ const instagramOrBlank = z
   .trim()
   .max(200)
   .refine((value) => normalizeInstagramProfile(value) !== null, INSTAGRAM_PROFILE_MESSAGE);
-const facebookOrBlank = z
-  .string()
-  .trim()
-  .max(200)
-  .refine((value) => normalizeFacebookProfile(value) !== null, FACEBOOK_PROFILE_MESSAGE);
 
 const leadTimesSettingsSchema = z
   .object({
@@ -290,7 +292,6 @@ const contactSettingsSchema = z
     email: emailOrBlank.optional(),
     phone: phoneOrBlank.optional(),
     instagram: instagramOrBlank.optional(),
-    facebook: facebookOrBlank.optional(),
   })
   .strict();
 

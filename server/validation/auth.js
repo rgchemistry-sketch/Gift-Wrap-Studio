@@ -17,19 +17,3 @@ export const emailAuthVerifySchema = z
     code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit verification code from your email"),
   })
   .strict();
-
-export const facebookLoginSchema = z
-  .object({
-    accessToken: z.string().trim().min(20).max(10_000),
-    intent,
-  })
-  .strict();
-
-export const appleLoginSchema = z
-  .object({
-    idToken: z.string().trim().min(100).max(20_000),
-    nonceId: z.string().trim().min(32).max(200),
-    name: z.string().trim().max(100).default(""),
-    intent,
-  })
-  .strict();

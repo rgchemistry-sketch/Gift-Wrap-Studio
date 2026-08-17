@@ -22,6 +22,7 @@ import {
   updateStudioSettings,
 } from "../services/store.js";
 import {
+  adminProductQuerySchema,
   adminUserQuerySchema,
   contactStatusSchema,
   createProductSchema,
@@ -46,8 +47,21 @@ adminRouter.get(
 
 adminRouter.get(
   "/products",
-  asyncHandler(async (_request, response) => {
-    response.json({ data: await listAllProductsForAdmin() });
+  validate({ query: adminProductQuerySchema }),
+  asyncHandler(async (request, response) => {
+    const result = await listAllProductsForAdmin(request.validated.query);
+    const pagination = {
+      page: result.page,
+      limit: result.limit,
+      total: result.total,
+      pages: result.totalPages,
+      totalPages: result.totalPages,
+    };
+    response.json({
+      data: result.items,
+      pagination,
+      meta: pagination,
+    });
   }),
 );
 
@@ -112,8 +126,10 @@ adminRouter.get(
   "/users",
   validate({ query: adminUserQuerySchema }),
   asyncHandler(async (request, response) => {
-    const result = await listRegisteredUsers(request.validated.query);
-    const metrics = await getRegisteredUserMetrics();
+    const [result, metrics] = await Promise.all([
+      listRegisteredUsers(request.validated.query),
+      getRegisteredUserMetrics(undefined, { includeRepeatCustomers: false }),
+    ]);
     response.json({
       data: result.items,
       metrics,

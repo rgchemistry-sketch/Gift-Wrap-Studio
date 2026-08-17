@@ -71,7 +71,7 @@ export default function AccountPage() {
     return (
       <Container className="account-signin page-section">
         <div className="account-signin__visual"><span>G<span>·</span>W</span><i aria-hidden="true">✦</i></div>
-        <div><p className="eyebrow">Your studio account</p><h1>Every thoughtful detail, remembered.</h1><p>Log in with a secure email code, Google, Facebook or Apple to keep customization details together and follow your handmade order from studio review to delivery.</p><ul className="check-list"><li><Icon name="check" /> Password-free verified sign-in</li><li><Icon name="check" /> Order and request updates</li><li><Icon name="check" /> Your bag and saved pieces stay on this device</li></ul><div className="account-signin__actions"><Button className="button-burgundy" onClick={() => openAuth('', 'signup')}>Create account <Icon name="arrow" /></Button><Button variant="outline-dark" onClick={() => openAuth('', 'login')}>Log in</Button></div><p className="privacy-note">New here? Choose Create account. Returning customers can use Log in.</p></div>
+        <div><p className="eyebrow">Your studio account</p><h1>Every thoughtful detail, remembered.</h1><p>Log in with a secure email code or Google to keep customization details together and follow your handmade order from studio review to delivery.</p><ul className="check-list"><li><Icon name="check" /> Password-free verified sign-in</li><li><Icon name="check" /> Order and request updates</li><li><Icon name="check" /> Your bag and saved pieces stay on this device</li></ul><div className="account-signin__actions"><Button className="button-burgundy" onClick={() => openAuth('', 'signup')}>Create account <Icon name="arrow" /></Button><Button variant="outline-dark" onClick={() => openAuth('', 'login')}>Log in</Button></div><p className="privacy-note">New here? Choose Create account. Returning customers can use Log in.</p></div>
       </Container>
     );
   }
@@ -133,6 +133,8 @@ function SavedPanel({ products }) {
 }
 
 function ProfilePanel({ user }) {
-  const providerLabels = (user.providers || user.authProviders || [user.lastAuthProvider]).filter(Boolean).map((provider) => ({ google: 'Google', facebook: 'Facebook', apple: 'Apple', email: 'Email code' }[provider] || provider));
+  const providerLabels = (user.providers || user.authProviders || [user.lastAuthProvider])
+    .filter(Boolean)
+    .map((provider) => ({ google: 'Google', email: 'Email code' }[provider] || 'Legacy sign-in'));
   return <Row className="g-4 account-profile"><Col lg={6}><div className="profile-card"><p className="eyebrow">Personal details</p><h2>Your verified profile</h2><dl><div><dt>Name</dt><dd>{user.name||'Not provided'}</dd></div><div><dt>Email</dt><dd>{user.email}{user.emailVerified !== false&&' · Verified'}</dd></div><div><dt>Sign-in</dt><dd>{providerLabels.length?[...new Set(providerLabels)].join(', '):'Verified account'}</dd></div><div><dt>Account type</dt><dd>{user.role==='admin'?'Studio administrator':'Buyer'}</dd></div></dl><p><Icon name="lock"/> Your identity is verified by the sign-in method you chose. We never store a password.</p></div></Col><Col lg={6}><div className="profile-card"><p className="eyebrow">Delivery addresses</p><h2>Saved for next time</h2>{user.addresses?.length?user.addresses.map((address,index)=><address key={address.id||index}>{address.label&&<strong>{address.label}</strong>}{address.line1}<br/>{address.line2&&<>{address.line2}<br/></>}{address.city}, {address.state} {address.postalCode}</address>):<div className="profile-empty"><Icon name="map"/><p>No saved address yet. Your first confirmed delivery address can appear here for a quicker next request.</p></div>}</div></Col></Row>;
 }

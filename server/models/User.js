@@ -13,7 +13,10 @@ const userSchema = new mongoose.Schema(
     phoneVerifiedAt: { type: Date },
     role: { type: String, enum: ["buyer", "admin"], default: "buyer", index: true },
     providers: {
-      type: [{ type: String, enum: ["email", "google", "facebook", "apple"] }],
+      // Do not reject an account update solely because a historical deployment
+      // recorded a provider that is no longer offered. New authentication routes
+      // can create only the providers supported by the current application.
+      type: [{ type: String, trim: true, lowercase: true, maxlength: 50 }],
       default: [],
     },
     sessionVersion: { type: Number, default: 0, min: 0 },

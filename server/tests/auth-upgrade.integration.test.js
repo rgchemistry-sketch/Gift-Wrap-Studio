@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import request from "supertest";
 
 process.env.NODE_ENV = "test";
@@ -8,20 +7,16 @@ process.env.ALLOW_DEMO_AUTH = "false";
 process.env.JWT_SECRET = "test-auth-upgrade-session-secret-long-enough";
 process.env.EMAIL_OTP_SECRET = "test-email-code-hmac-secret-long-enough";
 process.env.RESEND_API_KEY = "re_test_key_never_sent";
-process.env.AUTH_EMAIL_FROM = "Gift N Wrap <login@giftnwrapstudio.com>";
+process.env.AUTH_EMAIL_FROM = "Gift N Wrap <info@giftnwrapstudio.com>";
+process.env.AUTH_EMAIL_REPLY_TO = "info@giftnwrapstudio.com";
 process.env.GOOGLE_CLIENT_ID = "google-web-client-id.apps.example.test";
-process.env.FACEBOOK_APP_ID = "facebook-test-app";
-process.env.FACEBOOK_APP_SECRET = "facebook-test-secret";
-process.env.FACEBOOK_GRAPH_VERSION = "v22.0";
-process.env.APPLE_CLIENT_ID = "com.giftnwrap.web";
 process.env.ADMIN_EMAIL = "rgchemistry@gmail.com";
 delete process.env.MONGODB_URI;
-delete process.env.TWILIO_VERIFY_SERVICE_SID;
 
 const [
   { default: app },
-  { resetMemoryStore },
-  socialAuth,
+  { memoryStore, resetMemoryStore },
+  googleAuth,
   emailProvider,
   store,
 ] = await Promise.all([
@@ -31,11 +26,6 @@ const [
   import("../services/email-verification-provider.js"),
   import("../services/store.js"),
 ]);
-
-const { privateKey, publicKey } = await generateKeyPair("RS256");
-const publicJwk = await exportJWK(publicKey);
-publicJwk.kid = "apple-test-key";
-publicJwk.alg = "RS256";
 
 let sentEmails;
 
@@ -47,8 +37,7 @@ const responseJson = (body, status = 200) =>
 
 beforeEach(() => {
   resetMemoryStore();
-  socialAuth.resetSocialAuthForTests();
-  socialAuth.setAppleJwksForTests({ keys: [publicJwk] });
+  googleAuth.resetSocialAuthForTests();
   emailProvider.resetEmailVerificationProviderForTests();
   sentEmails = [];
   emailProvider.setEmailProviderFetchForTests(async (_url, options) => {
@@ -58,22 +47,12 @@ beforeEach(() => {
 });
 
 const useGoogleProfile = (profile) =>
-  socialAuth.setSocialIdentityVerifierForTests("google", async () => ({
+  googleAuth.setSocialIdentityVerifierForTests("google", async () => ({
     provider: "google",
     subject: profile.subject,
     email: profile.email,
     emailVerified: true,
     name: profile.name || "Verified Google User",
-    avatar: "",
-  }));
-
-const useFacebookProfile = (profile) =>
-  socialAuth.setSocialIdentityVerifierForTests("facebook", async () => ({
-    provider: "facebook",
-    subject: profile.subject,
-    email: profile.email || "",
-    emailVerified: Boolean(profile.email),
-    name: profile.name || "Verified Facebook User",
     avatar: "",
   }));
 
@@ -83,35 +62,28 @@ const verificationCode = (message = sentEmails.at(-1)) => {
   return match[1];
 };
 
-const appleToken = ({ subject, email, nonce }) =>
-  new SignJWT({
-    ...(email ? { email, email_verified: "true" } : {}),
-    nonce,
-  })
-    .setProtectedHeader({ alg: "RS256", kid: publicJwk.kid })
-    .setIssuer("https://appleid.apple.com")
-    .setAudience(process.env.APPLE_CLIENT_ID)
-    .setSubject(subject)
-    .setIssuedAt()
-    .setExpirationTime("5m")
-    .sign(privateKey);
-
-test("provider status is no-store, frontend-compatible, and secret-free", async () => {
+test("provider status exposes only Google and email readiness without secrets", async () => {
   const response = await request(app).get("/api/auth/status").expect(200);
-  assert.deepEqual(response.body.data.providers, {
-    google: true,
-    facebook: true,
-    apple: true,
-    email: true,
-  });
+  assert.deepEqual(response.body.data.providers, { google: true, email: true });
+  assert.deepEqual(Object.keys(response.body.data.details).sort(), ["email", "google"]);
   assert.equal(response.body.data.details.email.provider, "resend");
   assert.match(response.headers["cache-control"], /no-store/);
   const serialized = JSON.stringify(response.body);
-  assert.equal(serialized.includes(process.env.FACEBOOK_APP_SECRET), false);
   assert.equal(serialized.includes(process.env.RESEND_API_KEY), false);
 });
 
-test("Resend email signup uses the fixed sender and creates a session only after OTP", async () => {
+test("retired identity and SMS endpoints are not routed", async () => {
+  for (const path of [
+    "/api/auth/facebook",
+    "/api/auth/apple",
+    "/api/auth/apple/nonce",
+  ]) {
+    await request(app).post(path).send({}).expect(404);
+  }
+  await request(app).get("/api/auth/phone/status").expect(404);
+});
+
+test("Resend email signup uses the fixed studio sender and reply-to before creating a session", async () => {
   const client = request.agent(app);
   const started = await client
     .post("/api/auth/email/start")
@@ -125,13 +97,9 @@ test("Resend email signup uses the fixed sender and creates a session only after
   assert.equal("previewCode" in started.body.data, false);
   assert.equal(sentEmails.length, 1);
   assert.equal(sentEmails[0].from, process.env.AUTH_EMAIL_FROM);
+  assert.equal(sentEmails[0].reply_to, process.env.AUTH_EMAIL_REPLY_TO);
   assert.deepEqual(sentEmails[0].to, ["buyer@example.test"]);
   await client.get("/api/auth/me").expect(401);
-
-  await request(app)
-    .post("/api/auth/email/start")
-    .send({ email: "buyer@example.test", intent: "signup" })
-    .expect(429);
 
   await client
     .post("/api/auth/email/verify")
@@ -139,15 +107,11 @@ test("Resend email signup uses the fixed sender and creates a session only after
     .expect(401);
   const verified = await client
     .post("/api/auth/email/verify")
-    .send({
-      challengeId: started.body.data.challengeId,
-      code: verificationCode(),
-    })
+    .send({ challengeId: started.body.data.challengeId, code: verificationCode() })
     .expect(200);
   assert.equal(verified.body.data.user.emailVerified, true);
   assert.deepEqual(verified.body.data.user.providers, ["email"]);
   assert.match(verified.headers["set-cookie"][0], /HttpOnly/i);
-  assert.match(verified.headers["cache-control"], /no-store/);
   await client.get("/api/auth/me").expect(200);
   await client
     .post("/api/auth/email/verify")
@@ -190,73 +154,16 @@ test("verified email login safely links an existing Google account", async () =>
   assert.equal(verified.body.data.user.id, google.body.data.user.id);
 });
 
-test("social login and signup intents are distinct and matching emails never auto-link", async () => {
-  useFacebookProfile({ subject: "facebook-user-1", email: "social@example.test" });
-  await request(app)
-    .post("/api/auth/facebook")
-    .send({ accessToken: "facebook-access-token-safe-0001", intent: "login" })
-    .expect(401);
-  const signup = await request(app)
-    .post("/api/auth/facebook")
-    .send({ accessToken: "facebook-access-token-safe-0001", intent: "signup" })
-    .expect(200);
-  assert.deepEqual(signup.body.data.user.providers, ["facebook"]);
-  await request(app)
-    .post("/api/auth/facebook")
-    .send({ accessToken: "facebook-access-token-safe-0001", intent: "signup" })
-    .expect(409);
-
-  resetMemoryStore();
-  useGoogleProfile({ subject: "google-owner-1", email: "shared@example.test" });
-  await request(app)
-    .post("/api/auth/google")
-    .send({ credential: "google-safe-credential-owner-0001", intent: "signup" })
-    .expect(200);
-  useFacebookProfile({ subject: "facebook-other-1", email: "shared@example.test" });
-  const conflict = await request(app)
-    .post("/api/auth/facebook")
-    .send({ accessToken: "facebook-access-token-safe-0002", intent: "signup" })
-    .expect(409);
-  assert.equal(conflict.body.error.code, "ACCOUNT_LINK_REQUIRED");
-});
-
-test("every social route rejects requests without an explicit login or signup intent", async () => {
-  const googleBody = { credential: "google-safe-credential-no-intent-0001" };
+test("Google routes require an explicit login or signup intent", async () => {
+  const body = { credential: "google-safe-credential-no-intent-0001" };
   for (const path of ["/api/auth/google", "/api/auth/social/google"]) {
-    const response = await request(app).post(path).send(googleBody).expect(422);
+    const response = await request(app).post(path).send(body).expect(422);
     assert.equal(response.body.error.code, "VALIDATION_ERROR");
     assert.equal(response.body.error.details.some((issue) => issue.field === "intent"), true);
   }
-
-  const facebook = await request(app)
-    .post("/api/auth/facebook")
-    .send({ accessToken: "facebook-access-token-no-intent-0001" })
-    .expect(422);
-  assert.equal(facebook.body.error.code, "VALIDATION_ERROR");
-  assert.equal(facebook.body.error.details.some((issue) => issue.field === "intent"), true);
-
-  const nonce = await request(app).post("/api/auth/apple/nonce").expect(200);
-  const token = await appleToken({
-    subject: "apple-no-intent",
-    email: "apple-no-intent@example.test",
-    nonce: nonce.body.data.nonce,
-  });
-  const apple = await request(app)
-    .post("/api/auth/apple")
-    .send({ idToken: token, nonceId: nonce.body.data.nonceId })
-    .expect(422);
-  assert.equal(apple.body.error.code, "VALIDATION_ERROR");
-  assert.equal(apple.body.error.details.some((issue) => issue.field === "intent"), true);
 });
 
-test("administrator enrollment is restricted to Google or verified email OTP", async () => {
-  useFacebookProfile({ subject: "facebook-admin-attempt", email: process.env.ADMIN_EMAIL });
-  const blocked = await request(app)
-    .post("/api/auth/facebook")
-    .send({ accessToken: "facebook-admin-token-safe-0001", intent: "signup" })
-    .expect(409);
-  assert.equal(blocked.body.error.code, "ACCOUNT_LINK_REQUIRED");
-
+test("the configured administrator can enroll through Google", async () => {
   useGoogleProfile({ subject: "google-admin-1", email: process.env.ADMIN_EMAIL });
   const admin = await request(app)
     .post("/api/auth/google")
@@ -269,86 +176,15 @@ test("administrator enrollment is restricted to Google or verified email OTP", a
     .expect(200);
 });
 
-test("Apple nonces are single-use and the stable subject supports later hidden-email login", async () => {
-  const firstNonce = await request(app).post("/api/auth/apple/nonce").expect(200);
-  const firstToken = await appleToken({
-    subject: "apple-user-1",
-    email: "apple@example.test",
-    nonce: firstNonce.body.data.nonce,
-  });
-  const signup = await request(app)
-    .post("/api/auth/apple")
-    .send({
-      idToken: firstToken,
-      nonceId: firstNonce.body.data.nonceId,
-      name: "Apple Buyer",
-      intent: "signup",
-    })
-    .expect(200);
-  assert.deepEqual(signup.body.data.user.providers, ["apple"]);
-
-  await request(app)
-    .post("/api/auth/apple")
-    .send({ idToken: firstToken, nonceId: firstNonce.body.data.nonceId, intent: "login" })
-    .expect(401);
-
-  const secondNonce = await request(app).post("/api/auth/apple/nonce").expect(200);
-  const hiddenEmailToken = await appleToken({
-    subject: "apple-user-1",
-    nonce: secondNonce.body.data.nonce,
-  });
-  const login = await request(app)
-    .post("/api/auth/apple")
-    .send({
-      idToken: hiddenEmailToken,
-      nonceId: secondNonce.body.data.nonceId,
-      intent: "login",
-    })
-    .expect(200);
-  assert.equal(login.body.data.user.id, signup.body.data.user.id);
-  assert.equal(login.body.data.user.email, "apple@example.test");
-});
-
-test("Facebook tokens are checked against the app and stable Graph user ID", async () => {
-  socialAuth.resetSocialAuthForTests();
-  socialAuth.setSocialFetchForTests(async (url) => {
-    const value = String(url);
-    if (value.includes("debug_token")) {
-      return responseJson({
-        data: {
-          is_valid: true,
-          app_id: process.env.FACEBOOK_APP_ID,
-          user_id: "facebook-graph-user",
-          expires_at: Math.floor(Date.now() / 1_000) + 600,
-        },
-      });
-    }
-    return responseJson({
-      id: "facebook-graph-user",
-      email: "graph@example.test",
-      name: "Graph Buyer",
-      picture: { data: { url: "https://example.test/avatar.jpg" } },
-    });
-  });
-  const profile = await socialAuth.verifyFacebookAccessToken({ accessToken: "safe-token" });
-  assert.equal(profile.subject, "facebook-graph-user");
-  assert.equal(profile.emailVerified, true);
-
-  socialAuth.setSocialFetchForTests(async () =>
-    responseJson({ data: { is_valid: true, app_id: "wrong-app", user_id: "attacker" } }),
-  );
-  await assert.rejects(
-    socialAuth.verifyFacebookAccessToken({ accessToken: "safe-token" }),
-    (error) => error.code === "UNAUTHORIZED",
-  );
-});
-
-test("legacy Google subjects lazy-link without relying on an email match", async () => {
+test("legacy Google subjects lazy-link and preserve safely shaped historical provider values", async () => {
   const legacy = await store.upsertGoogleUser({
     googleSub: "legacy-google-subject",
     email: "legacy@example.test",
     name: "Legacy Buyer",
     avatar: "",
+  });
+  memoryStore.update("users", legacy.id, {
+    providers: ["google", "retired-provider", "unsafe provider value"],
   });
   assert.equal(await store.getAuthIdentity("google", "legacy-google-subject"), undefined);
 
@@ -358,6 +194,7 @@ test("legacy Google subjects lazy-link without relying on an email match", async
     .send({ credential: "legacy-google-credential-safe-0001", intent: "login" })
     .expect(200);
   assert.equal(login.body.data.user.id, legacy.id);
+  assert.deepEqual(login.body.data.user.providers, ["google", "retired-provider"]);
   const identity = await store.getAuthIdentity("google", "legacy-google-subject");
   assert.equal(identity.userId, legacy.id);
 });

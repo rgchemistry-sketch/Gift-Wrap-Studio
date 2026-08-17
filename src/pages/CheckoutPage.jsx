@@ -90,7 +90,7 @@ export default function CheckoutPage() {
       return;
     }
     if (!user) {
-      openAuth('Log in with an email verification code, Google, Facebook or Apple to securely submit your saved order request.', 'login');
+      openAuth('Log in with an email verification code or Google to securely submit your saved order request.', 'login');
       return;
     }
     const expiredUpload = cart.find((line) => {

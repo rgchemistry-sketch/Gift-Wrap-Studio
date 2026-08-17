@@ -8,7 +8,7 @@ A responsive React storefront and lightweight Express API for handmade resin art
 - Searchable/filterable product catalogue, product customization, cart, wishlist, and order-request checkout
 - Delayed first-order offer (`FIRST10`, 10% up to ₹500) with eligibility checked by the API
 - Passwordless email codes sent from a fixed, verified Resend sender
-- Google, Facebook, and Apple sign-in with server-side credential verification
+- Google sign-in with server-side credential verification
 - Buyer account and one-admin dashboard; admin access comes only from `ADMIN_EMAIL`
 - MongoDB Atlas persistence with an in-memory preview store when MongoDB is not configured locally
 - Signed, direct-to-Cloudinary customization uploads; the Cloudinary secret never reaches the browser
@@ -57,10 +57,12 @@ The connection is cached for serverless reuse. Without a URI—or when Atlas is 
 ### Authentication providers
 
 Email is the primary passwordless flow. Create and verify a sending domain in Resend, then set
-`RESEND_API_KEY`, a fixed `AUTH_EMAIL_FROM`, and a separate random `EMAIL_OTP_SECRET` of at least
-32 characters. The browser can never choose the sender. Codes are HMAC-protected at rest, expire,
-have bounded attempts and resend cooldowns, and are consumed once. A preview code is returned only
-when `ALLOW_DEMO_AUTH=true` outside production and Resend is not configured.
+`RESEND_API_KEY`, `AUTH_EMAIL_FROM="Gift N Wrap <info@giftnwrapstudio.com>"`,
+`AUTH_EMAIL_REPLY_TO=info@giftnwrapstudio.com`, and a separate random `EMAIL_OTP_SECRET` of at
+least 32 characters. The sending domain must be verified in Resend. The browser can never choose
+the sender. Codes are HMAC-protected at rest, expire, have bounded attempts and resend cooldowns,
+and are consumed once. A preview code is returned only when `ALLOW_DEMO_AUTH=true` outside
+production and Resend is not configured.
 
 For Google:
 
@@ -86,22 +88,10 @@ Set it in **both** places or the panel will not open in the environment you are 
 The address must match the signed-in account exactly (lowercase). Only Google and email-code
 sign-ins are eligible for the admin role.
 
-For Facebook, configure the same app as `VITE_FACEBOOK_APP_ID` and `FACEBOOK_APP_ID`, keep
-`FACEBOOK_APP_SECRET` server-only, and configure the production domain in Meta's app dashboard.
-The API validates every user access token with `debug_token`, requires the configured app ID, and
-then reads the matching stable Graph user ID.
-
-For Apple, create a Sign in with Apple Services ID and website return URL. Set the Services ID in
-both `VITE_APPLE_CLIENT_ID` and `APPLE_CLIENT_ID`, and set `VITE_APPLE_REDIRECT_URI` to the exact
-registered URL. Before opening Apple sign-in the browser calls `POST /api/auth/apple/nonce`, passes
-the returned nonce to Apple, and submits the returned `nonceId` with the ID token. The nonce is
-server-stored, short-lived, and single-use; the API verifies Apple's signature, issuer, audience,
-expiry, nonce, and stable subject.
-
-Social identities are keyed by provider plus stable provider subject. A coincidentally matching
-social email never auto-links an existing account. A successful code sent to the account email can
-safely add email login. The configured administrator address can be enrolled only through Google
-or a verified email code, never directly through Facebook or Apple.
+Google identities are keyed by the stable provider subject. A coincidentally matching email never
+auto-links an existing account. A successful code sent to the account email can safely add email
+login. The configured administrator address can be enrolled only through Google or a verified
+email code.
 
 ### Cloudinary
 
@@ -121,7 +111,7 @@ Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and 
 2. Add the variables from `.env.example` to the appropriate Preview/Production environments.
 3. Set `NODE_ENV=production`, `ALLOW_DEMO_AUTH=false`, and `VITE_ENABLE_DEMO_AUTH=false` in production.
    Also keep `ALLOW_MEMORY_WRITES=false`, so a database outage cannot create non-persistent orders.
-4. Add the final domain to Google authorized origins, Meta allowed domains, the Apple Services ID website configuration, Resend's verified sender domain, and `CLIENT_ORIGINS`.
+4. Add the final domain to Google authorized origins, verify the sender domain in Resend, and add the final origin to `CLIENT_ORIGINS`.
 5. Deploy. `vercel.json` builds the Vite app, sends `/api/*` to the Express function, and serves `index.html` for client-side routes.
 
 The project follows Vercel's current [Vite SPA routing](https://vercel.com/docs/frameworks/frontend/vite), Google's [server-side ID-token verification](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token), and Cloudinary's [signed browser upload](https://cloudinary.com/documentation/authentication_signatures) guidance.
@@ -141,5 +131,5 @@ Generated-image provenance and final prompts are recorded in [`docs/image-genera
 ## Before accepting real orders
 
 - Replace or verify all starter catalogue products, prices, inventory, and policies; they are demonstration content.
-- Test email codes, Google, Facebook, Apple, logout/revocation, Atlas, Cloudinary, and the exact administrator account on the production domain.
+- Test email codes, Google, logout/revocation, Atlas, Cloudinary, and the exact administrator account on the production domain.
 - Checkout intentionally creates a manual-confirmation order request. Add a payment provider only when the studio is ready to collect online payments.

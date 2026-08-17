@@ -5,7 +5,7 @@ import cors from "cors";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { connectDatabase, databaseStatus } from "./config/database.js";
-import { env, phoneAuthStatus } from "./config/env.js";
+import { env } from "./config/env.js";
 import { asyncHandler } from "./lib/async-handler.js";
 import { errorHandler, notFoundHandler, requestId } from "./middleware/errors.js";
 import { isOriginAllowed, requireTrustedOrigin } from "./middleware/origin.js";
@@ -15,7 +15,6 @@ import { authRouter } from "./routes/auth.js";
 import { contactRouter } from "./routes/contact.js";
 import { inquiriesRouter } from "./routes/inquiries.js";
 import { offersRouter } from "./routes/offers.js";
-import { phoneAuthRouter } from "./routes/phone-auth.js";
 import { ordersRouter } from "./routes/orders.js";
 import { productsRouter } from "./routes/products.js";
 import { settingsRouter } from "./routes/settings.js";
@@ -49,12 +48,10 @@ app.use(
         baseUri: ["'self'"],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
-        formAction: ["'self'", "https://appleid.apple.com"],
+        formAction: ["'self'"],
         scriptSrc: [
           "'self'",
           "https://accounts.google.com",
-          "https://connect.facebook.net",
-          "https://appleid.cdn-apple.com",
         ],
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
@@ -63,23 +60,14 @@ app.use(
           "data:",
           "blob:",
           "https://res.cloudinary.com",
-          "https://platform-lookaside.fbsbx.com",
-          "https://*.fbcdn.net",
           "https://*.googleusercontent.com",
         ],
         connectSrc: [
           "'self'",
           "https://accounts.google.com",
-          "https://graph.facebook.com",
-          "https://www.facebook.com",
-          "https://appleid.apple.com",
           "https://api.cloudinary.com",
         ],
-        frameSrc: [
-          "https://accounts.google.com",
-          "https://www.facebook.com",
-          "https://appleid.apple.com",
-        ],
+        frameSrc: ["https://accounts.google.com"],
         upgradeInsecureRequests: env.isProduction ? [] : null,
       },
     },
@@ -125,7 +113,6 @@ app.get(
         status: degraded ? "degraded" : "ok",
         persistence,
         writable: persistence.mode === "mongodb" || env.allowMemoryWrites,
-        phoneAuth: phoneAuthStatus(),
         timestamp: new Date().toISOString(),
       },
     });
@@ -133,7 +120,6 @@ app.get(
 );
 
 app.use("/api/auth", authRouter);
-app.use("/api/auth/phone", phoneAuthRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/offers", offersRouter);

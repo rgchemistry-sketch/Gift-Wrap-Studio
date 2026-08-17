@@ -44,6 +44,70 @@ const productImageGrant = async (admin, alt = "Product image") => {
   };
 };
 
+test("admin products are searched, status-filtered and paged on the server", async () => {
+  const admin = await adminAgent();
+  const firstPage = await admin
+    .get("/api/admin/products")
+    .query({ status: "all", page: 1, limit: 3 })
+    .expect(200);
+
+  assert.equal(Array.isArray(firstPage.body.data), true);
+  assert.equal(firstPage.body.data.length, 3);
+  assert.deepEqual(firstPage.body.pagination, {
+    page: 1,
+    limit: 3,
+    total: 10,
+    pages: 4,
+    totalPages: 4,
+  });
+  assert.equal("description" in firstPage.body.data[0], false);
+  assert.equal("variants" in firstPage.body.data[0], false);
+  assert.ok(firstPage.body.data[0].images.length <= 1);
+
+  const secondPage = await admin
+    .get("/api/admin/products")
+    .query({ status: "all", page: 2, limit: 3 })
+    .expect(200);
+  const firstIds = new Set(firstPage.body.data.map((product) => product.id));
+  assert.equal(secondPage.body.data.some((product) => firstIds.has(product.id)), false);
+
+  const [draftProduct, archivedProduct] = firstPage.body.data;
+  memoryStore.update("products", draftProduct.id, {
+    active: false,
+    archivedAt: null,
+    sku: "SERVER-LOOKUP-123",
+  });
+  memoryStore.update("products", archivedProduct.id, { archivedAt: new Date() });
+
+  const searched = await admin
+    .get("/api/admin/products")
+    .query({ q: "lookup-123", status: "all", page: 1, limit: 10 })
+    .expect(200);
+  assert.equal(searched.body.pagination.total, 1);
+  assert.equal(searched.body.data[0].id, draftProduct.id);
+
+  const [current, published, drafts, archived] = await Promise.all([
+    admin.get("/api/admin/products").query({ status: "current" }).expect(200),
+    admin.get("/api/admin/products").query({ status: "published" }).expect(200),
+    admin.get("/api/admin/products").query({ status: "draft" }).expect(200),
+    admin.get("/api/admin/products").query({ status: "archived" }).expect(200),
+  ]);
+  assert.equal(current.body.pagination.total, 9);
+  assert.equal(published.body.pagination.total, 8);
+  assert.deepEqual(drafts.body.data.map((product) => product.id), [draftProduct.id]);
+  assert.deepEqual(archived.body.data.map((product) => product.id), [archivedProduct.id]);
+
+  const fullDetail = await admin
+    .get(`/api/admin/products/${draftProduct.id}`)
+    .expect(200);
+  assert.equal(fullDetail.body.data.sku, "SERVER-LOOKUP-123");
+  assert.equal("description" in fullDetail.body.data, true);
+
+  await admin.get("/api/admin/products").query({ status: "unknown" }).expect(422);
+  await admin.get("/api/admin/products").query({ limit: 51 }).expect(422);
+  await admin.get("/api/admin/products").query({ search: "legacy-key" }).expect(422);
+});
+
 test("admins can create, edit, publish and archive complete products", async () => {
   const admin = await adminAgent();
   const productImage = await productImageGrant(admin, "Forest keepsake box");
@@ -168,7 +232,6 @@ test("saved studio settings drive the public popup and checkout totals", async (
         email: "hello@example.test",
         phone: "+91 98765 43210",
         instagram: "https://instagram.com/GiftNWrapStudio/?igsh=share",
-        facebook: "@GiftNWrapStudio",
       },
     })
     .expect(200);
@@ -182,11 +245,6 @@ test("saved studio settings drive the public popup and checkout totals", async (
     "https://www.instagram.com/giftnwrapstudio/",
   );
   assert.equal(publicSettings.body.data.contact.instagramHandle, "@giftnwrapstudio");
-  assert.equal(
-    publicSettings.body.data.contact.facebookUrl,
-    "https://www.facebook.com/giftnwrapstudio/",
-  );
-  assert.equal(publicSettings.body.data.contact.facebookLabel, "@giftnwrapstudio");
 
   const offer = await request(app).get("/api/offers/welcome").expect(200);
   assert.equal(offer.body.data.code, "HELLO15");
@@ -213,7 +271,7 @@ test("saved studio settings drive the public popup and checkout totals", async (
   assert.equal(order.body.data.total, 1763);
 });
 
-test("studio social settings reject content links and preserve explicit blanks", async () => {
+test("studio Instagram settings reject content links and preserve explicit blanks", async () => {
   const admin = await adminAgent();
 
   const invalidInstagram = await admin
@@ -225,32 +283,21 @@ test("studio social settings reject content links and preserve explicit blanks",
     true,
   );
 
-  const invalidFacebook = await admin
-    .put("/api/admin/settings")
-    .send({ contact: { facebook: "https://www.facebook.com/groups/example/" } })
-    .expect(422);
-  assert.equal(
-    invalidFacebook.body.error.details.some((issue) => issue.field === "contact.facebook"),
-    true,
-  );
-
   const cleared = await admin
     .put("/api/admin/settings")
-    .send({ contact: { email: "", phone: "", instagram: "", facebook: "" } })
+    .send({ contact: { email: "", phone: "", instagram: "" } })
     .expect(200);
   assert.deepEqual(
     {
       email: cleared.body.data.contact.email,
       phone: cleared.body.data.contact.phone,
       instagramUrl: cleared.body.data.contact.instagramUrl,
-      facebookUrl: cleared.body.data.contact.facebookUrl,
     },
-    { email: "", phone: "", instagramUrl: "", facebookUrl: "" },
+    { email: "", phone: "", instagramUrl: "" },
   );
 
   const publicSettings = await request(app).get("/api/settings").expect(200);
   assert.equal(publicSettings.body.data.contact.instagramUrl, "");
-  assert.equal(publicSettings.body.data.contact.facebookUrl, "");
 });
 
 test("registered-user administration is protected, paged and privacy-conscious", async () => {
@@ -284,6 +331,12 @@ test("registered-user administration is protected, paged and privacy-conscious",
   assert.equal(dashboard.body.data.newUsersThisMonth, 2);
   assert.equal(dashboard.body.data.orders, 7);
   assert.equal(dashboard.body.data.ordersPending, 5);
+  assert.equal(dashboard.body.data.recentOrders.length, 5);
+  assert.equal(
+    dashboard.body.data.recentOrders.every((order) => order.status !== "delivered" && order.status !== "cancelled"),
+    true,
+  );
+  assert.ok(Array.isArray(dashboard.body.data.lowStock));
 });
 
 test("only the exact configured admin can request product image upload grants", async () => {

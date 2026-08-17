@@ -1,9 +1,20 @@
-import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { configurationError, unauthorized } from "../lib/errors.js";
 
-let googleClient;
+let googleClientPromise;
+
+const getGoogleClient = () => {
+  if (!googleClientPromise) {
+    googleClientPromise = import("google-auth-library")
+      .then(({ OAuth2Client }) => new OAuth2Client(env.googleClientId))
+      .catch((error) => {
+        googleClientPromise = undefined;
+        throw error;
+      });
+  }
+  return googleClientPromise;
+};
 
 const requireJwtConfig = () => {
   if (!env.jwtSecret) throw configurationError(["JWT_SECRET"]);
@@ -14,7 +25,7 @@ const requireJwtConfig = () => {
 
 export const verifyGoogleCredential = async (credential) => {
   if (!env.googleClientId) throw configurationError(["GOOGLE_CLIENT_ID"]);
-  googleClient ||= new OAuth2Client(env.googleClientId);
+  const googleClient = await getGoogleClient();
 
   let ticket;
   try {
@@ -77,8 +88,7 @@ export const sessionCookieOptions = ({ clear = false } = {}) => ({
   ...(clear ? {} : { maxAge: env.cookieDays * 24 * 60 * 60 * 1_000 }),
 });
 
-// The single masker for account, admin and phone-verification responses. Three copies
-// had drifted into two different formats for the same number.
+// Keep account and admin responses on one masking format for historical phone fields.
 export const maskPhone = (phone) => {
   const digits = String(phone || "").replace(/\D/g, "");
   if (!digits) return "";

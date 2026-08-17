@@ -1,4 +1,3 @@
-import { v2 as cloudinary } from "cloudinary";
 import { env } from "../config/env.js";
 import { AppError, configurationError } from "../lib/errors.js";
 import {
@@ -13,8 +12,34 @@ import {
 
 const destroyTimeoutMs = 8_000;
 
-let destroyCloudinaryAsset = (publicId) =>
-  cloudinary.uploader.destroy(publicId, { resource_type: "image", invalidate: true });
+let configuredCloudinaryPromise;
+
+const getConfiguredCloudinary = () => {
+  if (!configuredCloudinaryPromise) {
+    configuredCloudinaryPromise = import("cloudinary")
+      .then(({ v2 }) => {
+        v2.config({
+          cloud_name: env.cloudinaryCloudName,
+          api_key: env.cloudinaryApiKey,
+          api_secret: env.cloudinaryApiSecret,
+          secure: true,
+        });
+        return v2;
+      })
+      .catch((error) => {
+        configuredCloudinaryPromise = undefined;
+        throw error;
+      });
+  }
+  return configuredCloudinaryPromise;
+};
+
+const defaultDestroyCloudinaryAsset = async (publicId) => {
+  const cloudinary = await getConfiguredCloudinary();
+  return cloudinary.uploader.destroy(publicId, { resource_type: "image", invalidate: true });
+};
+
+let destroyCloudinaryAsset = defaultDestroyCloudinaryAsset;
 
 export const setUploadAssetDestroyerForTests = (destroyer) => {
   if (!env.isTest) throw new Error("Upload cleanup test doubles are test-only");
@@ -23,8 +48,7 @@ export const setUploadAssetDestroyerForTests = (destroyer) => {
 
 export const resetUploadAssetDestroyerForTests = () => {
   if (!env.isTest) throw new Error("Upload cleanup reset is test-only");
-  destroyCloudinaryAsset = (publicId) =>
-    cloudinary.uploader.destroy(publicId, { resource_type: "image", invalidate: true });
+  destroyCloudinaryAsset = defaultDestroyCloudinaryAsset;
 };
 
 const requireCloudinaryCleanupConfig = () => {
@@ -36,15 +60,6 @@ const requireCloudinaryCleanupConfig = () => {
     .filter(([, value]) => !value)
     .map(([key]) => key);
   if (missing.length) throw configurationError(missing);
-};
-
-const configureCloudinary = () => {
-  cloudinary.config({
-    cloud_name: env.cloudinaryCloudName,
-    api_key: env.cloudinaryApiKey,
-    api_secret: env.cloudinaryApiSecret,
-    secure: true,
-  });
 };
 
 const withTimeout = async (operation, timeoutMs = destroyTimeoutMs) => {
@@ -88,7 +103,6 @@ export const cleanupUploadAssetForUser = async ({
     allowConsumedProductCleanup,
   });
   try {
-    configureCloudinary();
     return await destroyClaimedAsset({
       userId,
       publicId,
@@ -111,7 +125,6 @@ export const cleanupUnconsumedUploadsForUser = async (userId) => {
 
   try {
     requireCloudinaryCleanupConfig();
-    configureCloudinary();
     const results = await Promise.allSettled(
       claim.grants.map(({ publicId }) =>
         destroyClaimedAsset({
@@ -154,7 +167,6 @@ export const runExpiredUploadGrantSweep = ({
 
   expiredUploadSweepPromise = (async () => {
     requireCloudinaryCleanupConfig();
-    configureCloudinary();
     const result = { claimed: 0, deleted: 0, failed: 0 };
 
     for (let index = 0; index < boundedLimit; index += 1) {

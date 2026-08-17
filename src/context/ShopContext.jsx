@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from './AuthContext';
 
@@ -55,10 +56,13 @@ function makeLineId(product, customization = {}) {
 
 export function ShopProvider({ children }) {
   const { user, loading: authLoading } = useAuth();
+  const { pathname } = useLocation();
+  const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
   const [cart, setCart] = useState(() => readStorage(cartKeyFor(), []));
   const [wishlist, setWishlist] = useState(() => readStorage(WISHLIST_KEY, []));
   const [toasts, setToasts] = useState([]);
   const [studioSettings, setStudioSettings] = useState(null);
+  const [studioSettingsState, setStudioSettingsState] = useState({ loading: true, error: '' });
   const [welcomeOffer, setWelcomeOffer] = useState(null);
   const [claimedOfferCode, setClaimedOfferCode] = useState(
     () => window.sessionStorage.getItem(OFFER_CODE_KEY) || '',
@@ -128,19 +132,50 @@ export function ShopProvider({ children }) {
     else window.localStorage.removeItem(nextKey);
   }, [authLoading, user?.id]);
 
+  const applyStudioSettings = useCallback((value) => {
+    if (value) {
+      setStudioSettings(value.data || value);
+      setStudioSettingsState({ loading: false, error: '' });
+    }
+  }, []);
+
+  const refreshStudioSettings = useCallback(async () => {
+    setStudioSettingsState((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const result = await api.getPublicSettings();
+      const value = result.data || result;
+      setStudioSettings(value);
+      setStudioSettingsState({ loading: false, error: '' });
+      return value;
+    } catch (error) {
+      setStudioSettingsState({ loading: false, error: error.message || 'Settings unavailable' });
+      throw error;
+    }
+  }, []);
+
   useEffect(() => {
+    // The protected workspace has its own settings loader. Keep storefront-only
+    // settings and offer requests off the admin's critical rendering path.
+    if (isAdminRoute) return undefined;
     let active = true;
+    setStudioSettingsState((current) => ({ ...current, loading: true, error: '' }));
     Promise.allSettled([api.getPublicSettings(), api.getWelcomeOffer()]).then(([settingsResult, offerResult]) => {
       if (!active) return;
       if (settingsResult.status === 'fulfilled') {
         setStudioSettings(settingsResult.value.data || settingsResult.value);
+        setStudioSettingsState({ loading: false, error: '' });
+      } else {
+        setStudioSettingsState({
+          loading: false,
+          error: settingsResult.reason?.message || 'Settings unavailable',
+        });
       }
       if (offerResult.status === 'fulfilled') {
         setWelcomeOffer(offerResult.value.data || offerResult.value);
       }
     });
     return () => { active = false; };
-  }, []);
+  }, [isAdminRoute]);
 
   const persistCart = useCallback((next) => {
     cartRef.current = next;
@@ -258,6 +293,7 @@ export function ShopProvider({ children }) {
       wishlist,
       toasts,
       studioSettings,
+      studioSettingsState,
       welcomeOffer,
       claimedOfferCode,
       cartCount,
@@ -270,12 +306,15 @@ export function ShopProvider({ children }) {
       notify,
       dismissToast,
       claimWelcomeOffer,
+      applyStudioSettings,
+      refreshStudioSettings,
     }),
     [
       cart,
       wishlist,
       toasts,
       studioSettings,
+      studioSettingsState,
       welcomeOffer,
       claimedOfferCode,
       cartCount,
@@ -288,6 +327,8 @@ export function ShopProvider({ children }) {
       notify,
       dismissToast,
       claimWelcomeOffer,
+      applyStudioSettings,
+      refreshStudioSettings,
     ],
   );
 

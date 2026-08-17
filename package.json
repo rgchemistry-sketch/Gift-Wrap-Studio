@@ -31,7 +31,6 @@
     "express-rate-limit": "^8.6.2",
     "google-auth-library": "^11.0.0",
     "helmet": "^8.3.0",
-    "jose": "^6.2.9",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.9.1",
     "react": "^19.2.8",

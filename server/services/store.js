@@ -21,10 +21,7 @@ import { StudioSettings } from "../models/StudioSettings.js";
 import { User } from "../models/User.js";
 import { UploadGrant, UploadQuota } from "../models/UploadGrant.js";
 import { AuthIdentity } from "../models/AuthIdentity.js";
-import {
-  normalizeFacebookProfile,
-  normalizeInstagramProfile,
-} from "../../shared/social-profiles.js";
+import { normalizeInstagramProfile } from "../../shared/social-profiles.js";
 
 const clone = (value) => (value == null ? value : structuredClone(value));
 
@@ -219,15 +216,108 @@ export const getProductBySlug = async (slug, { includeInactive = false } = {}) =
   return plain(record);
 };
 
-export const listAllProductsForAdmin = async () => {
+const adminProductStatusQuery = (status) => {
+  if (status === "current") return { archivedAt: null };
+  if (status === "published") return { archivedAt: null, active: true };
+  if (status === "draft") return { archivedAt: null, active: false };
+  if (status === "archived") return { archivedAt: { $ne: null } };
+  return {};
+};
+
+const matchesAdminProductStatus = (product, status) => {
+  const archived = product.archivedAt != null;
+  if (status === "current") return !archived;
+  if (status === "published") return !archived && product.active === true;
+  if (status === "draft") return !archived && product.active === false;
+  if (status === "archived") return archived;
+  return true;
+};
+
+const adminProductListItem = (record) => {
+  const product = plain(record);
+  return {
+    id: product.id,
+    slug: product.slug,
+    name: product.name,
+    category: product.category,
+    sku: product.sku,
+    price: product.price,
+    compareAtPrice: product.compareAtPrice,
+    images: (product.images || []).slice(0, 1),
+    featured: product.featured,
+    active: product.active,
+    inventory: product.inventory,
+    sortOrder: product.sortOrder,
+    archivedAt: product.archivedAt,
+    createdAt: product.createdAt,
+    updatedAt: product.updatedAt,
+  };
+};
+
+export const listAllProductsForAdmin = async ({ q, status = "all", page = 1, limit = 20 } = {}) => {
   const mode = await ensureCatalogSeeded();
-  const records =
-    mode === "mongodb"
-      ? await Product.find({}).sort({ active: -1, sortOrder: 1, createdAt: -1 })
-      : memoryStore
-          .all("products")
-          .sort((a, b) => Number(b.active) - Number(a.active) || a.sortOrder - b.sortOrder);
-  return records.map(plain);
+
+  if (mode === "mongodb") {
+    const query = adminProductStatusQuery(status);
+    if (q) {
+      const pattern = new RegExp(escapeRegExp(q), "i");
+      query.$or = [
+        { name: pattern },
+        { category: pattern },
+        { occasion: pattern },
+        { sku: pattern },
+        { slug: pattern },
+        { tags: pattern },
+      ];
+    }
+    const [records, total] = await Promise.all([
+      Product.find(query)
+        .select(
+          "slug name category sku price compareAtPrice images featured active inventory sortOrder archivedAt createdAt updatedAt",
+        )
+        .slice("images", 1)
+        .sort({ active: -1, sortOrder: 1, createdAt: -1, _id: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Product.countDocuments(query),
+    ]);
+    return paginate(records.map(adminProductListItem), page, limit, total);
+  }
+
+  const needle = q?.toLowerCase();
+  const filtered = memoryStore
+    .all("products")
+    .filter((product) => matchesAdminProductStatus(product, status))
+    .filter(
+      (product) =>
+        !needle ||
+        [
+          product.name,
+          product.category,
+          product.occasion,
+          product.sku,
+          product.slug,
+          ...(product.tags || []),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(needle),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.active) - Number(a.active) ||
+        Number(a.sortOrder || 0) - Number(b.sortOrder || 0) ||
+        new Date(b.createdAt) - new Date(a.createdAt) ||
+        String(a.id).localeCompare(String(b.id)),
+    );
+  return paginate(
+    slicePage(filtered, page, limit).map(adminProductListItem),
+    page,
+    limit,
+    filtered.length,
+  );
 };
 
 export const getProductForAdmin = async (id) => {
@@ -610,7 +700,11 @@ export const getUserById = async (id) => {
 
 const identityKey = (provider, subject) => `${provider}:${subject}`;
 const normalizedProviders = (providers = []) =>
-  [...new Set(providers.filter((provider) => ["email", "google", "facebook", "apple"].includes(provider)))];
+  [...new Set(
+    providers
+      .map((provider) => String(provider || "").trim().toLowerCase())
+      .filter((provider) => /^[a-z0-9_-]{1,50}$/.test(provider)),
+  )];
 
 const plainIdentity = (record) => {
   const value = plain(record);
@@ -865,7 +959,6 @@ const defaultStudioSettings = () => ({
     email: "info@giftnwrapstudio.com",
     phone: "+919588281126",
     instagram: "@giftnwrapstudio",
-    facebook: "",
   },
 });
 
@@ -894,16 +987,12 @@ const mergeStudioSettings = (current = {}, changes = {}) => {
 const publicStudioSettings = (record) => {
   const settings = mergeStudioSettings(record);
   const instagram = normalizeInstagramProfile(settings.contact.instagram);
-  const facebook = normalizeFacebookProfile(settings.contact.facebook);
   return {
     ...settings,
     contact: {
       ...settings.contact,
       instagramHandle: instagram?.handle ? `@${instagram.handle}` : "",
       instagramUrl: instagram?.url || "",
-      facebookHandle: facebook?.handle ? `@${facebook.handle}` : "",
-      facebookLabel: facebook?.label || "",
-      facebookUrl: facebook?.url || "",
     },
   };
 };
@@ -1366,9 +1455,11 @@ export const listAllOrders = async ({ status, page, limit }) => {
     const query = status ? { status } : {};
     const [records, total] = await Promise.all([
       Order.find(query)
+        .select("orderNumber buyerName buyerEmail items.name status total createdAt")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       Order.countDocuments(query),
     ]);
     return paginate(records.map(publicOrder), page, limit, total);
@@ -1517,7 +1608,8 @@ const listInbox = async (collectionName, Model, { status, page, limit }) => {
       Model.find(query)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       Model.countDocuments(query),
     ]);
     return paginate(records.map(plain), page, limit, total);
@@ -1601,9 +1693,11 @@ export const listRegisteredUsers = async ({ search, role, phoneVerified, page, l
     }
     const [records, total] = await Promise.all([
       User.find(query)
+        .select("email name avatar role emailVerifiedAt googleSub providers phone phoneVerifiedAt createdAt lastLoginAt")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       User.countDocuments(query),
     ]);
     const userIds = records.map((record) => String(record._id));
@@ -1676,46 +1770,63 @@ export const listRegisteredUsers = async ({ search, role, phoneVerified, page, l
   );
 };
 
-export const getRegisteredUserMetrics = async (selectedMode) => {
+export const getRegisteredUserMetrics = async (
+  selectedMode,
+  { includeRepeatCustomers = true } = {},
+) => {
   const mode = selectedMode || (await connectDatabase());
   const now = new Date();
   const monthStartedAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1_000);
   if (mode === "mongodb") {
-    const [
-      total,
-      buyers,
-      admins,
-      phoneVerified,
-      signupsLast7Days,
-      signupsLast30Days,
-      newThisMonth,
-      repeatCustomerRows,
-    ] =
-      await Promise.all([
-        User.countDocuments({}),
-        User.countDocuments({ role: "buyer" }),
-        User.countDocuments({ role: "admin" }),
-        User.countDocuments({ phoneVerifiedAt: { $ne: null } }),
-        User.countDocuments({ createdAt: { $gte: sevenDaysAgo } }),
-        User.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
-        User.countDocuments({ createdAt: { $gte: monthStartedAt } }),
-        Order.aggregate([
-          { $match: { status: { $ne: "cancelled" } } },
-          { $group: { _id: "$buyerId", ordersCount: { $sum: 1 } } },
-          { $match: { ordersCount: { $gte: 2 } } },
-          { $count: "total" },
-        ]),
-      ]);
+    const [userMetricRows, repeatCustomerRows] = await Promise.all([
+      User.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            buyers: { $sum: { $cond: [{ $eq: ["$role", "buyer"] }, 1, 0] } },
+            admins: { $sum: { $cond: [{ $eq: ["$role", "admin"] }, 1, 0] } },
+            phoneVerified: {
+              $sum: {
+                $cond: [
+                  { $ne: [{ $ifNull: ["$phoneVerifiedAt", null] }, null] },
+                  1,
+                  0,
+                ],
+              },
+            },
+            signupsLast7Days: {
+              $sum: { $cond: [{ $gte: ["$createdAt", sevenDaysAgo] }, 1, 0] },
+            },
+            signupsLast30Days: {
+              $sum: { $cond: [{ $gte: ["$createdAt", thirtyDaysAgo] }, 1, 0] },
+            },
+            newThisMonth: {
+              $sum: { $cond: [{ $gte: ["$createdAt", monthStartedAt] }, 1, 0] },
+            },
+          },
+        },
+      ]),
+      includeRepeatCustomers
+        ? Order.aggregate([
+            { $match: { status: { $ne: "cancelled" } } },
+            { $group: { _id: "$buyerId", ordersCount: { $sum: 1 } } },
+            { $match: { ordersCount: { $gte: 2 } } },
+            { $count: "total" },
+          ])
+        : Promise.resolve([]),
+    ]);
+    const userMetrics = userMetricRows[0] || {};
     return {
-      total,
-      buyers,
-      admins,
-      phoneVerified,
-      signupsLast7Days,
-      signupsLast30Days,
-      newThisMonth,
+      total: userMetrics.total || 0,
+      buyers: userMetrics.buyers || 0,
+      admins: userMetrics.admins || 0,
+      phoneVerified: userMetrics.phoneVerified || 0,
+      signupsLast7Days: userMetrics.signupsLast7Days || 0,
+      signupsLast30Days: userMetrics.signupsLast30Days || 0,
+      newThisMonth: userMetrics.newThisMonth || 0,
       repeatCustomers: repeatCustomerRows[0]?.total || 0,
     };
   }
@@ -1728,13 +1839,15 @@ export const getRegisteredUserMetrics = async (selectedMode) => {
     signupsLast7Days: users.filter((user) => new Date(user.createdAt) >= sevenDaysAgo).length,
     signupsLast30Days: users.filter((user) => new Date(user.createdAt) >= thirtyDaysAgo).length,
     newThisMonth: users.filter((user) => new Date(user.createdAt) >= monthStartedAt).length,
-    repeatCustomers: users.filter(
-      (user) =>
-        memoryStore.count(
-          "orders",
-          (order) => order.buyerId === user.id && order.status !== "cancelled",
-        ) >= 2,
-    ).length,
+    repeatCustomers: includeRepeatCustomers
+      ? users.filter(
+          (user) =>
+            memoryStore.count(
+              "orders",
+              (order) => order.buyerId === user.id && order.status !== "cancelled",
+            ) >= 2,
+        ).length
+      : 0,
   };
 };
 
@@ -1797,13 +1910,36 @@ export const getDashboardStats = async () => {
   const mode = await ensureCatalogSeeded();
   const pendingOrderStatuses = ["placed", "confirmed", "in_progress", "ready", "shipped"];
   if (mode === "mongodb") {
-    const [products, orders, ordersPending, newInquiries, newMessages, userMetrics] = await Promise.all([
+    const [
+      products,
+      orders,
+      ordersPending,
+      newInquiries,
+      newMessages,
+      userMetrics,
+      recentOrders,
+      lowStock,
+    ] = await Promise.all([
       Product.countDocuments({ active: true }),
       Order.countDocuments({}),
       Order.countDocuments({ status: { $in: pendingOrderStatuses } }),
       CustomInquiry.countDocuments({ status: "new" }),
       Contact.countDocuments({ status: "new" }),
-      getRegisteredUserMetrics(mode),
+      getRegisteredUserMetrics(mode, { includeRepeatCustomers: false }),
+      Order.find({ status: { $in: pendingOrderStatuses } })
+        .select("orderNumber buyerName buyerEmail items.name status total createdAt")
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean(),
+      Product.find({
+        active: true,
+        archivedAt: null,
+        inventory: { $gte: 0, $lte: 3 },
+      })
+        .select("slug name category price compareAtPrice images inventory active archivedAt")
+        .sort({ inventory: 1, createdAt: -1 })
+        .limit(4)
+        .lean(),
     ]);
     return {
       products,
@@ -1816,9 +1952,31 @@ export const getDashboardStats = async () => {
       verifiedPhoneUsers: userMetrics.phoneVerified,
       signupsLast30Days: userMetrics.signupsLast30Days,
       newUsersThisMonth: userMetrics.newThisMonth,
+      recentOrders: recentOrders.map(publicOrder),
+      lowStock: lowStock.map(plain),
     };
   }
-  const userMetrics = await getRegisteredUserMetrics(mode);
+  const userMetrics = await getRegisteredUserMetrics(mode, { includeRepeatCustomers: false });
+  const recentOrders = memoryStore
+    .find("orders", (order) => pendingOrderStatuses.includes(order.status))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 5)
+    .map(publicOrder);
+  const lowStock = memoryStore
+    .find(
+      "products",
+      (product) => product.active
+        && !product.archivedAt
+        && product.inventory != null
+        && Number.isFinite(Number(product.inventory))
+        && Number(product.inventory) <= 3,
+    )
+    .sort(
+      (a, b) => Number(a.inventory) - Number(b.inventory)
+        || new Date(b.createdAt) - new Date(a.createdAt),
+    )
+    .slice(0, 4)
+    .map(plain);
   return {
     products: memoryStore.count("products", (product) => product.active),
     orders: memoryStore.count("orders"),
@@ -1833,6 +1991,8 @@ export const getDashboardStats = async () => {
     verifiedPhoneUsers: userMetrics.phoneVerified,
     signupsLast30Days: userMetrics.signupsLast30Days,
     newUsersThisMonth: userMetrics.newThisMonth,
+    recentOrders,
+    lowStock,
   };
 };
 

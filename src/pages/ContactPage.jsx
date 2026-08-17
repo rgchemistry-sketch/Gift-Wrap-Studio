@@ -83,10 +83,6 @@ export default function ContactPage() {
                 <span><Icon name="instagram" /></span>
                 <p><small>See recent work on Instagram</small><strong>{contact.instagramLabel || 'Instagram'}</strong></p>
               </a>}
-              {contact.facebookUrl && <a href={contact.facebookUrl} target="_blank" rel="noreferrer">
-                <span><Icon name="facebook" /></span>
-                <p><small>Visit us on Facebook</small><strong>{contact.facebookLabel || 'Facebook'}</strong></p>
-              </a>}
               <a href="https://maps.app.goo.gl/Tfcr1XpcvsaZqgJ28?g_st=iw" target="_blank" rel="noreferrer">
                 <span><Icon name="map" /></span>
                 <p><small>Find the studio</small><strong>Open in Google Maps</strong></p>

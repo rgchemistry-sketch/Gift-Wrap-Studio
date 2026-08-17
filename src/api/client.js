@@ -6,6 +6,7 @@ const DEFAULT_TIMEOUT = 12000;
 // active catalogue rather than the server's first page.
 const CATALOG_PAGE_SIZE = 100;
 const CATALOG_MAX_PAGES = 20;
+const inFlightGetRequests = new Map();
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = 'REQUEST_FAILED', details = null } = {}) {
@@ -17,7 +18,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, options = {}) {
+async function performRequest(path, options = {}) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), options.timeout || DEFAULT_TIMEOUT);
   const headers = new Headers(options.headers || {});
@@ -68,6 +69,28 @@ async function request(path, options = {}) {
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function request(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET') {
+    return performRequest(path, options).then((payload) => {
+      // A successful write can make an overlapping read stale. Removing the
+      // entries lets the next revalidation start a fresh request.
+      inFlightGetRequests.clear();
+      return payload;
+    });
+  }
+
+  const key = `${API_BASE}${path}`;
+  const activeRequest = inFlightGetRequests.get(key);
+  if (activeRequest) return activeRequest;
+
+  const requestPromise = performRequest(path, options).finally(() => {
+    if (inFlightGetRequests.get(key) === requestPromise) inFlightGetRequests.delete(key);
+  });
+  inFlightGetRequests.set(key, requestPromise);
+  return requestPromise;
 }
 
 async function uploadImage(file, purpose = 'products') {
@@ -234,15 +257,6 @@ export const api = {
   getCurrentUser: () => request('/auth/me'),
   getAuthStatus: () => request('/auth/status'),
   authenticateGoogle: (credential, intent) => request('/auth/google', { method: 'POST', body: { credential, intent } }),
-  authenticateFacebook: (accessToken, intent) => request('/auth/facebook', {
-    method: 'POST',
-    body: { accessToken, intent },
-  }),
-  requestAppleNonce: () => request('/auth/apple/nonce', { method: 'POST' }),
-  authenticateApple: ({ idToken, nonceId, name, intent }) => request('/auth/apple', {
-    method: 'POST',
-    body: { idToken, nonceId, intent, ...(name ? { name } : {}) },
-  }),
   startEmailAuthentication: ({ email, name, intent }) => request('/auth/email/start', {
     method: 'POST',
     body: { email, ...(name ? { name } : {}), intent },
@@ -251,17 +265,6 @@ export const api = {
     method: 'POST',
     body: { challengeId, code },
   }),
-  getPhoneAuthStatus: () => request('/auth/phone/status'),
-  startPhoneAuthentication: ({ credential, email, phone, intent }) =>
-    request('/auth/phone/start', {
-      method: 'POST',
-      body: { credential, email, phone, intent },
-    }),
-  verifyPhoneAuthentication: ({ challengeId, code }) =>
-    request('/auth/phone/verify', {
-      method: 'POST',
-      body: { challengeId, code },
-    }),
   authenticateDemo: (role) => request('/auth/demo', { method: 'POST', body: { role } }),
   signOut: () => request('/auth/logout', { method: 'POST' }),
   submitOrderRequest: (payload, idempotencyKey) => request('/orders', {
@@ -294,7 +297,11 @@ export const api = {
   },
 
   getAdminSummary: () => request('/admin/dashboard'),
-  getAdminProducts: () => request('/admin/products'),
+  getAdminProducts: (params = {}) => {
+    const query = searchQuery(params);
+    return request(`/admin/products${query ? `?${query}` : ''}`);
+  },
+  getAdminProduct: (productId) => request(`/admin/products/${encodeURIComponent(productId)}`),
   createAdminProduct: (payload) => request('/admin/products', { method: 'POST', body: payload }),
   updateAdminProduct: (productId, payload) =>
     request(`/admin/products/${encodeURIComponent(productId)}`, { method: 'PATCH', body: payload }),

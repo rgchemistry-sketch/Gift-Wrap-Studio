@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveStudioContact } from "../../src/utils/studio-contact.js";
 
-test("storefront contact defaults are used only before settings load", () => {
+test("storefront contact links stay hidden until settings load", () => {
   const loadingContact = resolveStudioContact(null);
-  assert.equal(loadingContact.email, "info@giftnwrapstudio.com");
-  assert.equal(loadingContact.instagramUrl, "https://www.instagram.com/giftnwrapstudio/");
+  assert.equal(loadingContact.email, "");
+  assert.equal(loadingContact.instagramUrl, "");
 
   const clearedContact = resolveStudioContact({
-    contact: { email: "", phone: "", instagram: "", facebook: "" },
+    contact: { email: "", phone: "", instagram: "" },
   });
   assert.deepEqual(clearedContact, {
     email: "",
@@ -17,8 +17,6 @@ test("storefront contact defaults are used only before settings load", () => {
     phoneLabel: "",
     instagramUrl: "",
     instagramLabel: "",
-    facebookUrl: "",
-    facebookLabel: "",
   });
 });
 
@@ -28,7 +26,6 @@ test("storefront contact resolves legacy and raw social fields to canonical prof
     contactPhone: "+91 98765 43210",
     contact: {
       instagram: "https://m.instagram.com/GiftNWrapStudio/?ref=share",
-      facebook: "@GiftNWrapStudio",
     },
   });
 
@@ -36,5 +33,4 @@ test("storefront contact resolves legacy and raw social fields to canonical prof
   assert.equal(contact.phoneHref, "tel:+919876543210");
   assert.equal(contact.phoneLabel, "+91 98765 43210");
   assert.equal(contact.instagramUrl, "https://www.instagram.com/giftnwrapstudio/");
-  assert.equal(contact.facebookUrl, "https://www.facebook.com/giftnwrapstudio/");
 });

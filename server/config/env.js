@@ -46,11 +46,6 @@ export const env = Object.freeze({
     ? String(process.env.COOKIE_SAME_SITE || "lax").toLowerCase()
     : "lax",
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
-  facebookAppId: process.env.FACEBOOK_APP_ID?.trim() || "",
-  facebookAppSecret: process.env.FACEBOOK_APP_SECRET?.trim() || "",
-  facebookGraphVersion: process.env.FACEBOOK_GRAPH_VERSION?.trim() || "v25.0",
-  appleClientId: process.env.APPLE_CLIENT_ID?.trim() || "",
-  authNonceMinutes: asInteger(process.env.AUTH_NONCE_MINUTES, 5, { min: 2, max: 15 }),
   resendApiKey: process.env.RESEND_API_KEY?.trim() || "",
   authEmailFrom: process.env.AUTH_EMAIL_FROM?.trim() || "",
   authEmailReplyTo: process.env.AUTH_EMAIL_REPLY_TO?.trim() || "",
@@ -70,15 +65,6 @@ export const env = Object.freeze({
   demoEmailOtpCode: /^\d{6}$/.test(process.env.DEMO_EMAIL_OTP_CODE || "")
     ? process.env.DEMO_EMAIL_OTP_CODE
     : "246810",
-  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID?.trim() || "",
-  twilioApiKeySid: process.env.TWILIO_API_KEY_SID?.trim() || "",
-  twilioApiKeySecret: process.env.TWILIO_API_KEY_SECRET?.trim() || "",
-  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN?.trim() || "",
-  twilioVerifyServiceSid: process.env.TWILIO_VERIFY_SERVICE_SID?.trim() || "",
-  phoneAuthChallengeMinutes: asInteger(process.env.PHONE_AUTH_CHALLENGE_MINUTES, 10, {
-    min: 2,
-    max: 30,
-  }),
   adminEmail:
     process.env.ADMIN_EMAIL?.trim().toLowerCase() ||
     (allowDemoAuth ? "admin@giftnwrap.local" : ""),
@@ -114,20 +100,6 @@ export const env = Object.freeze({
   }),
 });
 
-export const phoneAuthStatus = () => {
-  const configured = Boolean(
-    env.twilioVerifyServiceSid &&
-      ((env.twilioAccountSid && env.twilioAuthToken) ||
-        (env.twilioApiKeySid && env.twilioApiKeySecret)),
-  );
-  return {
-    provider: "twilio-verify",
-    enabled: configured,
-    configured,
-    country: "IN",
-  };
-};
-
 export const emailAuthStatus = () => {
   const hasSigningSecret = Boolean(env.emailOtpSecret);
   const configured = Boolean(env.resendApiKey && env.authEmailFrom && hasSigningSecret);
@@ -142,10 +114,7 @@ export const emailAuthStatus = () => {
 
 export const authProviderStatus = () => ({
   google: { enabled: Boolean(env.googleClientId) },
-  facebook: { enabled: Boolean(env.facebookAppId && env.facebookAppSecret) },
-  apple: { enabled: Boolean(env.appleClientId) },
   email: emailAuthStatus(),
-  phone: phoneAuthStatus(),
 });
 
 export const missingConfig = (...keys) => keys.filter((key) => !env[key]);
