@@ -9,7 +9,8 @@ import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../components/Icon';
 import ProductCard from '../components/ProductCard';
 import { api } from '../api/client';
-import { demoProducts, formatCurrency } from '../data/catalog';
+import { formatCurrency } from '../data/catalog';
+import { useCatalog } from '../data/useCatalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 
@@ -34,6 +35,7 @@ const statusLabels = {
 export default function AccountPage() {
   const { user, loading: authLoading, openAuth, signOut, signingOut } = useAuth();
   const { wishlist } = useShop();
+  const { products: catalog } = useCatalog();
   const [tab, setTab] = useState('overview');
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -47,8 +49,7 @@ export default function AccountPage() {
     setOrdersLoading(true);
     setError('');
     try {
-      const result = await api.getBuyerOrders();
-      setOrders(result.data || result.orders || []);
+      setOrders(await api.getAllBuyerOrders());
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -58,7 +59,12 @@ export default function AccountPage() {
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
 
-  const savedProducts = useMemo(() => demoProducts.filter((product) => wishlist.includes(product.id)), [wishlist]);
+  // The wishlist stores live catalogue ids, so it has to be matched against the live
+  // catalogue — matching fixture ids left every saved piece invisible.
+  const savedProducts = useMemo(
+    () => catalog.filter((product) => wishlist.includes(product.id)),
+    [catalog, wishlist],
+  );
 
   if (authLoading) return <div className="route-loader" role="status"><span /><span /><span /></div>;
   if (!user) {

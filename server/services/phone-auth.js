@@ -8,7 +8,7 @@ import {
   unauthorized,
 } from "../lib/errors.js";
 import { PhoneAuthChallenge } from "../models/PhoneAuthChallenge.js";
-import { verifyGoogleCredential } from "./auth.js";
+import { maskPhone, verifyGoogleCredential } from "./auth.js";
 import { phoneVerificationProvider } from "./phone-verification-provider.js";
 import {
   findUserByGoogleIdentity,
@@ -22,7 +22,7 @@ const memoryChallenges = new Map();
 
 const hashChallenge = (value) => createHash("sha256").update(value).digest("hex");
 const plain = (record) => (typeof record?.toJSON === "function" ? record.toJSON() : record);
-export const maskPhone = (phone) => `+91 •••••• ${phone.slice(-4)}`;
+export { maskPhone };
 
 const challengeMode = async () => {
   const mode = await connectDatabase();

@@ -12,6 +12,7 @@ import {
   rateLimited,
 } from "../lib/errors.js";
 import { memoryStore } from "../lib/memory-store.js";
+import { maskPhone } from "./auth.js";
 import { Contact } from "../models/Contact.js";
 import { CustomInquiry } from "../models/CustomInquiry.js";
 import { Order } from "../models/Order.js";
@@ -97,18 +98,41 @@ const restoreMemoryRecord = (collection, record) => {
 
 let mongoSeedPromise;
 
+// Catalogues seeded before `occasion` existed have no value for it, which would leave the
+// storefront's occasion navigation empty. Fill in the seeded pieces only where the field is
+// still unset so an administrator's own choice is never overwritten.
+const backfillSeededOccasions = async () => {
+  const operations = demoProducts
+    .filter((product) => product.occasion)
+    .map((product) => ({
+      updateOne: {
+        filter: {
+          slug: product.slug,
+          $or: [{ occasion: { $exists: false } }, { occasion: "" }, { occasion: null }],
+        },
+        update: { $set: { occasion: product.occasion } },
+      },
+    }));
+  if (!operations.length) return;
+  await Product.bulkWrite(operations, { ordered: false });
+};
+
 export const ensureCatalogSeeded = async () => {
   const mode = await connectDatabase();
 
   if (mode === "mongodb") {
     if (!mongoSeedPromise) {
       mongoSeedPromise = (async () => {
-        if ((await Product.estimatedDocumentCount()) > 0) return;
+        if ((await Product.estimatedDocumentCount()) > 0) {
+          await backfillSeededOccasions();
+          return;
+        }
         const seeds = demoProducts.map(({ id: _id, ...product }) => product);
         try {
           await Product.insertMany(seeds, { ordered: false });
         } catch (error) {
           if (error?.code !== 11_000 && error?.code !== 11000) throw error;
+          await backfillSeededOccasions();
         }
       })().catch((error) => {
         mongoSeedPromise = undefined;
@@ -125,12 +149,13 @@ export const ensureCatalogSeeded = async () => {
   return mode;
 };
 
-export const listProducts = async ({ search, category, featured, page, limit }) => {
+export const listProducts = async ({ search, category, occasion, featured, page, limit }) => {
   const mode = await ensureCatalogSeeded();
 
   if (mode === "mongodb") {
     const query = { active: true };
     if (category) query.category = category;
+    if (occasion) query.occasion = occasion;
     if (featured !== undefined) query.featured = featured;
     if (search) {
       const pattern = new RegExp(escapeRegExp(search), "i");
@@ -152,6 +177,7 @@ export const listProducts = async ({ search, category, featured, page, limit }) 
     .all("products")
     .filter((product) => product.active)
     .filter((product) => !category || product.category === category)
+    .filter((product) => !occasion || product.occasion === occasion)
     .filter((product) => featured === undefined || product.featured === featured)
     .filter(
       (product) =>
@@ -161,7 +187,13 @@ export const listProducts = async ({ search, category, featured, page, limit }) 
           .toLowerCase()
           .includes(needle),
     )
-    .sort((a, b) => a.sortOrder - b.sortOrder || Number(b.featured) - Number(a.featured));
+    // Mirror the MongoDB sort exactly so both persistence modes page identically.
+    .sort(
+      (a, b) =>
+        a.sortOrder - b.sortOrder ||
+        Number(b.featured) - Number(a.featured) ||
+        new Date(b.createdAt) - new Date(a.createdAt),
+    );
   return paginate(slicePage(filtered, page, limit), page, limit, filtered.length);
 };
 
@@ -1525,13 +1557,6 @@ export const listContacts = (query) => listInbox("contacts", Contact, query);
 
 export const updateContact = (id, input) =>
   updateInbox("contacts", Contact, id, input, "Contact message");
-
-const maskPhone = (phone) => {
-  const digits = String(phone || "").replace(/\D/g, "");
-  if (!digits) return "";
-  const local = digits.length > 10 ? digits.slice(-10) : digits;
-  return `+91 ••••••${local.slice(-4)}`;
-};
 
 const adminUserView = (record, relationship = {}) => {
   const user = plain(record);

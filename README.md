@@ -71,6 +71,21 @@ For Google:
 
 The API verifies the token signature, audience, issuer, and expiry with Google's Node library and stores Google's stable `sub` claim as the external identity.
 
+### Admin access
+
+`ADMIN_EMAIL` is the only thing that grants the admin panel. The account's stored role is a cache
+refreshed at login; every request re-derives the role from `ADMIN_EMAIL`, so pointing it at a
+different address takes effect immediately and does not require the new administrator to sign out
+and back in. A stored `role: "admin"` on any other account is ignored.
+
+Set it in **both** places or the panel will not open in the environment you are using:
+
+- Local: `ADMIN_EMAIL=` in `.env`
+- Production: the `ADMIN_EMAIL` environment variable in the Vercel project settings, then redeploy
+
+The address must match the signed-in account exactly (lowercase). Only Google and email-code
+sign-ins are eligible for the admin role.
+
 For Facebook, configure the same app as `VITE_FACEBOOK_APP_ID` and `FACEBOOK_APP_ID`, keep
 `FACEBOOK_APP_SECRET` server-only, and configure the production domain in Meta's app dashboard.
 The API validates every user access token with `debug_token`, requires the configured app ID, and

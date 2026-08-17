@@ -6,6 +6,7 @@ export const demoProducts = Object.freeze([
     slug: "pressed-flower-name-plaque",
     name: "Pressed Flower Name Plaque",
     category: "Personalized gifts",
+    occasion: "Housewarming",
     shortDescription: "A botanical name plaque composed by hand around your chosen lettering and palette.",
     description:
       "Personalize the name, colours, metallic accents, and floral composition for a luminous keepsake designed for gifting or a favourite corner at home.",
@@ -26,6 +27,7 @@ export const demoProducts = Object.freeze([
     slug: "midnight-geode-wall-clock",
     name: "Midnight Geode Wall Clock",
     category: "Resin clocks",
+    occasion: "Wedding",
     shortDescription: "A statement geode clock with deep mineral tones and restrained metallic detail.",
     description:
       "A functional art piece layered for geode depth. Choose a colour direction and finishing details to complement your space.",
@@ -46,6 +48,7 @@ export const demoProducts = Object.freeze([
     slug: "blush-bloom-ring-tray",
     name: "Blush Bloom Ring Tray",
     category: "Wedding collection",
+    occasion: "Wedding",
     shortDescription: "A delicate ring tray personalized with initials, a date, and a floral palette.",
     description:
       "Designed for proposals, engagements, and wedding ceremonies. Add initials, a meaningful date, metallic foil, and flowers that echo the celebration.",
@@ -66,6 +69,7 @@ export const demoProducts = Object.freeze([
     slug: "malachite-serving-tray",
     name: "Malachite Serving Tray",
     category: "Serving collection",
+    occasion: "Housewarming",
     shortDescription: "A rich marble-effect tray with sculptural gold-tone handles and an easy-clean finish.",
     description:
       "Hand-poured patterning gives every tray its own movement. A polished accent for hosting, gifting, or display.",
@@ -86,6 +90,7 @@ export const demoProducts = Object.freeze([
     slug: "ocean-edge-coaster-set",
     name: "Ocean Edge Coaster Set",
     category: "Serving collection",
+    occasion: "Birthday",
     shortDescription: "A set of four hand-poured coasters inspired by foamy shoreline movement.",
     description:
       "Layered blues and translucent white make every coastline pattern distinct, ready to bring a coastal note to the table.",
@@ -106,6 +111,7 @@ export const demoProducts = Object.freeze([
     slug: "memory-photo-frame",
     name: "Everlasting Memory Photo Frame",
     category: "Personalized gifts",
+    occasion: "Anniversary",
     shortDescription: "A favourite photograph framed with florals, subtle foil, and your message.",
     description:
       "Choose the photograph, floral palette, foil finish, name, and occasion. Each handcrafted composition is arranged individually.",
@@ -126,6 +132,7 @@ export const demoProducts = Object.freeze([
     slug: "botanical-bookends",
     name: "Botanical Arch Bookends",
     category: "Home decor",
+    occasion: "Housewarming",
     shortDescription: "Architectural resin arches designed as a functional accent for shelves and desks.",
     description:
       "A sculptural pair with botanical detail and a calm, gallery-like silhouette for bookshelves, consoles, or workspaces.",
@@ -146,6 +153,7 @@ export const demoProducts = Object.freeze([
     slug: "pet-memory-keepsake",
     name: "Pet Memory Keepsake",
     category: "Personalized gifts",
+    occasion: "Memorial",
     shortDescription: "A gentle personalized memento created to honour a beloved companion.",
     description:
       "Share a name, date, photograph or silhouette, and a preferred floral palette for a thoughtful remembrance piece.",
@@ -166,6 +174,7 @@ export const demoProducts = Object.freeze([
     slug: "golden-hour-desk-plaque",
     name: "Golden Hour Desk Plaque",
     category: "Corporate gifts",
+    occasion: "Corporate",
     shortDescription: "A polished branded desk piece for recognition, milestones, and team gifting.",
     description:
       "Personalize a recipient name, designation, logo, message, and brand-aligned palette. Contact the studio for quantities and timelines.",
@@ -186,6 +195,7 @@ export const demoProducts = Object.freeze([
     slug: "monogram-initial-letter",
     name: "Botanical Monogram Letter",
     category: "Personalized gifts",
+    occasion: "Birthday",
     shortDescription: "A freestanding initial layered with petals, shimmer, and metallic fragments.",
     description:
       "Choose an initial and colour story for a small personalized accent. This demo item is currently shown as unavailable.",

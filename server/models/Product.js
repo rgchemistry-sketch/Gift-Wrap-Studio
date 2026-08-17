@@ -26,6 +26,8 @@ const productSchema = new mongoose.Schema(
     slug: { type: String, required: true, unique: true, index: true, lowercase: true, trim: true },
     name: { type: String, required: true, trim: true, maxlength: 140 },
     category: { type: String, required: true, index: true, trim: true, maxlength: 80 },
+    // Drives the storefront's occasion navigation (/shop?occasion=Wedding) and filters.
+    occasion: { type: String, default: "", index: true, trim: true, maxlength: 80 },
     shortDescription: { type: String, required: true, trim: true, maxlength: 240 },
     description: { type: String, default: "", trim: true, maxlength: 4_000 },
     sku: { type: String, default: "", trim: true, uppercase: true, maxlength: 80, index: true },

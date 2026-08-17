@@ -181,7 +181,7 @@ export function ShopProvider({ children }) {
   }, [notify]);
 
   const addToCart = useCallback(
-    (product, { quantity = 1, customization = {}, customizationFee = 0 } = {}) => {
+    (product, { quantity = 1, customization = {} } = {}) => {
       const lineId = makeLineId(product, customization);
       const next = [...cart];
       const existingIndex = next.findIndex((item) => item.lineId === lineId);
@@ -196,7 +196,6 @@ export function ShopProvider({ children }) {
           product,
           quantity,
           customization,
-          customizationFee,
         });
       }
       persistCart(next);
@@ -249,10 +248,9 @@ export function ShopProvider({ children }) {
   );
 
   const cartCount = cart.reduce((total, line) => total + line.quantity, 0);
-  const subtotal = cart.reduce(
-    (total, line) => total + (line.product.price + (line.customizationFee || 0)) * line.quantity,
-    0,
-  );
+  // Mirrors the server's order subtotal exactly (services/store.js). Any extra fee added
+  // here without a matching server rule shows the customer a total the order never records.
+  const subtotal = cart.reduce((total, line) => total + line.product.price * line.quantity, 0);
 
   const value = useMemo(
     () => ({

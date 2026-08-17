@@ -7,11 +7,16 @@ import Row from 'react-bootstrap/Row';
 import Icon from '../components/Icon';
 import SmartImage from '../components/SmartImage';
 import ProductCard from '../components/ProductCard';
-import { demoProducts, formatCurrency } from '../data/catalog';
+import { formatCurrency } from '../data/catalog';
+import { useCatalog } from '../data/useCatalog';
 import { useShop } from '../context/ShopContext';
 
 export default function CartPage() {
   const { cart, subtotal, updateQuantity, removeFromCart, claimedOfferCode, welcomeOffer, studioSettings } = useShop();
+  const { products: catalog } = useCatalog();
+  const suggestions = [...catalog]
+    .sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.inStock) - Number(a.inStock))
+    .slice(0, 3);
   const claimedOffer = claimedOfferCode || (window.sessionStorage.getItem('gnw-first-offer-claimed') === 'true' ? welcomeOffer?.code || 'FIRST10' : '');
   const contactPhone = studioSettings?.contact?.phone || '+919588281126';
   const contactDigits = String(contactPhone).replace(/\D/g, '');
@@ -28,7 +33,7 @@ export default function CartPage() {
           <p>Your bag is empty. Explore the studio collection or begin a piece made entirely from your idea.</p>
           <div><Button as={Link} to="/shop" className="button-burgundy">Explore the collection</Button><Link to="/custom-order" className="text-link">Start a custom order <Icon name="arrow" /></Link></div>
         </Container>
-        <section className="page-section cart-suggestions"><Container fluid="xl"><header className="section-heading"><p className="eyebrow">A lovely place to begin</p><h2>Studio favourites.</h2></header><Row className="g-4">{demoProducts.slice(0, 3).map((product, index) => <Col sm={6} lg={4} key={product.id}><ProductCard product={product} index={index} /></Col>)}</Row></Container></section>
+        {suggestions.length > 0 && <section className="page-section cart-suggestions"><Container fluid="xl"><header className="section-heading"><p className="eyebrow">A lovely place to begin</p><h2>Studio favourites.</h2></header><Row className="g-4">{suggestions.map((product, index) => <Col sm={6} lg={4} key={product.id}><ProductCard product={product} index={index} /></Col>)}</Row></Container></section>}
       </>
     );
   }
@@ -44,7 +49,7 @@ export default function CartPage() {
                 <article className="cart-line" key={line.lineId}>
                   <Link to={`/product/${line.product.slug}`} className="cart-line__image"><SmartImage src={line.product.image} alt={line.product.title} fallbackLabel={line.product.category} /></Link>
                   <div className="cart-line__content">
-                    <div className="cart-line__head"><div><p className="eyebrow">{line.product.category}</p><h2><Link to={`/product/${line.product.slug}`}>{line.product.title}</Link></h2></div><strong>{formatCurrency((line.product.price + (line.customizationFee || 0)) * line.quantity)}</strong></div>
+                    <div className="cart-line__head"><div><p className="eyebrow">{line.product.category}</p><h2><Link to={`/product/${line.product.slug}`}>{line.product.title}</Link></h2></div><strong>{formatCurrency(line.product.price * line.quantity)}</strong></div>
                     {line.customization && Object.keys(line.customization).length > 0 && (
                       <div className="cart-customization">
                         <span>Personalized</span>

@@ -14,7 +14,7 @@ import ProductManager from '../components/admin/ProductManager';
 import SettingsEditor from '../components/admin/SettingsEditor';
 import UsersManager from '../components/admin/UsersManager';
 import { api } from '../api/client';
-import { demoProducts, formatCurrency, normalizeProduct } from '../data/catalog';
+import { formatCurrency, normalizeProduct } from '../data/catalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 
@@ -24,7 +24,7 @@ const demoSummary = {
     { id: 'preview-1', orderNumber: 'GNW-PREVIEW-01', customer: { name: 'Preview buyer' }, status: 'placed', total: 2199, createdAt: new Date().toISOString(), items: [{ name: 'Memory Photo Frame' }] },
     { id: 'preview-2', orderNumber: 'GNW-PREVIEW-02', customer: { name: 'Preview buyer' }, status: 'in_progress', total: 4299, createdAt: new Date(Date.now() - 86400000).toISOString(), items: [{ name: 'Geode Wall Clock' }] },
   ],
-  lowStock: demoProducts.slice(0, 3).map((product, index) => ({ ...product, stock: index + 1 })),
+  lowStock: [],
   inquiries: [
     { id: 'iq-preview', name: 'Preview inquiry', productType: 'Wedding keepsake', budget: '₹3,000 – ₹6,000', status: 'new' },
   ],
@@ -398,12 +398,6 @@ function Orders({summary,preview,updateStatus,loading,workingItem,onPageChange})
     ? orders.filter((order) => `${order.orderNumber || ''} ${order.buyerName || ''} ${order.buyerEmail || ''} ${order.customer?.name || ''} ${order.items?.map((item) => item.name || item.product?.title || '').join(' ') || ''}`.toLowerCase().includes(normalizedQuery))
     : orders;
   return <><div className="admin-section-head"><div><p className="eyebrow">Fulfilment</p><h2>Orders</h2><p className="admin-section-copy">Search applies to the {orders.length} orders on this page.</p></div><div className="admin-search"><Icon name="search"/><input type="search" value={query} onChange={(event)=>setQuery(event.target.value)} placeholder="Search this page" aria-label="Search orders on this page"/></div></div><div className="admin-panel admin-table-panel" aria-busy={loading}>{filteredOrders.length?<Table responsive hover className="admin-table"><thead><tr><th>Order</th><th>Buyer</th><th>Placed</th><th>Amount</th><th>Status</th></tr></thead><tbody>{filteredOrders.map(order=>{const id=order.id||order._id;return <tr key={id||order.orderNumber}><td><strong>{order.orderNumber||String(id).slice(-6).toUpperCase()}</strong><small>{order.items?.length||0} pieces</small></td><td>{order.buyerName||order.customer?.name||order.user?.name||order.buyerEmail||'Buyer'}</td><td>{order.createdAt?new Date(order.createdAt).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—'}</td><td>{order.total!=null?formatCurrency(order.total):'Pending'}</td><td><Form.Select size="sm" value={order.status||'placed'} disabled={preview||loading||workingItem===`order:${id}`} onChange={event=>updateStatus(id,event.target.value)} aria-label={`Status for ${order.orderNumber||'order'}`}><option value="placed">Placed</option><option value="confirmed">Confirmed</option><option value="in_progress">In progress</option><option value="ready">Ready</option><option value="shipped">Shipped</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option></Form.Select></td></tr>})}</tbody></Table>:<AdminEmpty text={query?'No orders on this page match that search.':'No orders have been placed yet.'}/>}<AdminPager pagination={pagination} visibleCount={filteredOrders.length} filtered={Boolean(normalizedQuery)} noun="orders" loading={loading} onPageChange={onPageChange}/></div></>;
-}
-
-function _LegacyProducts({summary}){
-  const rawProducts = Array.isArray(summary.productsList) ? summary.productsList : Array.isArray(summary.lowStock) ? summary.lowStock : demoProducts;
-  const products=rawProducts.slice(0,12).map(normalizeProduct);
-  return <><div className="admin-section-head"><div><p className="eyebrow">Catalogue</p><h2>Products</h2></div><span className="admin-readonly-note"><Icon name="lock" size={14}/> Catalogue editing is API-managed in this release</span></div><div className="admin-product-grid">{products.map(product=><article key={product.id}><SmartImage src={product.image} alt="" fallbackLabel={product.category}/><div><span className={product.inStock?'in-stock':'out-stock'}>{product.inStock?'Published':'Unavailable'}</span><h3>{product.title}</h3><p>{product.category} · {formatCurrency(product.price)}</p><span className="admin-item-readonly">Read-only overview</span></div></article>)}</div></>;
 }
 
 function Requests({summary,preview,updateInquiryStatus,loading,workingItem,onPageChange}){

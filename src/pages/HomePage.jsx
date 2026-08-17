@@ -7,7 +7,9 @@ import Row from 'react-bootstrap/Row';
 import Icon from '../components/Icon';
 import ProductCard from '../components/ProductCard';
 import SmartImage from '../components/SmartImage';
-import { categories, demoProducts } from '../data/catalog';
+import { ProductCardSkeleton } from '../components/Feedback';
+import { categories } from '../data/catalog';
+import { useCatalog } from '../data/useCatalog';
 
 const trustPoints = [
   ['spark', '100% handmade', 'Individually composed, never mass-produced'],
@@ -32,6 +34,12 @@ const faqs = [
 ];
 
 export default function HomePage() {
+  const { products, loading: catalogLoading } = useCatalog();
+  // Curated first, then whatever is in stock, so the shelf is never padded with placeholders.
+  const bestsellers = [...products]
+    .sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.inStock) - Number(a.inStock))
+    .slice(0, 4);
+
   return (
     <>
       <section className="home-hero">
@@ -114,21 +122,27 @@ export default function HomePage() {
         </Container>
       </section>
 
-      <section className="page-section bestsellers-section">
-        <Container fluid="xl">
-          <header className="section-heading centered-heading">
-            <p className="eyebrow">From the studio table</p>
-            <h2>Pieces people remember.</h2>
-            <p>Thoughtful favourites for gifting, gathering and keeping close.</p>
-          </header>
-          <Row className="g-4 product-grid">
-            {demoProducts.slice(0, 4).map((product, index) => (
-              <Col xs={12} sm={6} lg={3} key={product.id}><ProductCard product={product} index={index} /></Col>
-            ))}
-          </Row>
-          <div className="section-cta"><Link to="/shop" className="text-link text-link--large">See the entire collection <Icon name="arrow" /></Link></div>
-        </Container>
-      </section>
+      {(catalogLoading || bestsellers.length > 0) && (
+        <section className="page-section bestsellers-section">
+          <Container fluid="xl">
+            <header className="section-heading centered-heading">
+              <p className="eyebrow">From the studio table</p>
+              <h2>Pieces people remember.</h2>
+              <p>Thoughtful favourites for gifting, gathering and keeping close.</p>
+            </header>
+            <Row className="g-4 product-grid">
+              {catalogLoading
+                ? Array.from({ length: 4 }, (_, index) => (
+                  <Col xs={12} sm={6} lg={3} key={`bestseller-skeleton-${index}`}><ProductCardSkeleton /></Col>
+                ))
+                : bestsellers.map((product, index) => (
+                  <Col xs={12} sm={6} lg={3} key={product.id}><ProductCard product={product} index={index} /></Col>
+                ))}
+            </Row>
+            <div className="section-cta"><Link to="/shop" className="text-link text-link--large">See the entire collection <Icon name="arrow" /></Link></div>
+          </Container>
+        </section>
+      )}
 
       <section className="personalization-feature">
         <Container fluid="xl">

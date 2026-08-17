@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
@@ -10,8 +10,7 @@ import Row from 'react-bootstrap/Row';
 import Icon from '../components/Icon';
 import ProductCard from '../components/ProductCard';
 import { ProductCardSkeleton } from '../components/Feedback';
-import { api } from '../api/client';
-import { demoProducts } from '../data/catalog';
+import { useCatalog } from '../data/useCatalog';
 
 const priceOptions = [
   ['', 'All prices'],
@@ -21,8 +20,8 @@ const priceOptions = [
 ];
 
 function FilterPanel({ filters, setFilter, products, onDone }) {
-  const productCategories = [...new Set(products.map((product) => product.category))].sort();
-  const productOccasions = [...new Set(products.map((product) => product.occasion))].sort();
+  const productCategories = [...new Set(products.map((product) => product.category).filter(Boolean))].sort();
+  const productOccasions = [...new Set(products.map((product) => product.occasion).filter(Boolean))].sort();
 
   return (
     <div className="filter-panel">
@@ -91,10 +90,7 @@ function FilterPanel({ filters, setFilter, products, onDone }) {
 
 export default function ShopPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [source, setSource] = useState('');
+  const { products, loading, error, refresh } = useCatalog();
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const filters = {
@@ -107,25 +103,7 @@ export default function ShopPage() {
     sort: searchParams.get('sort') || 'featured',
   };
 
-  const loadProducts = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const result = await api.getProducts();
-      setProducts(result.products.length ? result.products : demoProducts);
-      setSource(result.source);
-    } catch (requestError) {
-      setProducts(demoProducts);
-      setSource('studio-preview');
-      setError(`${requestError.message} Showing the studio preview collection while we reconnect.`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadProducts();
-  }, []);
+  const loadProducts = () => refresh({ force: true });
 
   const setFilter = (key, value) => {
     const next = new URLSearchParams(searchParams);
@@ -162,7 +140,15 @@ export default function ShopPage() {
     });
   }, [products, filters.q, filters.category, filters.occasion, filters.customizable, filters.available, filters.price, filters.sort]);
 
-  const activeFilters = Object.entries(filters).filter(([key, value]) => value && key !== 'sort');
+  const filterChipLabels = {
+    q: (value) => `“${value}”`,
+    customizable: () => 'Customizable only',
+    available: () => 'Available now',
+    price: (value) => priceOptions.find(([option]) => option === value)?.[1] || value,
+  };
+  const activeFilters = Object.entries(filters)
+    .filter(([key, value]) => value && key !== 'sort')
+    .map(([key, value]) => [key, filterChipLabels[key]?.(value) ?? value]);
 
   return (
     <>
@@ -181,7 +167,6 @@ export default function ShopPage() {
             <div>
               <Button variant="outline-dark" className="filter-trigger d-lg-none" onClick={() => setFiltersOpen(true)}><Icon name="spark" size={17} /> Filters {activeFilters.length > 0 && <span>{activeFilters.length}</span>}</Button>
               <p aria-live="polite"><strong>{loading ? '—' : filteredProducts.length}</strong> studio pieces</p>
-              {source === 'studio-preview' && <span className="preview-label">Preview collection</span>}
             </div>
             <Form.Group className="sort-control" controlId="catalog-sort">
               <Form.Label>Sort by</Form.Label>
@@ -196,8 +181,8 @@ export default function ShopPage() {
 
           {activeFilters.length > 0 && (
             <div className="active-filters" aria-label="Active filters">
-              {activeFilters.map(([key, value]) => (
-                <button type="button" key={key} onClick={() => setFilter(key, '')}>{value} <Icon name="close" size={14} /></button>
+              {activeFilters.map(([key, label]) => (
+                <button type="button" key={key} onClick={() => setFilter(key, '')}>{label} <Icon name="close" size={14} /></button>
               ))}
               <button type="button" className="clear-filter" onClick={clearFilters}>Clear all</button>
             </div>
@@ -207,7 +192,7 @@ export default function ShopPage() {
             <Col lg={3} className="d-none d-lg-block">
               <aside className="catalog-sidebar" aria-label="Product filters">
                 <div className="catalog-sidebar__head"><h2>Refine</h2>{activeFilters.length > 0 && <button type="button" className="plain-link" onClick={clearFilters}>Clear</button>}</div>
-                <FilterPanel filters={filters} setFilter={setFilter} products={products.length ? products : demoProducts} />
+                <FilterPanel filters={filters} setFilter={setFilter} products={products} />
               </aside>
             </Col>
             <Col lg={9}>
@@ -235,7 +220,7 @@ export default function ShopPage() {
           <div><p className="eyebrow">Find your piece</p><Offcanvas.Title>Filter the collection</Offcanvas.Title></div>
           <button type="button" className="icon-button" onClick={() => setFiltersOpen(false)} aria-label="Close filters"><Icon name="close" /></button>
         </Offcanvas.Header>
-        <Offcanvas.Body><FilterPanel filters={filters} setFilter={setFilter} products={products.length ? products : demoProducts} onDone={() => setFiltersOpen(false)} /></Offcanvas.Body>
+        <Offcanvas.Body><FilterPanel filters={filters} setFilter={setFilter} products={products} onDone={() => setFiltersOpen(false)} /></Offcanvas.Body>
       </Offcanvas>
     </>
   );

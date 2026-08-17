@@ -1,7 +1,11 @@
-import { demoProducts, findDemoProduct, normalizeProduct } from '../data/catalog';
+import { normalizeProduct } from '../data/catalog';
 
 const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 const DEFAULT_TIMEOUT = 12000;
+// The storefront filters and sorts the catalogue in the browser, so it needs the whole
+// active catalogue rather than the server's first page.
+const CATALOG_PAGE_SIZE = 100;
+const CATALOG_MAX_PAGES = 20;
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = 'REQUEST_FAILED', details = null } = {}) {
@@ -185,31 +189,46 @@ async function deleteUploadedAsset(publicId) {
   });
 }
 
+const searchQuery = (params = {}) =>
+  new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== ''),
+  ).toString();
+
 export const api = {
   async getProducts(params = {}) {
-    const query = new URLSearchParams(
-      Object.entries(params).filter(([, value]) => value !== undefined && value !== ''),
-    ).toString();
-    try {
-      const result = await request(`/products${query ? `?${query}` : ''}`);
-      return { products: (result.products || result.data || []).map(normalizeProduct), source: 'api' };
-    } catch (error) {
-      if (error.status && error.status !== 404) throw error;
-      return { products: demoProducts, source: 'studio-preview' };
-    }
+    const query = searchQuery(params);
+    const result = await request(`/products${query ? `?${query}` : ''}`);
+    const meta = result.meta || {};
+    return {
+      products: (result.products || result.data || []).map(normalizeProduct),
+      page: Number(meta.page || 1),
+      totalPages: Number(meta.totalPages || 1),
+      total: Number(meta.total ?? (result.data || []).length),
+    };
+  },
+
+  // Walks every page so client-side filtering and sorting see the whole active catalogue
+  // instead of silently operating on the server's first page.
+  async getAllProducts(params = {}) {
+    const products = [];
+    let page = 1;
+    let totalPages;
+    let total;
+
+    do {
+      const result = await api.getProducts({ ...params, page, limit: CATALOG_PAGE_SIZE });
+      products.push(...result.products);
+      totalPages = result.totalPages;
+      total = result.total;
+      page += 1;
+    } while (page <= totalPages && page <= CATALOG_MAX_PAGES);
+
+    return { products, total, truncated: totalPages > CATALOG_MAX_PAGES };
   },
 
   async getProduct(slug) {
-    try {
-      const result = await request(`/products/${encodeURIComponent(slug)}`);
-      return { product: normalizeProduct(result.product || result.data || result), source: 'api' };
-    } catch (error) {
-      const demo = findDemoProduct(slug);
-      if (demo && (!error.status || error.status === 404 || error.status >= 500)) {
-        return { product: demo, source: 'studio-preview' };
-      }
-      throw error;
-    }
+    const result = await request(`/products/${encodeURIComponent(slug)}`);
+    return { product: normalizeProduct(result.product || result.data || result) };
   },
 
   getCurrentUser: () => request('/auth/me'),
@@ -252,7 +271,28 @@ export const api = {
   }),
   submitCustomRequest: (payload) => request('/custom-inquiries', { method: 'POST', body: payload }),
   submitContact: (payload) => request('/contact', { method: 'POST', body: payload }),
-  getBuyerOrders: () => request('/orders/my'),
+  getBuyerOrders: (params = {}) => {
+    const query = searchQuery(params);
+    return request(`/orders/my${query ? `?${query}` : ''}`);
+  },
+
+  // The account page has no pager, so fetch every request rather than stopping at the
+  // server's default page and silently hiding older orders.
+  async getAllBuyerOrders() {
+    const orders = [];
+    let page = 1;
+    let totalPages;
+
+    do {
+      const result = await api.getBuyerOrders({ page, limit: 50 });
+      orders.push(...(result.data || result.orders || []));
+      totalPages = Number(result.meta?.totalPages || 1);
+      page += 1;
+    } while (page <= totalPages && page <= 20);
+
+    return orders;
+  },
+
   getAdminSummary: () => request('/admin/dashboard'),
   getAdminProducts: () => request('/admin/products'),
   createAdminProduct: (payload) => request('/admin/products', { method: 'POST', body: payload }),
@@ -263,28 +303,20 @@ export const api = {
   getAdminSettings: () => request('/admin/settings'),
   updateAdminSettings: (payload) => request('/admin/settings', { method: 'PUT', body: payload }),
   getAdminUsers: (params = {}) => {
-    const query = new URLSearchParams(
-      Object.entries(params).filter(([, value]) => value !== undefined && value !== ''),
-    ).toString();
+    const query = searchQuery(params);
     return request(`/admin/users${query ? `?${query}` : ''}`);
   },
   getAdminUser: (userId) => request(`/admin/users/${encodeURIComponent(userId)}`),
   getAdminOrders: (params = {}) => {
-    const query = new URLSearchParams(
-      Object.entries(params).filter(([, value]) => value !== undefined && value !== ''),
-    ).toString();
+    const query = searchQuery(params);
     return request(`/admin/orders${query ? `?${query}` : ''}`);
   },
   getAdminInquiries: (params = {}) => {
-    const query = new URLSearchParams(
-      Object.entries(params).filter(([, value]) => value !== undefined && value !== ''),
-    ).toString();
+    const query = searchQuery(params);
     return request(`/admin/custom-inquiries${query ? `?${query}` : ''}`);
   },
   getAdminContacts: (params = {}) => {
-    const query = new URLSearchParams(
-      Object.entries(params).filter(([, value]) => value !== undefined && value !== ''),
-    ).toString();
+    const query = searchQuery(params);
     return request(`/admin/contacts${query ? `?${query}` : ''}`);
   },
   updateOrderStatus: (orderId, status) =>

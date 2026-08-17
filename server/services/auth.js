@@ -77,6 +77,15 @@ export const sessionCookieOptions = ({ clear = false } = {}) => ({
   ...(clear ? {} : { maxAge: env.cookieDays * 24 * 60 * 60 * 1_000 }),
 });
 
+// The single masker for account, admin and phone-verification responses. Three copies
+// had drifted into two different formats for the same number.
+export const maskPhone = (phone) => {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  const local = digits.length > 10 ? digits.slice(-10) : digits;
+  return `+91 •••••• ${local.slice(-4)}`;
+};
+
 export const publicUser = (user) => ({
   id: user.id,
   email: user.email,
@@ -90,6 +99,6 @@ export const publicUser = (user) => ({
       : user.googleSub
         ? ["google"]
         : [],
-  phoneMasked: user.phone ? `+91 •••••• ${user.phone.slice(-4)}` : "",
+  phoneMasked: maskPhone(user.phone),
   phoneVerified: Boolean(user.phoneVerifiedAt),
 });
