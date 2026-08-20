@@ -100,7 +100,8 @@ test("Resend email signup uses the fixed studio sender and reply-to before creat
   assert.equal(sentEmails[0].from, process.env.AUTH_EMAIL_FROM);
   assert.equal(sentEmails[0].reply_to, process.env.AUTH_EMAIL_REPLY_TO);
   assert.deepEqual(sentEmails[0].to, ["buyer@example.test"]);
-  await client.get("/api/auth/me").expect(401);
+  const anonymous = await client.get("/api/auth/me").expect(200);
+  assert.deepEqual(anonymous.body.data, { user: null, authenticated: false });
 
   await client
     .post("/api/auth/email/verify")
@@ -161,6 +162,26 @@ test("email resend throttling returns retry timing and ignores consumed challeng
     .expect(200);
 });
 
+test("concurrent email starts atomically enforce one cooldown and one delivery", async () => {
+  const payload = {
+    email: "simultaneous@example.test",
+    name: "Simultaneous Buyer",
+    intent: "signup",
+  };
+  const responses = await Promise.all([
+    request(app).post("/api/auth/email/start").send(payload),
+    request(app).post("/api/auth/email/start").send(payload),
+  ]);
+
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 429]);
+  assert.equal(sentEmails.length, 1);
+  assert.equal(memoryStore.count("emailAuthChallenges"), 1);
+  assert.equal(memoryStore.count("emailAuthCooldowns"), 1);
+  const throttled = responses.find((response) => response.status === 429);
+  assert.equal(throttled.body.error.code, "RATE_LIMITED");
+  assert.ok(throttled.body.error.details.retryAfterSeconds > 0);
+});
+
 test("a valid email code is restored when account completion fails", async () => {
   useGoogleProfile({ subject: "recover-google", email: "recover@example.test" });
   const google = await request(app)
@@ -184,11 +205,15 @@ test("a valid email code is restored when account completion fails", async () =>
     .send({ email: "recover@example.test", intent: "login" })
     .expect(200);
   const code = verificationCode();
-  await request(app)
-    .post("/api/auth/email/verify")
-    .send({ challengeId: started.body.data.challengeId, code })
-    .expect(409);
-  assert.equal(Boolean(memoryStore.all("emailAuthChallenges")[0].consumedAt), false);
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await request(app)
+      .post("/api/auth/email/verify")
+      .send({ challengeId: started.body.data.challengeId, code })
+      .expect(409);
+    const [challenge] = memoryStore.all("emailAuthChallenges");
+    assert.equal(Boolean(challenge.consumedAt), false);
+    assert.equal(challenge.attempts, 0);
+  }
 
   memoryStore.remove("authIdentities", "email:recover@example.test");
   const recovered = await request(app)
@@ -288,7 +313,12 @@ test("logout revokes a captured JWT instead of only clearing the browser cookie"
   const logout = await client.post("/api/auth/logout").expect(200);
   assert.match(logout.headers["cache-control"], /no-store/);
   assert.match(logout.headers["set-cookie"][0], /Expires=Thu, 01 Jan 1970/i);
-  await request(app).get("/api/auth/me").set("Cookie", capturedCookie).expect(401);
+  const revoked = await request(app)
+    .get("/api/auth/me")
+    .set("Cookie", capturedCookie)
+    .expect(200);
+  assert.deepEqual(revoked.body.data, { user: null, authenticated: false });
+  assert.match(revoked.headers["set-cookie"][0], /Expires=Thu, 01 Jan 1970/i);
 
   const newerLogin = await client
     .post("/api/auth/google")

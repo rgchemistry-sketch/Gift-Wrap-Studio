@@ -1,6 +1,20 @@
 import { useEffect, useState } from 'react';
 import { optimizeCloudinaryImage } from '../utils/cloudinary-image';
 
+const localStudioImages = {
+  '/assets/corporate-gifts.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
+  '/assets/hero-resin-studio.webp': { originalWidth: 1536, widths: [320, 480, 600, 800, 1200] },
+  '/assets/personalized-plaque.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
+  '/assets/serving-collection.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
+  '/assets/wedding-keepsake.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
+};
+
+const localVariantUrl = (src, width) => (
+  localStudioImages[src]?.widths.includes(width)
+    ? src.replace(/\.webp$/i, `-${width}.webp`)
+    : ''
+);
+
 export default function SmartImage({
   src,
   alt,
@@ -18,15 +32,27 @@ export default function SmartImage({
   ...props
 }) {
   const [failed, setFailed] = useState(false);
-  const candidateWidths = [...new Set(responsiveWidths
+  const localImage = localStudioImages[src];
+  const requestedWidths = responsiveWidths.length ? responsiveWidths : (localImage?.widths || []);
+  const candidateWidths = [...new Set(requestedWidths
     .map((width) => Math.round(Number(width)))
     .filter((width) => Number.isFinite(width) && width > 0))]
     .sort((a, b) => a - b);
-  const optimizedSource = imageWidth ? optimizeCloudinaryImage(src, imageWidth) : src;
-  const generatedCandidates = candidateWidths.map((width) => [
-    optimizeCloudinaryImage(src, width),
-    width,
-  ]);
+  const optimizedSource = imageWidth
+    ? localVariantUrl(src, Math.round(Number(imageWidth))) || optimizeCloudinaryImage(src, imageWidth)
+    : src;
+  const generatedCandidates = candidateWidths.flatMap((width) => {
+    const localVariant = localVariantUrl(src, width);
+    if (localImage && !localVariant) return [];
+    return [[localVariant || optimizeCloudinaryImage(src, width), width]];
+  });
+  if (
+    !responsiveWidths.length
+    && localImage?.originalWidth
+    && !localImage.widths.includes(localImage.originalWidth)
+  ) {
+    generatedCandidates.push([src, localImage.originalWidth]);
+  }
   const generatedSrcSet = generatedCandidates.some(([url]) => url !== src)
     ? generatedCandidates.map(([url, width]) => `${url} ${width}w`).join(', ')
     : undefined;

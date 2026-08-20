@@ -16,7 +16,7 @@ process.env.CLOUDINARY_UPLOAD_PRESET = "test-locked-preset";
 process.env.UPLOAD_SIGNATURES_PER_HOUR = "20";
 delete process.env.MONGODB_URI;
 
-const [{ default: app }, { resetMemoryStore }, { createWebApp }] = await Promise.all([
+const [{ default: app }, { memoryStore, resetMemoryStore }, { createWebApp }] = await Promise.all([
   import("../app.js"),
   import("../lib/memory-store.js"),
   import("../web-app.js"),
@@ -196,6 +196,33 @@ test("the storefront inquiry payload is normalized and accepted", async () => {
   assert.deepEqual(mine.body.data[0].referenceImages, []);
 });
 
+test("checkout resolves a cart item by its stable product ID after its slug changes", async () => {
+  const { buyer } = await authenticatedBuyer();
+  const catalog = await request(app).get("/api/products?limit=1").expect(200);
+  const product = catalog.body.data[0];
+  const renamedSlug = `${product.slug}-renamed`;
+  memoryStore.update("products", product.id, { slug: renamedSlug });
+
+  const order = await buyer
+    .post("/api/orders")
+    .send({
+      items: [{ productId: product.id, slug: product.slug, quantity: 1 }],
+      shippingAddress: {
+        recipientName: "Aarav Sharma",
+        phone: "+91 98765 43210",
+        line1: "12 Garden Road",
+        city: "Jaipur",
+        state: "Rajasthan",
+        postalCode: "302001",
+      },
+    })
+    .expect(201);
+
+  assert.equal(order.body.data.items[0].productId, product.id);
+  assert.equal(order.body.data.items[0].slug, renamedSlug);
+  assert.equal(order.body.data.items[0].unitPrice, product.price);
+});
+
 test("demo buyer auth, server-priced first order, and one-time offer work together", async () => {
   const buyer = request.agent(app);
   const login = await buyer.post("/api/auth/demo").send({ role: "buyer" }).expect(200);
@@ -270,8 +297,9 @@ test("logout clears the session and protected account access", async () => {
   assert.equal(logout.body.data.success, true);
   assert.match(logout.headers["set-cookie"][0], /Expires=Thu, 01 Jan 1970/i);
 
-  const afterLogout = await buyer.get("/api/auth/me").expect(401);
-  assert.equal(afterLogout.body.error.code, "UNAUTHORIZED");
+  const afterLogout = await buyer.get("/api/auth/me").expect(200);
+  assert.deepEqual(afterLogout.body.data, { user: null, authenticated: false });
+  await buyer.get("/api/orders/my").expect(401);
 });
 
 test("only the configured admin identity can access admin APIs", async () => {

@@ -42,6 +42,12 @@ export default function CartPage() {
   const claimedOffer = claimedOfferCode;
   const unavailableItems = cart.filter((line) => line.unavailable);
   const contact = resolveStudioContact(studioSettings);
+  const bagCheckPending = !liveCatalogReady || catalogLoading;
+  const checkoutButtonLabel = catalogError
+    ? 'Retry the bag check to continue'
+    : bagCheckPending
+      ? 'Checking your bag…'
+      : 'Continue to order request';
 
   const refreshLiveCart = async () => {
     setLiveCatalogReady(false);
@@ -125,7 +131,7 @@ export default function CartPage() {
                     <div className="cart-line__actions">
                       <div className="quantity-control" aria-label={`Quantity for ${line.product.title}`}>
                         <button type="button" onClick={() => updateQuantity(line.lineId, line.quantity - 1)} aria-label="Decrease quantity"><Icon name="minus" size={15} /></button>
-                        <span>{line.quantity}</span>
+                        <span aria-live="polite">{line.quantity}</span>
                         <button type="button" onClick={() => updateQuantity(line.lineId, line.quantity + 1)} aria-label="Increase quantity"><Icon name="plus" size={15} /></button>
                       </div>
                       <button type="button" className="plain-link" onClick={() => removeFromCart(line.lineId)}>Remove</button>
@@ -137,13 +143,13 @@ export default function CartPage() {
             <div className="cart-reassurance"><div><Icon name="package" /><p><strong>Prepared for gifting</strong><small>Premium gift packaging and a thank-you card are included.</small></p></div><div><Icon name="shield" /><p><strong>Protected for the journey</strong><small>Each piece is quality checked and securely packed before dispatch.</small></p></div></div>
           </Col>
           <Col lg={4}>
-            <aside className="order-summary">
+            <aside className="order-summary" aria-labelledby="cart-summary-title">
               <p className="eyebrow">Order estimate</p>
-              <h2>Your summary</h2>
+              <h2 id="cart-summary-title">Your summary</h2>
               {claimedOffer && <Alert variant={welcomeOffer?.eligible === false ? 'warning' : 'success'} className="offer-claimed"><Icon name="spark" /> {welcomeOffer?.eligible === false ? `${claimedOffer} is not available for this account.` : `${claimedOffer} saved. Eligibility will be checked before final confirmation.`} <button type="button" className="plain-link" onClick={removeWelcomeOffer}>Remove offer</button></Alert>}
               <dl><div><dt>Pieces ({cart.reduce((count, line) => count + line.quantity, 0)})</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed by studio</dd></div><div className="summary-total"><dt>Current item total</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
-              <Button type="button" onClick={continueToCheckout} disabled={!liveCatalogReady || catalogLoading || Boolean(catalogError) || unavailableItems.length > 0} className="button-burgundy w-100">{!liveCatalogReady || catalogLoading || catalogError ? 'Checking your bag…' : <>Continue to order request <Icon name="arrow" /></>}</Button>
-              <p className="summary-note"><Icon name="lock" size={14} /> No payment is taken on this page. The studio confirms customization, delivery and final amount first.</p>
+              <Button type="button" onClick={continueToCheckout} disabled={bagCheckPending || Boolean(catalogError) || unavailableItems.length > 0} className="button-burgundy w-100" aria-describedby="cart-summary-note">{checkoutButtonLabel}{!bagCheckPending && !catalogError && <Icon name="arrow" />}</Button>
+              <p className="summary-note" id="cart-summary-note"><Icon name="lock" size={14} /> No payment is taken on this page. The studio confirms customization, delivery and final amount first.</p>
               {contact.phoneHref && <div className="summary-contact"><p>Need help with your design?</p><a href={contact.phoneHref}>Call the studio · {contact.phoneLabel}</a></div>}
             </aside>
           </Col>

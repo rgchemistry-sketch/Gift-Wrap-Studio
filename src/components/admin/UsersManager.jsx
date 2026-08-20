@@ -158,7 +158,7 @@ export default function UsersManager({ dashboardMetrics = {} }) {
     <div className={`users-workspace ${selected ? 'has-detail' : ''}`}>
       <div className="admin-panel admin-table-panel users-table-panel">
         {loading ? <AdminSectionState loading title="Loading customer accounts" message="Reviewing signups and verification details…"/> : error ? <AdminSectionState title="Customer accounts could not load" message={error} actionLabel="Try again" onAction={loadUsers}/> : users.length ? <>
-          <Table responsive hover className="admin-table admin-table--stacked users-table"><thead><tr><th>Customer</th><th>Phone</th><th>Joined</th><th>Last sign-in</th><th>Access</th><th><span className="visually-hidden">Open</span></th></tr></thead><tbody>{users.map((account) => {
+          <Table responsive hover className="admin-table admin-table--stacked users-table" aria-label="Registered customer accounts"><thead><tr><th scope="col">Customer</th><th scope="col">Phone</th><th scope="col">Joined</th><th scope="col">Last sign-in</th><th scope="col">Access</th><th scope="col"><span className="visually-hidden">Open</span></th></tr></thead><tbody>{users.map((account) => {
             const id = account.id || account._id;
             const verifiedPhone = Boolean(account.phoneVerifiedAt || account.phoneVerified || account.isPhoneVerified);
             const expanded = Boolean(selectedId && String(selectedId) === String(id));

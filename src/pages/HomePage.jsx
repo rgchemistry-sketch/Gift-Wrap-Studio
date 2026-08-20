@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import Accordion from 'react-bootstrap/Accordion';
+import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
 import Col from 'react-bootstrap/Col';
 import Container from 'react-bootstrap/Container';
@@ -36,7 +37,12 @@ const faqs = [
 ];
 
 export default function HomePage() {
-  const { products, loading: catalogLoading } = useCatalog();
+  const {
+    products,
+    loading: catalogLoading,
+    error: catalogError,
+    refresh: refreshCatalog,
+  } = useCatalog();
   const { studioSettings } = useShop();
   const contact = resolveStudioContact(studioSettings);
   // Curated first, then whatever is in stock, so the shelf is never padded with placeholders.
@@ -67,7 +73,7 @@ export default function HomePage() {
             </Col>
             <Col lg={6} className="home-hero__visual">
               <div className="hero-image hero-image--main">
-                <SmartImage src="/assets/hero-resin-studio.webp" alt="Handmade resin art arranged in the Gift N Wrap Studio" fallbackLabel="The Resin Atelier" loading="eager" fetchPriority="high" />
+                <SmartImage src="/assets/hero-resin-studio.webp" alt="Handmade resin art arranged in the Gift N Wrap Studio" fallbackLabel="The Resin Atelier" loading="eager" fetchPriority="high" sizes="(max-width: 991px) 100vw, 50vw" />
               </div>
               <div className="hero-image hero-image--detail">
                 <SmartImage src="/assets/personalized-plaque.webp" alt="Close detail of a personalized resin plaque" fallbackLabel="Made for you" />
@@ -126,27 +132,49 @@ export default function HomePage() {
         </Container>
       </section>
 
-      {(catalogLoading || bestsellers.length > 0) && (
-        <section className="page-section bestsellers-section">
+      <section className="page-section bestsellers-section" aria-busy={catalogLoading}>
           <Container fluid="xl">
             <header className="section-heading centered-heading">
               <p className="eyebrow">From the studio table</p>
               <h2>Pieces people remember.</h2>
               <p>Thoughtful favourites for gifting, gathering and keeping close.</p>
             </header>
-            <Row className="g-4 product-grid">
-              {catalogLoading
-                ? Array.from({ length: 4 }, (_, index) => (
-                  <Col xs={12} sm={6} lg={3} key={`bestseller-skeleton-${index}`}><ProductCardSkeleton /></Col>
-                ))
-                : bestsellers.map((product, index) => (
-                  <Col xs={12} sm={6} lg={3} key={product.id}><ProductCard product={product} index={index} /></Col>
-                ))}
-            </Row>
-            <div className="section-cta"><Link to="/shop" className="text-link text-link--large">See the entire collection <Icon name="arrow" /></Link></div>
+            {catalogLoading ? (
+              <>
+                <p className="visually-hidden" role="status">Loading studio favourites…</p>
+                <Row className="g-4 product-grid">
+                  {Array.from({ length: 4 }, (_, index) => (
+                    <Col xs={12} sm={6} lg={3} key={`bestseller-skeleton-${index}`}><ProductCardSkeleton /></Col>
+                  ))}
+                </Row>
+              </>
+            ) : catalogError && !bestsellers.length ? (
+              <div className="catalog-inline-state" role="alert">
+                <span><Icon name="spark" size={28} /></span>
+                <h3>The studio shelf didn’t load.</h3>
+                <p>Your place is still here. Try the collection again, or share the piece you have in mind.</p>
+                <div><Button className="button-burgundy" onClick={() => refreshCatalog({ force: true })}>Try again</Button><Link to="/custom-order" className="text-link">Begin a custom piece <Icon name="arrow" /></Link></div>
+              </div>
+            ) : bestsellers.length ? (
+              <>
+                {catalogError && <Alert variant="warning" className="soft-alert catalog-alert">We couldn’t refresh every studio piece. <button type="button" className="plain-link" onClick={() => refreshCatalog({ force: true })}>Try again</button></Alert>}
+                <Row className="g-4 product-grid">
+                  {bestsellers.map((product, index) => (
+                    <Col xs={12} sm={6} lg={3} key={product.id}><ProductCard product={product} index={index} /></Col>
+                  ))}
+                </Row>
+                <div className="section-cta"><Link to="/shop" className="text-link text-link--large">See the entire collection <Icon name="arrow" /></Link></div>
+              </>
+            ) : (
+              <div className="catalog-inline-state">
+                <span><Icon name="spark" size={28} /></span>
+                <h3>Fresh pieces are taking shape.</h3>
+                <p>The ready collection is between releases, but the custom atelier is open.</p>
+                <Link to="/custom-order" className="button-burgundy btn">Begin a custom piece <Icon name="arrow" /></Link>
+              </div>
+            )}
           </Container>
         </section>
-      )}
 
       <section className="personalization-feature">
         <Container fluid="xl">

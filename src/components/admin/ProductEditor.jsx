@@ -169,7 +169,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   const busy = saving || uploading || cleaningUploads || checkingImageUrl;
   const normalizedImageUrl = useMemo(() => normalizeProductImageUrl(imageUrl), [imageUrl]);
   const imageUrlFormatError = imageUrl.trim() && !normalizedImageUrl
-    ? 'Use a Cloudinary HTTPS image URL or a site-relative path beginning with /.'
+    ? 'Use a Cloudinary HTTPS image link or a site-relative path beginning with /.'
     : '';
   const slugChanged = editing && initialDraft.active && draft.slug !== initialDraft.slug;
   const permalinkPath = `/product/${draft.slug || makeSlug(draft.name) || 'your-product'}`;
@@ -392,7 +392,8 @@ export default function ProductEditor({ product, onClose, onSaved }) {
             : field === 'images'
               ? dialogRef.current?.querySelector('.product-image-upload')
               : null;
-      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      target?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
       target?.focus?.({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(focusFrame);
@@ -810,7 +811,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                 <Form.Control.Feedback type="invalid">{fieldErrors.name}</Form.Control.Feedback>
               </Form.Group>
               <Form.Group controlId="product-slug">
-                <Form.Label>URL handle</Form.Label>
+                <Form.Label>Product link</Form.Label>
                 <Form.Control
                   required
                   maxLength={160}
@@ -824,9 +825,10 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                 />
                 <Form.Control.Feedback type="invalid">{fieldErrors.slug}</Form.Control.Feedback>
                 <div className="product-permalink-preview" title={permalinkPath}>
-                  <span>Live path</span>
+                  <span>Storefront path</span>
                   <code>{permalinkPath}</code>
                 </div>
+                <Form.Text>Created from the product name. Change it only when the storefront link needs to be different.</Form.Text>
                 {slugChanged && (
                   <p className="product-slug-warning" role="alert">
                     <Icon name="shield" size={14}/>
@@ -933,28 +935,31 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               </div>
             )}
             {uploadStatus && <Form.Text className="d-block" role="status" aria-live="polite" aria-atomic="true">{uploadStatus}</Form.Text>}
-            <div className="product-image-url">
-              <Form.Label className="visually-hidden" htmlFor="product-image-url">Product image URL</Form.Label>
-              <Form.Control
-                id="product-image-url"
-                type="text"
-                inputMode="url"
-                 maxLength={1000}
-                 value={imageUrl}
-                 onChange={(event) => {
-                   setImageUrl(event.target.value);
-                   clearFieldError('imageUrl');
-                 }}
-                 onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addImageFromUrl(); } }}
-                 placeholder="Or paste a Cloudinary image URL"
-                 aria-describedby="product-image-url-help"
-                 isInvalid={Boolean(fieldErrors.imageUrl || imageUrlFormatError)}
-                 disabled={busy || draft.images.length >= MAX_GALLERY_IMAGES}
-               />
-               <Button type="button" variant="outline-dark" onClick={() => void addImageFromUrl()} disabled={busy || !normalizedImageUrl || draft.images.length >= MAX_GALLERY_IMAGES}>{checkingImageUrl && <Spinner animation="border" size="sm" aria-hidden="true"/>}{checkingImageUrl ? 'Checking…' : 'Verify & add'}</Button>
-             </div>
-             {(fieldErrors.imageUrl || imageUrlFormatError) && <div className="invalid-feedback d-block" role="alert">{fieldErrors.imageUrl || imageUrlFormatError}</div>}
-             <Form.Text id="product-image-url-help">The URL is loaded and verified before it can join the gallery. Use Cloudinary HTTPS or a site-relative path beginning with /.</Form.Text>
+            <details className="product-image-link" open={Boolean(imageUrl || fieldErrors.imageUrl || imageUrlFormatError)}>
+              <summary>Use an existing image link <span>Advanced</span></summary>
+              <div className="product-image-url">
+                <Form.Label className="visually-hidden" htmlFor="product-image-url">Existing product image link</Form.Label>
+                <Form.Control
+                  id="product-image-url"
+                  type="text"
+                  inputMode="url"
+                  maxLength={1000}
+                  value={imageUrl}
+                  onChange={(event) => {
+                    setImageUrl(event.target.value);
+                    clearFieldError('imageUrl');
+                  }}
+                  onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addImageFromUrl(); } }}
+                  placeholder="Paste a Cloudinary image link"
+                  aria-describedby="product-image-url-help"
+                  isInvalid={Boolean(fieldErrors.imageUrl || imageUrlFormatError)}
+                  disabled={busy || draft.images.length >= MAX_GALLERY_IMAGES}
+                />
+                <Button type="button" variant="outline-dark" onClick={() => void addImageFromUrl()} disabled={busy || !normalizedImageUrl || draft.images.length >= MAX_GALLERY_IMAGES}>{checkingImageUrl && <Spinner animation="border" size="sm" aria-hidden="true"/>}{checkingImageUrl ? 'Checking…' : 'Verify & add'}</Button>
+              </div>
+              {(fieldErrors.imageUrl || imageUrlFormatError) && <div className="invalid-feedback d-block" role="alert">{fieldErrors.imageUrl || imageUrlFormatError}</div>}
+              <Form.Text id="product-image-url-help">For images already saved in Cloudinary or on this website. The link is checked before it joins the gallery.</Form.Text>
+            </details>
             </div>
           </section>
 
@@ -963,11 +968,11 @@ export default function ProductEditor({ product, onClose, onSaved }) {
             <div className="product-form-section__body">
             <div className="product-form-grid">
               <Form.Group controlId="product-price"><Form.Label>Price (₹)</Form.Label><Form.Control required min="0" max="10000000" step="1" type="number" value={draft.price} isInvalid={Boolean(fieldErrors.price)} onChange={(event) => setField('price', event.target.value)} /><Form.Control.Feedback type="invalid">{fieldErrors.price}</Form.Control.Feedback></Form.Group>
-              <Form.Group controlId="product-compare-price"><Form.Label>Compare-at price (₹)</Form.Label><Form.Control min="0" max="10000000" step="1" type="number" value={draft.compareAtPrice} isInvalid={Boolean(fieldErrors.compareAtPrice)} onChange={(event) => setField('compareAtPrice', event.target.value)} placeholder="Optional" /><Form.Control.Feedback type="invalid">{fieldErrors.compareAtPrice}</Form.Control.Feedback></Form.Group>
-              <Form.Group controlId="product-inventory"><Form.Label>Inventory</Form.Label><Form.Control min="0" max="1000000" step="1" type="number" value={draft.inventory} isInvalid={Boolean(fieldErrors.inventory)} onChange={(event) => setField('inventory', event.target.value)} placeholder="Blank for unlimited" /><Form.Control.Feedback type="invalid">{fieldErrors.inventory}</Form.Control.Feedback></Form.Group>
-              <Form.Group controlId="product-sku"><Form.Label>SKU</Form.Label><Form.Control maxLength={80} pattern="[A-Za-z0-9][A-Za-z0-9._/-]*" title="Use letters, numbers, dots, dashes, underscores or slashes" value={draft.sku} isInvalid={Boolean(fieldErrors.sku)} onChange={(event) => setField('sku', event.target.value)} placeholder="GNW-PLAQUE-01" /><Form.Control.Feedback type="invalid">{fieldErrors.sku}</Form.Control.Feedback></Form.Group>
+              <Form.Group controlId="product-compare-price"><Form.Label>Original price (₹) <small>optional</small></Form.Label><Form.Control min="0" max="10000000" step="1" type="number" value={draft.compareAtPrice} isInvalid={Boolean(fieldErrors.compareAtPrice)} onChange={(event) => setField('compareAtPrice', event.target.value)} placeholder="Shown crossed out" /><Form.Control.Feedback type="invalid">{fieldErrors.compareAtPrice}</Form.Control.Feedback><Form.Text>Shown crossed out when it is higher than the selling price.</Form.Text></Form.Group>
+              <Form.Group controlId="product-inventory"><Form.Label>Stock quantity <small>optional</small></Form.Label><Form.Control min="0" max="1000000" step="1" type="number" value={draft.inventory} isInvalid={Boolean(fieldErrors.inventory)} onChange={(event) => setField('inventory', event.target.value)} placeholder="Leave blank for unlimited" /><Form.Control.Feedback type="invalid">{fieldErrors.inventory}</Form.Control.Feedback><Form.Text>Leave blank for made-to-order or unlimited stock.</Form.Text></Form.Group>
+              <Form.Group controlId="product-sku"><Form.Label>SKU <small>optional</small></Form.Label><Form.Control maxLength={80} pattern="[A-Za-z0-9][A-Za-z0-9._/-]*" title="Use letters, numbers, dots, dashes, underscores or slashes" value={draft.sku} isInvalid={Boolean(fieldErrors.sku)} onChange={(event) => setField('sku', event.target.value)} placeholder="GNW-PLAQUE-01" /><Form.Control.Feedback type="invalid">{fieldErrors.sku}</Form.Control.Feedback><Form.Text>Your private stock reference; customers do not need it.</Form.Text></Form.Group>
               <Form.Group controlId="product-lead-time"><Form.Label>Lead time (days)</Form.Label><Form.Control required min="1" max="60" type="number" value={draft.leadTimeDays} isInvalid={Boolean(fieldErrors.leadTimeDays)} onChange={(event) => setField('leadTimeDays', event.target.value)} /><Form.Control.Feedback type="invalid">{fieldErrors.leadTimeDays}</Form.Control.Feedback></Form.Group>
-              <Form.Group controlId="product-sort-order"><Form.Label>Catalogue order</Form.Label><Form.Control min="-10000" max="10000" type="number" value={draft.sortOrder} isInvalid={Boolean(fieldErrors.sortOrder)} onChange={(event) => setField('sortOrder', event.target.value)} /><Form.Control.Feedback type="invalid">{fieldErrors.sortOrder}</Form.Control.Feedback></Form.Group>
+              <Form.Group controlId="product-sort-order"><Form.Label>Shop display order</Form.Label><Form.Control min="-10000" max="10000" type="number" value={draft.sortOrder} isInvalid={Boolean(fieldErrors.sortOrder)} onChange={(event) => setField('sortOrder', event.target.value)} /><Form.Control.Feedback type="invalid">{fieldErrors.sortOrder}</Form.Control.Feedback><Form.Text>Lower numbers appear earlier in the shop.</Form.Text></Form.Group>
             </div>
             </div>
           </section>

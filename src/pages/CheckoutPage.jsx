@@ -217,6 +217,12 @@ export default function CheckoutPage() {
     && welcomeOffer?.enabled === true
     && itemOfferEligible;
   const unavailableItems = cart.filter((line) => line.unavailable);
+  const bagCheckPending = !liveCatalogReady || catalogLoading;
+  const submitLabel = catalogError
+    ? 'Retry the bag check to continue'
+    : bagCheckPending
+      ? 'Checking your bag…'
+      : 'Send order request';
   const offerStatus = !offerClaimed
     ? '—'
     : !itemOfferEligible
@@ -422,14 +428,14 @@ export default function CheckoutPage() {
   return (
     <section className="checkout-page page-section">
       <Container fluid="xl">
-        <nav className="checkout-steps" aria-label="Checkout progress"><span className="is-complete"><i><Icon name="check" size={13} /></i> Bag</span><b /><span className="is-active"><i>2</i> Details</span><b /><span><i>3</i> Studio confirmation</span></nav>
+        <nav className="checkout-steps" aria-label="Order request progress"><span className="is-complete"><i><Icon name="check" size={13} /></i> Bag</span><b aria-hidden="true" /><span className="is-active" aria-current="step"><i>2</i> Details</span><b aria-hidden="true" /><span><i>3</i> Studio confirmation</span></nav>
         <Row className="g-5">
           <Col lg={7}>
             <div className="checkout-heading"><p className="eyebrow">Order request</p><h1>Where should we send the beautiful thing?</h1><p>Share your delivery and occasion details. You’ll review the final design, total and payment instructions with the studio before production.</p></div>
             {catalogError && <Alert variant="warning" className="soft-alert">We couldn’t refresh live bag details. <button type="button" className="plain-link" onClick={refreshLiveCart}>Try again</button></Alert>}
             {unavailableItems.length > 0 && <Alert variant="warning" className="soft-alert"><strong>{unavailableItems.length === 1 ? 'A piece in your bag is unavailable.' : 'Some pieces in your bag are unavailable.'}</strong> {unavailableItems.map((line) => <button type="button" className="plain-link" key={line.lineId} onClick={() => removeFromCart(line.lineId)}>Remove {line.product.title}</button>)}</Alert>}
             {error && <Alert variant="danger" className="soft-alert" role="alert">{error}{couponRecovery && <div><Button type="button" size="sm" variant="outline-dark" onClick={continueWithoutOffer}>Continue without offer</Button></div>}{idempotencyConflict && <div><Button as={Link} to="/account?tab=orders" size="sm" variant="outline-dark">Check Orders & requests</Button></div>}</Alert>}
-            <Form ref={formRef} noValidate validated={validated} onSubmit={submit} className="checkout-form">
+            <Form ref={formRef} noValidate validated={validated} onSubmit={submit} className="checkout-form" aria-busy={submitting}>
               <fieldset>
                 <legend><span>01</span> Contact details</legend>
                 <Row className="g-3">
@@ -457,13 +463,13 @@ export default function CheckoutPage() {
                 </Row>
               </fieldset>
               {!user && <Alert variant="info" className="soft-alert sign-in-reminder"><Icon name="lock" /> You’ll be asked to log in with a secure email code or an approved provider when you send this request. Your form is saved on this device.</Alert>}
-              <Button type="submit" className="button-burgundy checkout-submit" disabled={submitting || !liveCatalogReady || catalogLoading || Boolean(catalogError) || unavailableItems.length > 0}>{submitting ? <><Spinner size="sm" /> Sending securely…</> : !liveCatalogReady || catalogLoading || catalogError ? 'Checking your bag…' : <>Send order request <Icon name="arrow" /></>}</Button>
-              <p className="checkout-submit-note">By sending, you are requesting a studio review—not completing a purchase or payment.</p>
+              <Button type="submit" className="button-burgundy checkout-submit" disabled={submitting || bagCheckPending || Boolean(catalogError) || unavailableItems.length > 0} aria-describedby="checkout-submit-note">{submitting ? <><Spinner size="sm" /> Sending securely…</> : <>{submitLabel}{!bagCheckPending && !catalogError && <Icon name="arrow" />}</>}</Button>
+              <p className="checkout-submit-note" id="checkout-submit-note">By sending, you are requesting a studio review—not completing a purchase or payment.</p>
             </Form>
           </Col>
           <Col lg={{ span: 4, offset: 1 }}>
-            <aside className="checkout-summary">
-              <div className="checkout-summary__head"><p className="eyebrow">Your pieces</p><Link to="/cart">Edit bag</Link></div>
+            <aside className="checkout-summary" aria-labelledby="checkout-summary-title">
+              <div className="checkout-summary__head"><p className="eyebrow" id="checkout-summary-title">Your pieces</p><Link to="/cart">Edit bag</Link></div>
               {cart.map((line) => (
                 <div className="checkout-mini-line" key={line.lineId}><div><SmartImage src={line.product.image} alt="" fallbackLabel={line.product.category} /><span>{line.quantity}</span></div><p><strong>{line.product.title}</strong><small>{line.unavailable ? (line.unavailableReason || 'Unavailable') : line.customization?.name ? `For ${line.customization.name}` : line.product.category}{line.priceUpdatedFrom != null && Number(line.priceUpdatedFrom) !== Number(line.product.price) ? ` · Price updated from ${formatCurrency(line.priceUpdatedFrom)}` : ''}</small></p><b>{line.unavailable ? 'Unavailable' : formatCurrency(line.product.price * line.quantity)}</b></div>
               ))}

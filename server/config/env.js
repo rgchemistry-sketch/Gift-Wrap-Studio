@@ -130,9 +130,20 @@ export const emailAuthStatus = () => {
   };
 };
 
-export const authProviderStatus = () => ({
-  google: { enabled: Boolean(env.googleClientId) },
-  email: emailAuthStatus(),
-});
+export const sessionAuthReady = () =>
+  Boolean(env.jwtSecret && (!env.isProduction || env.jwtSecret.length >= 32));
+
+export const authProviderStatus = () => {
+  const sessionReady = sessionAuthReady();
+  const email = emailAuthStatus();
+  return {
+    google: { enabled: Boolean(env.googleClientId && sessionReady) },
+    email: {
+      ...email,
+      enabled: Boolean(email.enabled && sessionReady),
+      demo: Boolean(email.demo && sessionReady),
+    },
+  };
+};
 
 export const missingConfig = (...keys) => keys.filter((key) => !env[key]);

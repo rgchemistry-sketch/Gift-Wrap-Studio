@@ -177,14 +177,14 @@ export default function ShopPage() {
         </Container>
       </section>
 
-      <section className="catalog-section page-section">
+      <section className="catalog-section page-section" aria-busy={loading}>
         <Container fluid="xl">
-          {error && <Alert variant="warning" className="soft-alert catalog-alert">{error} <button type="button" className="plain-link" onClick={loadProducts}>Retry</button></Alert>}
+          {error && products.length > 0 && <Alert variant="warning" className="soft-alert catalog-alert">{error} <button type="button" className="plain-link" onClick={loadProducts}>Retry</button></Alert>}
           {truncated && <Alert variant="info" className="soft-alert catalog-alert">The studio has more pieces than this view could load. Refine the collection or try again shortly.</Alert>}
           <div className="catalog-toolbar">
             <div>
               <Button variant="outline-dark" className="filter-trigger d-lg-none" onClick={() => setFiltersOpen(true)}><Icon name="spark" size={17} /> Filters {activeFilters.length > 0 && <span>{activeFilters.length}</span>}</Button>
-              <p aria-live="polite"><strong>{loading ? '—' : filteredProducts.length}</strong> studio pieces</p>
+              <p aria-live="polite">{loading ? 'Loading studio pieces…' : <><strong>{filteredProducts.length}</strong> studio {filteredProducts.length === 1 ? 'piece' : 'pieces'}</>}</p>
             </div>
             <Form.Group className="sort-control" controlId="catalog-sort">
               <Form.Label>Sort by</Form.Label>
@@ -215,7 +215,14 @@ export default function ShopPage() {
             </Col>
             <Col lg={9}>
               {loading ? (
-                <Row className="g-4">{Array.from({ length: 6 }, (_, index) => <Col xs={12} sm={6} lg={4} key={index}><ProductCardSkeleton /></Col>)}</Row>
+                <><p className="visually-hidden" role="status">Loading the studio collection…</p><Row className="g-4">{Array.from({ length: 6 }, (_, index) => <Col xs={12} sm={6} lg={4} key={index}><ProductCardSkeleton /></Col>)}</Row></>
+              ) : error && !products.length ? (
+                <div className="catalog-empty catalog-empty--error" role="alert">
+                  <span><Icon name="spark" size={30} /></span>
+                  <h2>The collection didn’t reach us.</h2>
+                  <p>Try loading the studio shelf again. Your filters will stay exactly as they are.</p>
+                  <div><Button className="button-burgundy" onClick={loadProducts}>Try again</Button><Button as={Link} to="/custom-order" variant="link" className="text-link">Begin a custom piece <Icon name="arrow" /></Button></div>
+                </div>
               ) : filteredProducts.length ? (
                 <Row className="g-4 product-grid">
                   {filteredProducts.map((product, index) => <Col xs={12} sm={6} lg={4} key={product.id}><ProductCard product={product} index={index} /></Col>)}
@@ -233,9 +240,9 @@ export default function ShopPage() {
         </Container>
       </section>
 
-      <Offcanvas show={filtersOpen} onHide={() => setFiltersOpen(false)} placement="bottom" className="filter-offcanvas">
+      <Offcanvas show={filtersOpen} onHide={() => setFiltersOpen(false)} placement="bottom" className="filter-offcanvas" aria-labelledby="mobile-filter-title">
         <Offcanvas.Header>
-          <div><p className="eyebrow">Find your piece</p><Offcanvas.Title>Filter the collection</Offcanvas.Title></div>
+          <div><p className="eyebrow">Find your piece</p><Offcanvas.Title id="mobile-filter-title">Filter the collection</Offcanvas.Title></div>
           <button type="button" className="icon-button" onClick={() => setFiltersOpen(false)} aria-label="Close filters"><Icon name="close" /></button>
         </Offcanvas.Header>
         <Offcanvas.Body><FilterPanel idPrefix="mobile" filters={filters} setFilter={setFilter} products={products} onDone={() => setFiltersOpen(false)} /></Offcanvas.Body>

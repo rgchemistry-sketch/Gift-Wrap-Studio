@@ -13,7 +13,7 @@ import AdminSectionState from './AdminSectionState';
 const importProductEditor = () => import('./ProductEditor');
 const ProductEditor = lazy(importProductEditor);
 const productStatuses = [
-  ['current', 'Current'],
+  ['current', 'Published + drafts'],
   ['published', 'Published'],
   ['draft', 'Drafts'],
   ['archived', 'Archived'],
@@ -151,7 +151,7 @@ export default function ProductManager({
     </div>
     {preview && <Alert variant="warning" className="soft-alert">Catalogue controls are unavailable while the studio is showing preview data.</Alert>}
     <div className="catalogue-toolbar">
-      <div className="admin-search"><Icon name="search"/><input type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search name, collection or SKU" aria-label="Search products" autoComplete="off"/></div>
+      <div className="admin-search"><Icon name="search"/><input type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search name, collection or SKU" aria-label="Search products" autoComplete="off"/>{searchInput && <button type="button" className="admin-search__clear" onClick={() => setSearchInput('')} aria-label="Clear product search"><Icon name="close" size={14}/></button>}</div>
       <div className="catalogue-toolbar__status" role="group" aria-label="Filter products by publishing status">
         {productStatuses.map(([value, label]) => <button type="button" key={value} className={status === value ? 'is-active' : ''} aria-pressed={status === value} onClick={() => status !== value && onQueryChange?.({ status: value, page: 1 })}>{label}{status === value && <span aria-label={`${total} matching products`}>{total}</span>}</button>)}
       </div>

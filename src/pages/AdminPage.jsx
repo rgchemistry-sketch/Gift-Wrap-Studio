@@ -550,6 +550,7 @@ export default function AdminPage() {
 
   return (
     <section className="admin-page">
+      <a className="admin-skip-link" href="#admin-main">Skip to workspace</a>
       <Container fluid="xl" className="admin-page__container">
         <header className="admin-topbar">
           <div className="admin-topbar__brand">
@@ -557,7 +558,12 @@ export default function AdminPage() {
             <div><p className="eyebrow">Gift N Wrap Studio</p><h1>Studio desk</h1></div>
           </div>
           <div className="admin-topbar__actions">
-            <span className={`admin-workspace-state ${dashboardError && !dashboardReady ? 'has-error' : ''}`}>
+            <span
+              className={`admin-workspace-state ${dashboardError && !dashboardReady ? 'has-error' : ''}`}
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               <span className="admin-live-dot" aria-hidden="true" />
               <span>{workspaceLabel}</span>
               {lastSyncedAt && !dashboardLoading && <small>Synced {lastSyncedAt.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}</small>}
@@ -635,7 +641,7 @@ export default function AdminPage() {
             </div>
           </aside>
 
-          <div ref={contentRef} className="admin-content" tabIndex={-1} aria-label={`${activeSectionLabel} admin section`}>
+          <div id="admin-main" ref={contentRef} className="admin-content" role="region" tabIndex={-1} aria-label={`${activeSectionLabel} admin section`}>
             {section === 'dashboard' ? (
               dashboardLoading && !dashboardReady ? (
                 <DashboardSkeleton />

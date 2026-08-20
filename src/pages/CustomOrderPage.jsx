@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
@@ -56,6 +56,8 @@ export default function CustomOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(null);
   const [hydratedDraftOwner, setHydratedDraftOwner] = useState('pending');
+  const stepHeadingRef = useRef(null);
+  const previousStepRef = useRef(step);
 
   useEffect(() => {
     if (authLoading) return;
@@ -88,7 +90,31 @@ export default function CustomOrderPage() {
     if (!draftReady || hydratedDraftOwner !== draftOwner) return;
     saveScopedDraft(DRAFT_KEY, draftUserId, form);
   }, [draftOwner, draftReady, draftUserId, form, hydratedDraftOwner]);
-  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  useEffect(() => {
+    if (previousStepRef.current === step) return undefined;
+    previousStepRef.current = step;
+    const focusFrame = window.requestAnimationFrame(() => stepHeadingRef.current?.focus({ preventScroll: true }));
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [step]);
+
+  const update = (key, value) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    if (error) setError('');
+  };
+
+  const focusStepIssue = (targetStep) => {
+    let selector = '';
+    if (targetStep === 0) selector = !form.productType ? 'input[name="productType"]' : '#custom-idea';
+    if (targetStep === 1) selector = !form.personalization.trim() ? '#custom-personalization' : '#custom-reference';
+    if (targetStep === 2) {
+      selector = form.name.trim().length < 2
+        ? '#inquiry-name'
+        : !/^\S+@\S+\.\S+$/.test(form.email)
+          ? '#inquiry-email'
+          : '#inquiry-phone';
+    }
+    if (selector) window.requestAnimationFrame(() => document.querySelector(selector)?.focus());
+  };
 
   const validateStep = (targetStep = step) => {
     if (targetStep === 0 && (!form.productType || form.description.trim().length < 10)) {
@@ -115,7 +141,7 @@ export default function CustomOrderPage() {
 
   const next = () => {
     const issue = validateStep();
-    if (issue) { setError(issue); notify(issue, 'error'); return; }
+    if (issue) { setError(issue); notify(issue, 'error'); focusStepIssue(step); return; }
     setError('');
     setStep((value) => Math.min(3, value + 1));
     window.scrollTo({ top: 260, behavior: 'smooth' });
@@ -128,6 +154,7 @@ export default function CustomOrderPage() {
         setStep(targetStep);
         setError(issue);
         notify(issue, 'error');
+        window.setTimeout(() => focusStepIssue(targetStep), 0);
         return;
       }
     }
@@ -215,21 +242,21 @@ export default function CustomOrderPage() {
       </section>
       <section className="custom-wizard page-section">
         <Container fluid="xl">
-          <div className="wizard-progress" aria-label={`Step ${step + 1} of 4`}>
-            {stepMeta.map(([label], index) => <button key={label} type="button" onClick={() => index < step && setStep(index)} className={`${index === step ? 'is-active' : ''} ${index < step ? 'is-complete' : ''}`} disabled={index > step}><span>{index < step ? <Icon name="check" size={13} /> : index + 1}</span><small>{label}</small></button>)}
+          <div className="wizard-progress" aria-label={`Custom order progress, step ${step + 1} of 4`}>
+            {stepMeta.map(([label], index) => <button key={label} type="button" onClick={() => { if (index < step) { setError(''); setStep(index); } }} className={`${index === step ? 'is-active' : ''} ${index < step ? 'is-complete' : ''}`} disabled={index > step} aria-current={index === step ? 'step' : undefined} aria-label={`${label}, step ${index + 1} of 4${index === step ? ', current step' : ''}`}><span>{index < step ? <Icon name="check" size={13} /> : index + 1}</span><small>{label}</small></button>)}
           </div>
           <Row className="g-5 wizard-layout">
             <Col lg={4}><div className="wizard-aside"><p className="eyebrow">Step {step + 1} of 4</p><h2>{stepMeta[step][1]}</h2><p>{step === 0 ? 'Start broad. A few vivid details are more useful than having every measurement worked out.' : step === 1 ? 'Names, flowers, colours and little symbols are what turn an object into your object.' : step === 2 ? 'We keep your details private and use them only to discuss this request.' : 'Nothing goes into production yet. This simply gives our artist enough context to begin the conversation.'}</p>{contact.phoneHref && <div className="wizard-help"><Icon name="phone" /><span>Prefer to talk it through?<a href={contact.phoneHref}>Call {contact.phoneLabel}</a></span></div>}</div></Col>
             <Col lg={{ span: 7, offset: 1 }}>
-              <div className="wizard-card">
+              <div className="wizard-card" aria-busy={submitting}>
                 {error && <Alert variant="danger" className="soft-alert" role="alert">{error}</Alert>}
-                {step === 0 && <StepIdea form={form} update={update} />}
-                {step === 1 && <StepDetails form={form} update={update} />}
-                {step === 2 && <StepContact form={form} update={update} />}
-                {step === 3 && <StepReview form={form} edit={setStep} />}
+                {step === 0 && <StepIdea form={form} update={update} headingRef={stepHeadingRef} />}
+                {step === 1 && <StepDetails form={form} update={update} headingRef={stepHeadingRef} />}
+                {step === 2 && <StepContact form={form} update={update} headingRef={stepHeadingRef} />}
+                {step === 3 && <StepReview form={form} edit={setStep} headingRef={stepHeadingRef} />}
                 <div className="wizard-actions">
-                  {step > 0 && <Button variant="link" className="plain-link" onClick={() => { setError(''); setStep((value) => value - 1); }}>Back</Button>}
-                  {step < 3 ? <Button className="button-burgundy" onClick={next}>Continue <Icon name="arrow" /></Button> : <Button className="button-burgundy" onClick={submit} disabled={submitting}>{submitting ? <><Spinner size="sm" /> Sending…</> : <>Send to the studio <Icon name="arrow" /></>}</Button>}
+                  {step > 0 && <Button type="button" variant="link" className="plain-link" onClick={() => { setError(''); setStep((value) => value - 1); }}>Back</Button>}
+                  {step < 3 ? <Button type="button" className="button-burgundy" onClick={next}>Continue <Icon name="arrow" /></Button> : <Button type="button" className="button-burgundy" onClick={submit} disabled={submitting}>{submitting ? <><Spinner size="sm" /> Sending…</> : <>Send to the studio <Icon name="arrow" /></>}</Button>}
                 </div>
                 <p className="wizard-saved"><Icon name="check" size={13} /> Your progress is saved on this device.</p>
               </div>
@@ -241,20 +268,20 @@ export default function CustomOrderPage() {
   );
 }
 
-function StepIdea({ form, update }) {
-  return <div className="wizard-step"><p className="eyebrow">The starting point</p><h3>What would you love us to create?</h3><Form.Group className="form-field"><Form.Label>Type of piece</Form.Label><div className="choice-grid">{['Name plaque', 'Wall clock', 'Wedding keepsake', 'Serving piece', 'Home décor', 'Something new'].map((option) => <label key={option}><input type="radio" name="productType" checked={form.productType === option} onChange={() => update('productType', option)} /><span><Icon name="spark" />{option}</span></label>)}</div></Form.Group><Form.Group className="form-field" controlId="custom-idea"><Form.Label>Describe the idea</Form.Label><Form.Control as="textarea" rows={5} value={form.description} maxLength={800} onChange={(event) => update('description', event.target.value)} placeholder="Who is it for, what should it feel like, and what made you imagine it?" /><div className="character-count">{form.description.length}/800</div></Form.Group><Row className="g-3"><Col sm={6}><Form.Group controlId="custom-occasion"><Form.Label>Occasion <small>optional</small></Form.Label><Form.Select value={form.occasion} onChange={(event) => update('occasion', event.target.value)}><option value="">Select one</option><option>Birthday</option><option>Wedding</option><option>Anniversary</option><option>Housewarming</option><option>Corporate event</option><option>Memorial</option><option>Just because</option></Form.Select></Form.Group></Col><Col sm={6}><Form.Group controlId="custom-date-needed"><Form.Label>Needed by <small>optional</small></Form.Label><Form.Control type="date" min={new Date().toISOString().slice(0, 10)} value={form.neededBy} onChange={(event) => update('neededBy', event.target.value)} /></Form.Group></Col></Row></div>;
+function StepIdea({ form, update, headingRef }) {
+  return <div className="wizard-step"><p className="eyebrow">The starting point</p><h3 ref={headingRef} tabIndex="-1">What would you love us to create?</h3><Form.Group className="form-field"><Form.Label>Type of piece <small>required</small></Form.Label><div className="choice-grid">{['Name plaque', 'Wall clock', 'Wedding keepsake', 'Serving piece', 'Home décor', 'Something new'].map((option) => <label key={option}><input type="radio" name="productType" required checked={form.productType === option} onChange={() => update('productType', option)} /><span><Icon name="spark" />{option}</span></label>)}</div></Form.Group><Form.Group className="form-field" controlId="custom-idea"><Form.Label>Describe the idea <small>required</small></Form.Label><Form.Control required minLength={10} as="textarea" rows={5} value={form.description} maxLength={800} onChange={(event) => update('description', event.target.value)} placeholder="Who is it for, what should it feel like, and what made you imagine it?" /><div className="character-count">{form.description.length}/800</div></Form.Group><Row className="g-3"><Col sm={6}><Form.Group controlId="custom-occasion"><Form.Label>Occasion <small>optional</small></Form.Label><Form.Select value={form.occasion} onChange={(event) => update('occasion', event.target.value)}><option value="">Select one</option><option>Birthday</option><option>Wedding</option><option>Anniversary</option><option>Housewarming</option><option>Corporate event</option><option>Memorial</option><option>Just because</option></Form.Select></Form.Group></Col><Col sm={6}><Form.Group controlId="custom-date-needed"><Form.Label>Needed by <small>optional</small></Form.Label><Form.Control type="date" min={new Date().toISOString().slice(0, 10)} value={form.neededBy} onChange={(event) => update('neededBy', event.target.value)} /></Form.Group></Col></Row></div>;
 }
 
-function StepDetails({ form, update }) {
-  return <div className="wizard-step"><p className="eyebrow">The personal layer</p><h3>Which details should live inside it?</h3><Form.Group className="form-field" controlId="custom-personalization"><Form.Label>Names, dates, photos, logo or special elements</Form.Label><Form.Control as="textarea" rows={5} value={form.personalization} maxLength={600} onChange={(event) => update('personalization', event.target.value)} placeholder="e.g. Names Aarya & Kabir, wedding date, ivory flowers, one printed photograph…" /><div className="character-count">{form.personalization.length}/600</div></Form.Group><Form.Group className="form-field" controlId="custom-palette"><Form.Label>Colour or theme direction <small>optional</small></Form.Label><Form.Control value={form.palette} onChange={(event) => update('palette', event.target.value)} placeholder="e.g. Deep green geode with restrained gold" /></Form.Group><Row className="g-3"><Col sm={6}><Form.Group controlId="custom-budget"><Form.Label>Comfortable budget <small>optional</small></Form.Label><Form.Select value={form.budget} onChange={(event) => update('budget', event.target.value)}><option value="">Choose a range</option><option>Under ₹1,500</option><option>₹1,500 – ₹3,000</option><option>₹3,000 – ₹6,000</option><option>₹6,000 – ₹10,000</option><option>₹10,000+</option><option>Need guidance</option></Form.Select></Form.Group></Col><Col sm={6}><Form.Group controlId="custom-reference"><Form.Label>Reference link <small>optional</small></Form.Label><Form.Control type="url" value={form.referenceUrl} onChange={(event) => update('referenceUrl', event.target.value)} placeholder="Pinterest, Drive or Instagram URL" /></Form.Group></Col></Row><p className="form-tip"><Icon name="upload" /> You can share full-resolution photos with the studio after the first review, so precious files aren’t compressed unnecessarily.</p></div>;
+function StepDetails({ form, update, headingRef }) {
+  return <div className="wizard-step"><p className="eyebrow">The personal layer</p><h3 ref={headingRef} tabIndex="-1">Which details should live inside it?</h3><Form.Group className="form-field" controlId="custom-personalization"><Form.Label>Names, dates, photos, logo or special elements <small>required</small></Form.Label><Form.Control required as="textarea" rows={5} value={form.personalization} maxLength={600} onChange={(event) => update('personalization', event.target.value)} placeholder="e.g. Names Aarya & Kabir, wedding date, ivory flowers, one printed photograph…" /><div className="character-count">{form.personalization.length}/600</div></Form.Group><Form.Group className="form-field" controlId="custom-palette"><Form.Label>Colour or theme direction <small>optional</small></Form.Label><Form.Control value={form.palette} onChange={(event) => update('palette', event.target.value)} placeholder="e.g. Deep green geode with restrained gold" /></Form.Group><Row className="g-3"><Col sm={6}><Form.Group controlId="custom-budget"><Form.Label>Comfortable budget <small>optional</small></Form.Label><Form.Select value={form.budget} onChange={(event) => update('budget', event.target.value)}><option value="">Choose a range</option><option>Under ₹1,500</option><option>₹1,500 – ₹3,000</option><option>₹3,000 – ₹6,000</option><option>₹6,000 – ₹10,000</option><option>₹10,000+</option><option>Need guidance</option></Form.Select></Form.Group></Col><Col sm={6}><Form.Group controlId="custom-reference"><Form.Label>Reference link <small>optional</small></Form.Label><Form.Control type="url" value={form.referenceUrl} onChange={(event) => update('referenceUrl', event.target.value)} placeholder="Pinterest, Drive or Instagram URL" /></Form.Group></Col></Row><p className="form-tip"><Icon name="upload" /> You can share full-resolution photos with the studio after the first review, so precious files aren’t compressed unnecessarily.</p></div>;
 }
 
-function StepContact({ form, update }) {
+function StepContact({ form, update, headingRef }) {
   const { user } = useAuth();
-  return <div className="wizard-step"><p className="eyebrow">Stay in the loop</p><h3>How should we continue the conversation?</h3><Row className="g-3"><Col sm={6}><Form.Group controlId="inquiry-name"><Form.Label>Your name</Form.Label><Form.Control value={form.name} maxLength={100} onChange={(event) => update('name', event.target.value)} autoComplete="name" /></Form.Group></Col><Col sm={6}><Form.Group controlId="inquiry-phone"><Form.Label>Mobile number</Form.Label><Form.Control type="tel" inputMode="tel" maxLength={24} value={form.phone} onChange={(event) => update('phone', event.target.value)} autoComplete="tel" placeholder="09876543210 or +91 98765 43210" /><Form.Text>Use a 10-digit Indian mobile, optionally beginning with 0 or +91.</Form.Text></Form.Group></Col><Col xs={12}><Form.Group controlId="inquiry-email"><Form.Label>Email address</Form.Label><Form.Control readOnly={Boolean(user)} type="email" maxLength={254} value={form.email} onChange={(event) => update('email', event.target.value)} autoComplete="email" />{user && <Form.Text>Replies will go to your verified account email.</Form.Text>}</Form.Group></Col><Col xs={12}><Form.Group controlId="inquiry-contact"><Form.Label>Preferred contact</Form.Label><div className="inline-choices">{['WhatsApp', 'Phone call', 'Email'].map((option) => <Form.Check key={option} inline type="radio" name="contactPreference" id={`contact-${option}`} label={option} checked={form.contactPreference === option} onChange={() => update('contactPreference', option)} />)}</div></Form.Group></Col></Row><Alert variant="info" className="soft-alert privacy-inline"><Icon name="shield" /> Your contact details are used only to respond to this request.</Alert></div>;
+  return <div className="wizard-step"><p className="eyebrow">Stay in the loop</p><h3 ref={headingRef} tabIndex="-1">How should we continue the conversation?</h3><Row className="g-3"><Col sm={6}><Form.Group controlId="inquiry-name"><Form.Label>Your name <small>required</small></Form.Label><Form.Control required minLength={2} value={form.name} maxLength={100} onChange={(event) => update('name', event.target.value)} autoComplete="name" /></Form.Group></Col><Col sm={6}><Form.Group controlId="inquiry-phone"><Form.Label>Mobile number <small>required</small></Form.Label><Form.Control required type="tel" inputMode="tel" maxLength={24} value={form.phone} onChange={(event) => update('phone', event.target.value)} autoComplete="tel" placeholder="09876543210 or +91 98765 43210" /><Form.Text>Use a 10-digit Indian mobile, optionally beginning with 0 or +91.</Form.Text></Form.Group></Col><Col xs={12}><Form.Group controlId="inquiry-email"><Form.Label>Email address <small>required</small></Form.Label><Form.Control required readOnly={Boolean(user)} type="email" maxLength={254} value={form.email} onChange={(event) => update('email', event.target.value)} autoComplete="email" />{user && <Form.Text>Replies will go to your verified account email.</Form.Text>}</Form.Group></Col><Col xs={12}><Form.Group controlId="inquiry-contact"><Form.Label>Preferred contact</Form.Label><div className="inline-choices">{['WhatsApp', 'Phone call', 'Email'].map((option) => <Form.Check key={option} inline type="radio" name="contactPreference" id={`contact-${option.toLowerCase().replace(/\s+/g, '-')}`} label={option} checked={form.contactPreference === option} onChange={() => update('contactPreference', option)} />)}</div></Form.Group></Col></Row><Alert variant="info" className="soft-alert privacy-inline"><Icon name="shield" /> Your contact details are used only to respond to this request.</Alert></div>;
 }
 
-function StepReview({ form, edit }) {
+function StepReview({ form, edit, headingRef }) {
   const rows = [
     ['Piece', form.productType, 0],
     ['Occasion', form.occasion || 'Not specified', 0],
@@ -266,5 +293,5 @@ function StepReview({ form, edit }) {
     ['Contact', `${form.name} · ${form.phone} · ${form.email}`, 2],
     ['Preferred contact', form.contactPreference, 2],
   ];
-  return <div className="wizard-step review-step"><p className="eyebrow">Review your request</p><h3>Does this sound like your idea?</h3><div className="review-list">{rows.map(([label, value, ownerStep]) => <div key={label}><span>{label}</span><p>{value}</p><button type="button" onClick={() => edit(ownerStep)}>Edit</button></div>)}</div><Alert variant="info" className="soft-alert"><strong>Sending this is free.</strong> The studio will review the brief and contact you before any design is confirmed or payment is requested.</Alert></div>;
+  return <div className="wizard-step review-step"><p className="eyebrow">Review your request</p><h3 ref={headingRef} tabIndex="-1">Does this sound like your idea?</h3><div className="review-list">{rows.map(([label, value, ownerStep]) => <div key={label}><span>{label}</span><p>{value}</p><button type="button" onClick={() => edit(ownerStep)}>Edit</button></div>)}</div><Alert variant="info" className="soft-alert"><strong>Sending this is free.</strong> The studio will review the brief and contact you before any design is confirmed or payment is requested.</Alert></div>;
 }

@@ -60,9 +60,11 @@ Public:
   `POST /api/auth/email/verify` with `{ challengeId, code }`. Codes are HMAC-protected at rest,
   expire, have bounded checks/resends, and are consumed once. The sender is server-controlled.
 - `POST /api/auth/google` verifies Google credentials on the server.
-- `GET /api/auth/me` reads the secure cookie session. `POST /api/auth/logout` always clears the
-  current cookie and, when the user record is reachable, increments the session version to revoke
-  the account's other issued sessions.
+- `GET /api/auth/me` is a non-erroring session probe: it returns the public user with
+  `authenticated: true` for a valid secure cookie, or `user: null` with `authenticated: false`
+  for a guest or stale cookie. Protected routes still require authentication. `POST
+  /api/auth/logout` always clears the current cookie and, when the user record is reachable,
+  increments the session version to revoke the account's other issued sessions.
 - Login and signup labels guide the initial flow, but a successfully verified mailbox completes
   the sensible account action instead of burning the code on the wrong tab. Matching email text
   alone never links an unverified provider account.

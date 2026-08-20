@@ -327,6 +327,12 @@ export default function ProductPage() {
     return () => { active = false; };
   }, [loadAttempt, slug]);
 
+  useEffect(() => {
+    if (product?.title && product.slug === slug) {
+      document.title = `${product.title} · Gift N Wrap Studio`;
+    }
+  }, [product?.slug, product?.title, slug]);
+
   const related = useMemo(
     () => catalog.filter((item) => item.id !== product?.id && item.category === product?.category).slice(0, 3),
     [catalog, product],
@@ -415,7 +421,7 @@ export default function ProductPage() {
           <Row className="g-5 product-detail-row">
             <Col lg={7}>
               <div className="product-gallery">
-                <div className="product-gallery__thumbs" aria-label="Product images">
+                <div className="product-gallery__thumbs" aria-label="Product image choices">
                   {gallery.map((image, index) => (
                     <button key={`${image}-${index}`} type="button" className={activeImageIndex === index ? 'is-active' : ''} onClick={() => setSelectedImage(index)} aria-label={`Show image ${index + 1}`} aria-pressed={activeImageIndex === index}>
                       <SmartImage src={image} alt="" fallbackLabel={product.category} imageWidth={160} responsiveWidths={[96, 160, 240]} sizes="82px" loading="lazy" decoding="async" />
@@ -425,6 +431,7 @@ export default function ProductPage() {
                 <div className="product-gallery__main">
                   <SmartImage src={gallery[activeImageIndex]} alt={`${product.title}, view ${activeImageIndex + 1}`} fallbackLabel={product.title} imageWidth={1200} responsiveWidths={[640, 900, 1200, 1600]} sizes="(max-width: 991px) calc(100vw - 1.5rem), 58vw" loading={activeImageIndex === 0 ? 'eager' : 'lazy'} decoding="async" fetchPriority={activeImageIndex === 0 ? 'high' : 'auto'} />
                   {product.badge && <span className="product-gallery__badge">{product.badge}</span>}
+                  <span className="visually-hidden" role="status" aria-live="polite">Image {activeImageIndex + 1} of {gallery.length}</span>
                 </div>
               </div>
             </Col>
@@ -484,9 +491,9 @@ export default function ProductPage() {
 
                   <div className="buy-actions">
                     <div className="quantity-control" aria-label="Quantity">
-                      <button type="button" onClick={() => setQuantity((value) => Math.max(1, value - 1))} aria-label="Decrease quantity"><Icon name="minus" size={16} /></button>
+                      <button type="button" onClick={() => setQuantity((value) => Math.max(1, value - 1))} aria-label="Decrease quantity" disabled={!product.inStock || quantity === 1}><Icon name="minus" size={16} /></button>
                       <span aria-live="polite">{quantity}</span>
-                      <button type="button" onClick={() => setQuantity((value) => Math.min(10, value + 1))} aria-label="Increase quantity"><Icon name="plus" size={16} /></button>
+                      <button type="button" onClick={() => setQuantity((value) => Math.min(10, value + 1))} aria-label="Increase quantity" disabled={!product.inStock || quantity === 10}><Icon name="plus" size={16} /></button>
                     </div>
                     <Button type="submit" className="button-burgundy flex-grow-1" disabled={!product.inStock || mediaBusy}>{mediaBusy ? 'Securing photo…' : `Add to bag · ${formatCurrency(product.price * quantity)}`}</Button>
                   </div>

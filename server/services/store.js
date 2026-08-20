@@ -998,13 +998,16 @@ export const revokeUserSessions = async (userId) => {
   });
 };
 
+const welcomeOfferHasValue = (offer = {}) =>
+  Number(offer.percent) > 0 && Number(offer.maxDiscount) > 0;
+
 const defaultStudioSettings = () => ({
   leadTimes: {
     ready: "3–10 business days",
     custom: "5–15 business days",
   },
   offer: {
-    enabled: env.welcomeDiscountPercent > 0,
+    enabled: env.welcomeDiscountPercent > 0 && env.welcomeDiscountMax > 0,
     eyebrow: "A little welcome gift",
     title: "Make your first story together.",
     body: "Enjoy a thoughtful saving on your first Gift N Wrap Studio order.",
@@ -1058,6 +1061,12 @@ const publicStudioSettings = (record) => {
   const instagram = normalizeInstagramProfile(settings.contact.instagram);
   return {
     ...settings,
+    offer: {
+      ...settings.offer,
+      // Existing data from an older deployment may contain an enabled offer
+      // whose effective saving is zero. Never advertise or redeem that state.
+      enabled: Boolean(settings.offer.enabled && welcomeOfferHasValue(settings.offer)),
+    },
     contact: {
       ...settings.contact,
       instagramHandle: instagram?.handle ? `@${instagram.handle}` : "",
@@ -1079,6 +1088,22 @@ export const updateStudioSettings = async (input, updatedBy) => {
   const mode = assertWritable(await connectDatabase());
   const current = await getStudioSettings(mode);
   const settings = mergeStudioSettings(current, input);
+  if (settings.offer.enabled && !welcomeOfferHasValue(settings.offer)) {
+    const details = [];
+    if (Number(settings.offer.percent) <= 0) {
+      details.push({
+        field: "offer.percent",
+        message: "An enabled welcome offer needs a discount above 0%",
+      });
+    }
+    if (Number(settings.offer.maxDiscount) <= 0) {
+      details.push({
+        field: "offer.maxDiscount",
+        message: "An enabled welcome offer needs a maximum saving above ₹0",
+      });
+    }
+    throw badRequest("An enabled welcome offer must provide a real saving", details);
+  }
   if (mode === "mongodb") {
     const record = await StudioSettings.findByIdAndUpdate(
       "studio",
@@ -1097,17 +1122,19 @@ export const updateStudioSettings = async (input, updatedBy) => {
 const findProductForOrder = async ({ productId, slug }, selectedMode) => {
   const mode = selectedMode || (await ensureCatalogSeeded());
   if (mode === "mongodb") {
-    const query = slug
-      ? { slug, active: true }
-      : mongoose.isValidObjectId(productId)
-        ? { _id: productId, active: true }
-        : { _id: null };
-    return plain(await Product.findOne(query));
+    if (mongoose.isValidObjectId(productId)) {
+      const product = await Product.findById(productId);
+      if (product) return product.active ? plain(product) : undefined;
+    }
+    return slug ? plain(await Product.findOne({ slug, active: true })) : undefined;
   }
-  return memoryStore.findOne(
-    "products",
-    (product) => product.active && (slug ? product.slug === slug : product.id === productId),
-  );
+  if (productId) {
+    const product = memoryStore.get("products", productId);
+    if (product) return product.active ? product : undefined;
+  }
+  return slug
+    ? memoryStore.findOne("products", (product) => product.active && product.slug === slug)
+    : undefined;
 };
 
 const orderNumber = () => {
@@ -1378,7 +1405,8 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
     if (
       !studioSettings.offer.enabled ||
       input.couponCode !== studioSettings.offer.code ||
-      studioSettings.offer.percent === 0
+      studioSettings.offer.percent <= 0 ||
+      studioSettings.offer.maxDiscount <= 0
     ) {
       throw welcomeOfferInvalid();
     }

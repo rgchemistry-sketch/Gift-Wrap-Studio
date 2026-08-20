@@ -4,6 +4,7 @@ const collections = {
   users: new Map(),
   authIdentities: new Map(),
   emailAuthChallenges: new Map(),
+  emailAuthCooldowns: new Map(),
   products: new Map(),
   orders: new Map(),
   customInquiries: new Map(),

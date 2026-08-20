@@ -878,7 +878,8 @@ test("logout removes every unconsumed user upload while preserving saved order a
   assert.equal(memoryStore.get("uploadGrants", abandonedOrderMedia.publicId), undefined);
   assert.equal(memoryStore.get("uploadGrants", abandonedInquiryPublicId), undefined);
   assert.ok(memoryStore.get("uploadGrants", savedMedia.publicId).consumedAt);
-  await buyer.get("/api/auth/me").expect(401);
+  const session = await buyer.get("/api/auth/me").expect(200);
+  assert.deepEqual(session.body.data, { user: null, authenticated: false });
 });
 
 test("logout preserves consumed product assets while cleaning abandoned admin uploads", async () => {
@@ -920,7 +921,8 @@ test("upload provider failures never prevent logout or leave cleanup claims lock
   assert.ok(retainedGrant);
   assert.equal(retainedGrant.consumedAt, undefined);
   assert.equal(retainedGrant.reservationToken, "");
-  await buyer.get("/api/auth/me").expect(401);
+  const session = await buyer.get("/api/auth/me").expect(200);
+  assert.deepEqual(session.body.data, { user: null, authenticated: false });
 });
 
 test("an admin can retire only removed consumed product images while provenance is retained", async () => {

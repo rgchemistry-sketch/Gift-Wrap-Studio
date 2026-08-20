@@ -8,6 +8,7 @@ const emailAuthChallengeSchema = new mongoose.Schema(
     name: { type: String, default: "", trim: true, maxlength: 100 },
     intent: { type: String, required: true, enum: ["login", "signup"] },
     codeHash: { type: String, required: true },
+    cooldownToken: { type: String, default: "", trim: true, maxlength: 64 },
     attempts: { type: Number, required: true, default: 0, min: 0 },
     expiresAt: { type: Date, required: true, expires: 0 },
     consumedAt: { type: Date },
@@ -18,3 +19,17 @@ const emailAuthChallengeSchema = new mongoose.Schema(
 export const EmailAuthChallenge =
   mongoose.models.EmailAuthChallenge ||
   mongoose.model("EmailAuthChallenge", emailAuthChallengeSchema);
+
+const emailAuthCooldownSchema = new mongoose.Schema(
+  {
+    _id: { type: String, required: true },
+    reservationToken: { type: String, required: true, trim: true, maxlength: 64 },
+    nextAllowedAt: { type: Date, required: true },
+    expiresAt: { type: Date, required: true, expires: 0 },
+  },
+  { timestamps: true },
+);
+
+export const EmailAuthCooldown =
+  mongoose.models.EmailAuthCooldown ||
+  mongoose.model("EmailAuthCooldown", emailAuthCooldownSchema);

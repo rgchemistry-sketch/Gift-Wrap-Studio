@@ -278,6 +278,32 @@ test("saved studio settings drive the public popup and checkout totals", async (
   assert.equal(order.body.data.total, 1763);
 });
 
+test("an enabled welcome offer cannot advertise or consume a zero-value saving", async () => {
+  const admin = await adminAgent();
+  await admin
+    .put("/api/admin/settings")
+    .send({ offer: { enabled: false, percent: 0, maxDiscount: 0 } })
+    .expect(200);
+
+  const disabled = await request(app).get("/api/offers/welcome").expect(200);
+  assert.equal(disabled.body.data.enabled, false);
+  assert.equal(disabled.body.data.eligible, false);
+
+  const invalid = await admin
+    .put("/api/admin/settings")
+    .send({ offer: { enabled: true } })
+    .expect(400);
+  assert.equal(invalid.body.error.code, "BAD_REQUEST");
+  assert.deepEqual(
+    invalid.body.error.details.map((issue) => issue.field).sort(),
+    ["offer.maxDiscount", "offer.percent"],
+  );
+
+  const stillDisabled = await request(app).get("/api/offers/welcome").expect(200);
+  assert.equal(stillDisabled.body.data.enabled, false);
+  assert.equal(stillDisabled.body.data.eligible, false);
+});
+
 test("studio Instagram settings reject content links and preserve explicit blanks", async () => {
   const admin = await adminAgent();
 

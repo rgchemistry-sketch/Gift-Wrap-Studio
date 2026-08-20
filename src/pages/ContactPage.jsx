@@ -220,7 +220,7 @@ export default function ContactPage() {
             </div>
           </Col>
           <Col lg={{ span: 6, offset: 1 }}>
-            <Form ref={formRef} noValidate onSubmit={submit} className="contact-form">
+            <Form ref={formRef} noValidate onSubmit={submit} className="contact-form" aria-busy={state.submitting}>
               <p className="eyebrow">Send a note</p>
               <h2>What can we make easier?</h2>
               {state.error && <Alert variant="danger" className="soft-alert" role="alert">{state.error}</Alert>}
@@ -244,9 +244,9 @@ export default function ContactPage() {
                 <Col xs={12}>
                   <Form.Group controlId="contact-email">
                     <Form.Label>Email</Form.Label>
-                    <Form.Control required readOnly={Boolean(user)} type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} isInvalid={Boolean(fieldErrors.email)} aria-invalid={fieldErrors.email ? true : undefined} aria-describedby={`contact-email-error${user ? ' contact-email-help' : ''}`} />
+                    <Form.Control required readOnly={Boolean(user)} type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} isInvalid={Boolean(fieldErrors.email)} aria-invalid={fieldErrors.email ? true : undefined} aria-describedby="contact-email-error contact-email-help" />
                     <Form.Control.Feedback id="contact-email-error" type="invalid">{fieldErrors.email || 'Enter a valid email.'}</Form.Control.Feedback>
-                    {user && <Form.Text id="contact-email-help">Replies will go to your verified account email.</Form.Text>}
+                    <Form.Text id="contact-email-help">{user ? 'Replies will go to your verified account email.' : 'You’ll verify this email securely before the message is sent.'}</Form.Text>
                   </Form.Group>
                 </Col>
                 <Col xs={12}>
@@ -259,13 +259,15 @@ export default function ContactPage() {
                 <Col xs={12}>
                   <Form.Group controlId="contact-message">
                     <Form.Label>Message</Form.Label>
-                    <Form.Control required as="textarea" rows={6} minLength={10} maxLength={3000} value={form.message} onChange={(event) => update('message', event.target.value)} isInvalid={Boolean(fieldErrors.message)} aria-invalid={fieldErrors.message ? true : undefined} aria-describedby="contact-message-error" placeholder="Include the product, occasion or order number if you have one." />
+                    <Form.Control required as="textarea" rows={6} minLength={10} maxLength={3000} value={form.message} onChange={(event) => update('message', event.target.value)} isInvalid={Boolean(fieldErrors.message)} aria-invalid={fieldErrors.message ? true : undefined} aria-describedby="contact-message-error contact-message-count" placeholder="Include the product, occasion or order number if you have one." />
                     <Form.Control.Feedback id="contact-message-error" type="invalid">{fieldErrors.message || 'Write at least 10 characters so we can understand how to help.'}</Form.Control.Feedback>
+                    <div className="character-count" id="contact-message-count">{form.message.length}/3000</div>
                   </Form.Group>
                 </Col>
               </Row>
+              {!user && <Alert variant="info" className="soft-alert contact-auth-note"><Icon name="lock" /> Your note stays here while you verify your email. Nothing is sent until you finish secure sign-in.</Alert>}
               <Button type="submit" className="button-burgundy" disabled={state.submitting}>
-                {state.submitting ? <><Spinner size="sm" /> Sending…</> : <>Send message <Icon name="arrow" /></>}
+                {state.submitting ? <><Spinner size="sm" /> Sending…</> : <>{user ? 'Send message' : 'Continue securely'} <Icon name="arrow" /></>}
               </Button>
             </Form>
           </Col>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
@@ -36,7 +36,12 @@ const statusLabels = {
 export default function AccountPage() {
   const { user, loading: authLoading, openAuth, signOut, signingOut } = useAuth();
   const { wishlist, studioSettings } = useShop();
-  const { products: catalog } = useCatalog();
+  const {
+    products: catalog,
+    loading: catalogLoading,
+    error: catalogError,
+    refresh: refreshCatalog,
+  } = useCatalog();
   const [tab, setTab] = useState('overview');
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -45,6 +50,7 @@ export default function AccountPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const contact = resolveStudioContact(studioSettings);
+  const panelRef = useRef(null);
 
   const loadOrders = useCallback(async () => {
     if (!user) return;
@@ -63,7 +69,7 @@ export default function AccountPage() {
 
   useEffect(() => {
     const requestedTab = new URLSearchParams(location.search).get('tab');
-    if (tabs.some(([key]) => key === requestedTab)) setTab(requestedTab);
+    setTab(tabs.some(([key]) => key === requestedTab) ? requestedTab : 'overview');
   }, [location.search]);
 
   // The wishlist stores live catalogue ids, so it has to be matched against the live
@@ -72,6 +78,30 @@ export default function AccountPage() {
     () => catalog.filter((product) => wishlist.includes(product.id)),
     [catalog, wishlist],
   );
+
+  const selectTab = (nextTab, { focusPanel = true } = {}) => {
+    setTab(nextTab);
+    const params = new URLSearchParams(location.search);
+    if (nextTab === 'overview') params.delete('tab');
+    else params.set('tab', nextTab);
+    const search = params.toString();
+    navigate({ pathname: location.pathname, search: search ? `?${search}` : '' }, { replace: true });
+    if (focusPanel) window.requestAnimationFrame(() => panelRef.current?.focus({ preventScroll: true }));
+  };
+
+  const handleTabKeyDown = (event, currentKey) => {
+    const currentIndex = tabs.findIndex(([key]) => key === currentKey);
+    let nextIndex;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    const nextKey = tabs[nextIndex][0];
+    selectTab(nextKey, { focusPanel: false });
+    window.requestAnimationFrame(() => document.getElementById(`account-tab-${nextKey}`)?.focus());
+  };
 
   if (authLoading) return <div className="route-loader" role="status"><span /><span /><span /></div>;
   if (!user) {
@@ -105,23 +135,26 @@ export default function AccountPage() {
           <div className="account-header__actions">{user.role === 'admin' && <Button as={Link} to="/admin" variant="outline-dark">Open admin</Button>}<button type="button" className="plain-link" disabled={signingOut} onClick={handleSignOut}>{signingOut ? 'Signing out…' : 'Sign out'}</button></div>
         </header>
         {signOutError && <Alert variant="warning" className="soft-alert">{signOutError} <button type="button" className="plain-link" disabled={signingOut} onClick={handleSignOut}>Retry sign out</button></Alert>}
-        <div className="account-tabs" role="group" aria-label="Account sections">{tabs.map(([key,label])=><button type="button" key={key} aria-pressed={tab===key} className={tab===key?'is-active':''} onClick={()=>setTab(key)}>{label}</button>)}</div>
-        {error && <Alert variant="warning" className="soft-alert">{error} <button type="button" className="plain-link" onClick={loadOrders}>Retry</button></Alert>}
-        {tab === 'overview' && <Overview user={user} latestOrder={latestOrder} orders={orders} savedCount={savedProducts.length} loading={ordersLoading} goTo={setTab} contact={contact} />}
-        {tab === 'orders' && <OrdersPanel orders={orders} loading={ordersLoading} contact={contact} />}
-        {tab === 'saved' && <SavedPanel products={savedProducts} />}
-        {tab === 'profile' && <ProfilePanel user={user} />}
+        <div className="account-tabs" role="tablist" aria-label="Account sections">{tabs.map(([key,label])=><button type="button" role="tab" id={`account-tab-${key}`} aria-selected={tab===key} aria-controls="account-panel" tabIndex={tab===key?0:-1} key={key} className={tab===key?'is-active':''} onKeyDown={(event)=>handleTabKeyDown(event,key)} onClick={()=>selectTab(key)}>{label}</button>)}</div>
+        {error && (tab === 'overview' || tab === 'orders') && <Alert variant="warning" className="soft-alert">{error} <button type="button" className="plain-link" onClick={loadOrders}>Retry</button></Alert>}
+        <div ref={panelRef} className="account-tab-panel" role="tabpanel" id="account-panel" aria-labelledby={`account-tab-${tab}`} tabIndex="-1" aria-busy={tab === 'saved' ? catalogLoading : (tab === 'overview' || tab === 'orders') && ordersLoading}>
+          {tab === 'overview' && <Overview user={user} latestOrder={latestOrder} orders={orders} savedCount={catalogLoading && wishlist.length ? '—' : savedProducts.length} loading={ordersLoading} error={error} goTo={selectTab} contact={contact} />}
+          {tab === 'orders' && <OrdersPanel orders={orders} loading={ordersLoading} error={error} contact={contact} />}
+          {tab === 'saved' && <SavedPanel products={savedProducts} hasSavedItems={wishlist.length > 0} loading={catalogLoading} error={catalogError} retry={() => refreshCatalog({ force: true })} />}
+          {tab === 'profile' && <ProfilePanel user={user} />}
+        </div>
       </Container>
     </section>
   );
 }
 
-function Overview({ user, latestOrder, orders, savedCount, loading, goTo, contact }) {
-  return <div className="account-panel"><div className="account-stat-grid"><button type="button" onClick={()=>goTo('orders')}><span><Icon name="package"/></span><p><strong>{orders.length}</strong><small>Orders & requests</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('saved')}><span><Icon name="heart"/></span><p><strong>{savedCount}</strong><small>Saved pieces</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('profile')}><span><Icon name="map"/></span><p><strong>{user.addresses?.length || 0}</strong><small>Saved addresses</small></p><Icon name="arrow"/></button></div><Row className="g-4"><Col lg={contact.phoneHref ? 8 : 12}>{loading?<div className="account-loading"><Spinner/><span>Gathering your studio updates…</span></div>:latestOrder?<OrderCard order={latestOrder} contact={contact}/>:<div className="account-empty"><span><Icon name="spark"/></span><div><p className="eyebrow">No requests yet</p><h2>Your first keepsake can begin whenever you’re ready.</h2><p>Choose a studio design to personalize or bring us a completely new idea.</p><Button as={Link} to="/shop" className="button-burgundy">Explore pieces</Button><Link to="/custom-order" className="text-link">Start a custom design <Icon name="arrow"/></Link></div></div>}</Col>{contact.phoneHref && <Col lg={4}><aside className="account-help"><Icon name="phone"/><p className="eyebrow">Direct studio help</p><h2>A real person, close to every order.</h2><p>For a date-sensitive gift or customization question, speak with our studio.</p><a href={contact.phoneHref}>{contact.phoneLabel} <Icon name="arrow"/></a></aside></Col>}</Row></div>;
+function Overview({ user, latestOrder, orders, savedCount, loading, error, goTo, contact }) {
+  return <div className="account-panel"><div className="account-stat-grid"><button type="button" onClick={()=>goTo('orders')}><span><Icon name="package"/></span><p><strong>{orders.length}</strong><small>Orders & requests</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('saved')}><span><Icon name="heart"/></span><p><strong>{savedCount}</strong><small>Saved pieces</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('profile')}><span><Icon name="map"/></span><p><strong>{user.addresses?.length || 0}</strong><small>Saved addresses</small></p><Icon name="arrow"/></button></div><Row className="g-4"><Col lg={contact.phoneHref ? 8 : 12}>{loading?<div className="account-loading" role="status"><Spinner/><span>Gathering your studio updates…</span></div>:error&&!latestOrder?<div className="account-empty"><span><Icon name="package"/></span><div><p className="eyebrow">Studio updates unavailable</p><h2>We couldn’t gather your requests.</h2><p>Use Retry above. Nothing in your account has been changed.</p></div></div>:latestOrder?<OrderCard order={latestOrder} contact={contact}/>:<div className="account-empty"><span><Icon name="spark"/></span><div><p className="eyebrow">No requests yet</p><h2>Your first keepsake can begin whenever you’re ready.</h2><p>Choose a studio design to personalize or bring us a completely new idea.</p><Button as={Link} to="/shop" className="button-burgundy">Explore pieces</Button><Link to="/custom-order" className="text-link">Start a custom design <Icon name="arrow"/></Link></div></div>}</Col>{contact.phoneHref && <Col lg={4}><aside className="account-help"><Icon name="phone"/><p className="eyebrow">Direct studio help</p><h2>A real person, close to every order.</h2><p>For a date-sensitive gift or customization question, speak with our studio.</p><a href={contact.phoneHref}>{contact.phoneLabel} <Icon name="arrow"/></a></aside></Col>}</Row></div>;
 }
 
-function OrdersPanel({ orders, loading, contact }) {
-  if(loading)return <div className="account-loading"><Spinner/><span>Loading your requests…</span></div>;
+function OrdersPanel({ orders, loading, error, contact }) {
+  if(loading)return <div className="account-loading" role="status"><Spinner/><span>Loading your requests…</span></div>;
+  if(error&&!orders.length)return <div className="account-empty account-empty--wide"><span><Icon name="package"/></span><div><p className="eyebrow">Orders & requests</p><h2>Your requests couldn’t be loaded.</h2><p>Use Retry above. Nothing in your account has been changed.</p></div></div>;
   if(!orders.length)return <div className="account-empty account-empty--wide"><span><Icon name="package"/></span><div><p className="eyebrow">Orders & requests</p><h2>Nothing here yet.</h2><p>When you send a custom or catalogue order request, its design and delivery progress will appear here.</p><Button as={Link} to="/shop" className="button-burgundy">Find a piece</Button></div></div>;
   return <div className="orders-list">{orders.map(order=><OrderCard key={order.id||order._id||order.orderNumber} order={order} contact={contact}/>)}</div>;
 }
@@ -134,9 +167,12 @@ function OrderCard({ order, contact }) {
   return <article className="order-card"><div className="order-card__head"><div><p className="eyebrow">{order.orderNumber||`Request ${String(order._id||order.id||'').slice(-6).toUpperCase()}`}</p><h2>{items[0]?.product?.title||items[0]?.name||'Custom studio order'}{items.length>1&&` + ${items.length-1} more`}</h2></div><span className={`order-status status-${status}`}>{statusLabels[status]||status.replaceAll('_',' ')}</span></div>{status==='cancelled'?<Alert variant="secondary" className="soft-alert">This request was closed. Contact the studio if you’d like to revisit the design.</Alert>:<div className="order-timeline" aria-label={`Order status: ${statusLabels[status]||status}`} >{statusOrder.map((key,index)=><div className={`${index<=currentIndex?'is-complete':''} ${index===currentIndex?'is-current':''}`} key={key}><i>{index<currentIndex?<Icon name="check" size={12}/>:index+1}</i><span>{statusLabels[key]}</span></div>)}</div>}<div className="order-card__foot"><p><small>Request total</small><strong>{order.total != null?formatCurrency(order.total):'Pending studio review'}</strong></p><p><small>Last updated</small><strong>{order.updatedAt?new Date(order.updatedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}):'Recently'}</strong></p>{contact.phoneHref && <a href={contact.phoneHref} className="text-link">Ask the studio <Icon name="arrow"/></a>}</div></article>;
 }
 
-function SavedPanel({ products }) {
-  if(!products.length)return <div className="account-empty account-empty--wide"><span><Icon name="heart"/></span><div><p className="eyebrow">Saved pieces</p><h2>Your inspiration shelf is empty.</h2><p>Tap the heart on any piece to keep it close while you decide.</p><Button as={Link} to="/shop" className="button-burgundy">Explore the collection</Button></div></div>;
-  return <Row className="g-4 account-saved-grid">{products.map((product,index)=><Col sm={6} lg={3} key={product.id}><ProductCard product={product} index={index}/></Col>)}</Row>;
+function SavedPanel({ products, hasSavedItems, loading, error, retry }) {
+  if(hasSavedItems && loading)return <div className="account-loading" role="status"><Spinner/><span>Gathering your saved pieces…</span></div>;
+  if(hasSavedItems && error && !products.length)return <div className="account-empty account-empty--wide" role="alert"><span><Icon name="heart"/></span><div><p className="eyebrow">Saved pieces</p><h2>Your inspiration shelf didn’t load.</h2><p>{error} Your saved choices are still remembered.</p><Button type="button" className="button-burgundy" onClick={retry}>Try again</Button></div></div>;
+  if(!hasSavedItems)return <div className="account-empty account-empty--wide"><span><Icon name="heart"/></span><div><p className="eyebrow">Saved pieces</p><h2>Your inspiration shelf is empty.</h2><p>Tap the heart on any piece to keep it close while you decide.</p><Button as={Link} to="/shop" className="button-burgundy">Explore the collection</Button></div></div>;
+  if(!products.length)return <div className="account-empty account-empty--wide"><span><Icon name="heart"/></span><div><p className="eyebrow">Saved pieces</p><h2>Those pieces have left the current collection.</h2><p>Explore what is on the studio table now, or begin a custom version of what you loved.</p><Button as={Link} to="/shop" className="button-burgundy">See current pieces</Button></div></div>;
+  return <>{error && <Alert variant="warning" className="soft-alert account-saved-alert">We couldn’t refresh every saved piece. <button type="button" className="plain-link" onClick={retry}>Try again</button></Alert>}<Row className="g-4 account-saved-grid">{products.map((product,index)=><Col sm={6} lg={3} key={product.id}><ProductCard product={product} index={index}/></Col>)}</Row></>;
 }
 
 function ProfilePanel({ user }) {

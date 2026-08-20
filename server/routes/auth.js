@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
-import { authProviderStatus, env } from "../config/env.js";
+import { authProviderStatus, env, sessionAuthReady } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
-import { authenticate } from "../middleware/auth.js";
+import { optionalAuth } from "../middleware/auth.js";
 import { DurableRateLimitStore } from "../middleware/durable-rate-limit.js";
 import { rateLimitHandler } from "../middleware/rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import {
+  assertSessionConfigured,
   publicUser,
   sessionCookieOptions,
   signSession,
@@ -58,6 +59,7 @@ const socialLogin = (provider, schema) => [
   loginLimiter,
   validate({ body: schema }),
   asyncHandler(async (request, response) => {
+    assertSessionConfigured();
     const profile = await verifySocialIdentity(provider, request.validated.body);
     const user = await authenticateSocialIdentity(profile, request.validated.body.intent);
     issueSession(response, user);
@@ -76,7 +78,7 @@ authRouter.get("/status", (_request, response) => {
         google: details.google.enabled,
         email: details.email.enabled,
       },
-      demo: env.allowDemoAuth,
+      demo: Boolean(env.allowDemoAuth && sessionAuthReady()),
       details,
     },
   });
@@ -117,6 +119,7 @@ authRouter.post(
   loginLimiter,
   validate({ body: googleLoginSchema }),
   asyncHandler(async (request, response) => {
+    assertSessionConfigured();
     const credential = request.validated.body.credential || request.validated.body.idToken;
     const profile = await verifySocialIdentity("google", { credential });
     const user = await authenticateSocialIdentity(profile, request.validated.body.intent);
@@ -130,6 +133,7 @@ if (env.allowDemoAuth) {
     loginLimiter,
     validate({ body: demoLoginSchema }),
     asyncHandler(async (request, response) => {
+      assertSessionConfigured();
       const user = await upsertDemoUser(request.validated.body.role);
       response.cookie(env.cookieName, signSession(user), sessionCookieOptions());
       response.json({ data: { user: publicUser(user), demo: true } });
@@ -139,9 +143,14 @@ if (env.allowDemoAuth) {
 
 authRouter.get(
   "/me",
-  authenticate,
+  optionalAuth,
   asyncHandler(async (request, response) => {
-    response.json({ data: { user: publicUser(request.user) } });
+    response.json({
+      data: {
+        user: request.user ? publicUser(request.user) : null,
+        authenticated: Boolean(request.user),
+      },
+    });
   }),
 );
 

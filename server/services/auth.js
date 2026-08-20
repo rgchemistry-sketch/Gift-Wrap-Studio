@@ -23,6 +23,8 @@ const requireJwtConfig = () => {
   }
 };
 
+export const assertSessionConfigured = () => requireJwtConfig();
+
 export const verifyGoogleCredential = async (credential) => {
   if (!env.googleClientId) throw configurationError(["GOOGLE_CLIENT_ID"]);
   const googleClient = await getGoogleClient();

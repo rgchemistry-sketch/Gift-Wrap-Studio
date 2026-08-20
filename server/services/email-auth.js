@@ -14,7 +14,8 @@ import {
   unauthorized,
 } from "../lib/errors.js";
 import { memoryStore } from "../lib/memory-store.js";
-import { EmailAuthChallenge } from "../models/EmailAuthChallenge.js";
+import { EmailAuthChallenge, EmailAuthCooldown } from "../models/EmailAuthChallenge.js";
+import { assertSessionConfigured } from "./auth.js";
 import { authenticateEmailIdentity } from "./identity-auth.js";
 import { emailVerificationProvider } from "./email-verification-provider.js";
 
@@ -52,34 +53,73 @@ const maskEmail = (email) => {
   return `${visible}${"•".repeat(Math.max(2, Math.min(6, local.length - visible.length)))}@${domain}`;
 };
 
-const recentChallengeRetryAfterSeconds = async (email) => {
+const cooldownKey = (email) => hashChallenge(`email-auth:${email}`);
+
+const cooldownRetryAfterSeconds = (record, now = new Date()) => {
+  const nextAllowedAt = new Date(record?.nextAllowedAt || 0).getTime();
+  return Math.max(1, Math.ceil((nextAllowedAt - now.getTime()) / 1_000));
+};
+
+const cooldownError = (record, now) => {
+  const retryAfterSeconds = record
+    ? cooldownRetryAfterSeconds(record, now)
+    : env.emailOtpResendSeconds;
+  return rateLimited(
+    `Please wait ${retryAfterSeconds} seconds before requesting another code`,
+    { retryAfterSeconds },
+  );
+};
+
+const acquireChallengeCooldown = async (email) => {
   const mode = await challengeMode();
   const now = new Date();
-  const since = new Date(now.getTime() - env.emailOtpResendSeconds * 1_000);
-  let recent;
+  const nextAllowedAt = new Date(now.getTime() + env.emailOtpResendSeconds * 1_000);
+  const reservationToken = randomBytes(24).toString("base64url");
+  const id = cooldownKey(email);
+
   if (mode === "mongodb") {
-    recent = await EmailAuthChallenge.findOne({
-      email,
-      consumedAt: { $exists: false },
-      expiresAt: { $gt: now },
-      createdAt: { $gte: since },
-    })
-      .sort({ createdAt: -1 })
-      .lean();
-  } else {
-    [recent] = memoryStore
-      .find(
-        "emailAuthChallenges",
-        (item) => item.email === email
-          && !item.consumedAt
-          && item.expiresAt > now
-          && item.createdAt >= since,
-      )
-      .sort((left, right) => right.createdAt - left.createdAt);
+    try {
+      const acquired = await EmailAuthCooldown.findOneAndUpdate(
+        {
+          _id: id,
+          $or: [
+            { nextAllowedAt: { $lte: now } },
+            { nextAllowedAt: { $exists: false } },
+          ],
+        },
+        { $set: { reservationToken, nextAllowedAt, expiresAt: nextAllowedAt } },
+        { upsert: true, new: true, runValidators: true },
+      );
+      if (acquired) return { reservationToken };
+    } catch (error) {
+      if (error?.code !== 11000 && error?.code !== 11_000) throw error;
+    }
+    const current = await EmailAuthCooldown.findById(id).lean();
+    throw cooldownError(current, now);
   }
-  if (!recent) return 0;
-  const availableAt = new Date(recent.createdAt).getTime() + env.emailOtpResendSeconds * 1_000;
-  return Math.max(1, Math.ceil((availableAt - now.getTime()) / 1_000));
+
+  const current = memoryStore.get("emailAuthCooldowns", id);
+  if (current && new Date(current.nextAllowedAt).getTime() > now.getTime()) {
+    throw cooldownError(current, now);
+  }
+  const record = { reservationToken, nextAllowedAt, expiresAt: nextAllowedAt };
+  if (current) memoryStore.update("emailAuthCooldowns", id, record);
+  else memoryStore.create("emailAuthCooldowns", record, id);
+  return { reservationToken };
+};
+
+const releaseChallengeCooldown = async (email, reservationToken) => {
+  if (!email || !reservationToken) return;
+  const mode = await challengeMode();
+  const id = cooldownKey(email);
+  if (mode === "mongodb") {
+    await EmailAuthCooldown.deleteOne({ _id: id, reservationToken });
+    return;
+  }
+  const current = memoryStore.get("emailAuthCooldowns", id);
+  if (current?.reservationToken === reservationToken) {
+    memoryStore.remove("emailAuthCooldowns", id);
+  }
 };
 
 const saveChallenge = async (record) => {
@@ -149,30 +189,35 @@ const restoreChallenge = async (challengeHash) => {
   const mode = await challengeMode();
   if (mode === "mongodb") {
     await EmailAuthChallenge.updateOne(
-      { challengeHash, consumedAt: { $exists: true } },
-      { $unset: { consumedAt: 1 } },
+      {
+        challengeHash,
+        consumedAt: { $exists: true },
+        attempts: { $gt: 0 },
+      },
+      {
+        $unset: { consumedAt: 1 },
+        $inc: { attempts: -1 },
+      },
     );
     return;
   }
   const record = memoryStore.get("emailAuthChallenges", challengeHash);
   if (record?.consumedAt) {
-    memoryStore.update("emailAuthChallenges", challengeHash, { consumedAt: undefined });
+    memoryStore.update("emailAuthChallenges", challengeHash, {
+      consumedAt: undefined,
+      attempts: Math.max(0, record.attempts - 1),
+    });
   }
 };
 
 export const startEmailAuthentication = async ({ email, name = "", intent }) => {
+  assertSessionConfigured();
   const status = emailAuthStatus();
   if (!status.enabled) {
     throw configurationError(["RESEND_API_KEY", "AUTH_EMAIL_FROM", "EMAIL_OTP_SECRET"]);
   }
   const normalizedEmail = email.trim().toLowerCase();
-  const retryAfterSeconds = await recentChallengeRetryAfterSeconds(normalizedEmail);
-  if (retryAfterSeconds > 0) {
-    throw rateLimited(
-      `Please wait ${retryAfterSeconds} seconds before requesting another code`,
-      { retryAfterSeconds },
-    );
-  }
+  const cooldown = await acquireChallengeCooldown(normalizedEmail);
 
   const challengeId = randomBytes(32).toString("base64url");
   const challengeHash = hashChallenge(challengeId);
@@ -181,16 +226,17 @@ export const startEmailAuthentication = async ({ email, name = "", intent }) => 
     : String(randomInt(100_000, 1_000_000)).padStart(6, "0");
   const expiresInSeconds = env.emailOtpChallengeMinutes * 60;
 
-  await saveChallenge({
-    challengeHash,
-    email: normalizedEmail,
-    name: intent === "signup" ? name.trim() : "",
-    intent,
-    codeHash: hashCode(challengeHash, code),
-    attempts: 0,
-    expiresAt: new Date(Date.now() + expiresInSeconds * 1_000),
-  });
   try {
+    await saveChallenge({
+      challengeHash,
+      email: normalizedEmail,
+      name: intent === "signup" ? name.trim() : "",
+      intent,
+      codeHash: hashCode(challengeHash, code),
+      cooldownToken: cooldown.reservationToken,
+      attempts: 0,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1_000),
+    });
     await emailVerificationProvider().send({
       email: normalizedEmail,
       code,
@@ -198,6 +244,7 @@ export const startEmailAuthentication = async ({ email, name = "", intent }) => 
     });
   } catch (error) {
     await removeChallenge(challengeHash).catch(() => {});
+    await releaseChallengeCooldown(normalizedEmail, cooldown.reservationToken).catch(() => {});
     throw error;
   }
 
@@ -214,6 +261,7 @@ export const startEmailAuthentication = async ({ email, name = "", intent }) => 
 };
 
 export const verifyEmailAuthentication = async ({ challengeId, code }) => {
+  assertSessionConfigured();
   const challengeHash = hashChallenge(challengeId);
   const challenge = await takeAttempt(challengeHash);
   if (!challenge) {
@@ -236,6 +284,7 @@ export const verifyEmailAuthentication = async ({ challengeId, code }) => {
             throw unauthorized("This verification has already been used or has expired");
           }
           consumed = true;
+          await releaseChallengeCooldown(challenge.email, challenge.cooldownToken).catch(() => {});
         },
       },
     );

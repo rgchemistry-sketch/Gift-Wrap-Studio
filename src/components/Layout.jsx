@@ -27,6 +27,23 @@ const navItems = [
 const CANONICAL_ORIGIN = 'https://www.giftnwrapstudio.com';
 const AuthModal = lazy(() => import('./AuthModal'));
 
+const pageMetaFor = (pathname) => {
+  if (pathname === '/') return ['Home', 'Gift N Wrap Studio · Handmade Resin Art'];
+  if (pathname.startsWith('/product/')) return ['Product details', 'Studio piece · Gift N Wrap Studio'];
+  const routeMeta = {
+    '/shop': ['Shop', 'Shop handmade resin art · Gift N Wrap Studio'],
+    '/cart': ['Gift bag', 'Your gift bag · Gift N Wrap Studio'],
+    '/checkout': ['Order request', 'Order request · Gift N Wrap Studio'],
+    '/custom-order': ['Custom order', 'Custom resin art · Gift N Wrap Studio'],
+    '/corporate-gifts': ['Corporate gifts', 'Corporate gifts · Gift N Wrap Studio'],
+    '/our-story': ['Our story', 'Our story · Gift N Wrap Studio'],
+    '/contact': ['Contact', 'Contact the studio · Gift N Wrap Studio'],
+    '/care-and-delivery': ['Care and delivery', 'Care and delivery · Gift N Wrap Studio'],
+    '/account': ['Your account', 'Your account · Gift N Wrap Studio'],
+  };
+  return routeMeta[pathname] || ['Page', 'Gift N Wrap Studio'];
+};
+
 const configuredValue = (settings, group, key, legacyKey, fallback) => {
   if (!settings) return fallback;
   if (Object.prototype.hasOwnProperty.call(group, key)) return group[key] ?? '';
@@ -38,12 +55,13 @@ const configuredValue = (settings, group, key, legacyKey, fallback) => {
 
 function Brand({ onNavigate }) {
   return (
-    <Link to="/" className="brand" aria-label="Gift N Wrap Studio home" onClick={onNavigate}>
-      <span className="brand__seal" aria-hidden="true">G<span>·</span>W</span>
+    <Link to="/" className="brand" onClick={onNavigate}>
+      <span className="brand__seal">G<span>·</span>W</span>
       <span className="brand__words">
         <strong>Gift N Wrap</strong>
         <small>Resin Art Studio</small>
       </span>
+      <span className="visually-hidden">home</span>
     </Link>
   );
 }
@@ -54,7 +72,9 @@ export default function Layout() {
   const [query, setQuery] = useState('');
   const searchInputRef = useRef(null);
   const searchToggleRef = useRef(null);
+  const mainContentRef = useRef(null);
   const location = useLocation();
+  const previousPathRef = useRef(location.pathname);
   const navigate = useNavigate();
   const navigationType = useNavigationType();
   const { cartCount, notify, studioSettings } = useShop();
@@ -83,6 +103,7 @@ export default function Layout() {
     'announcementLinkUrl',
     '/shop',
   );
+  const [pageLabel, pageTitle] = pageMetaFor(location.pathname);
 
   const handleSignOut = async () => {
     setMenuOpen(false);
@@ -123,6 +144,15 @@ export default function Layout() {
   }, [location.hash, location.pathname, navigationType]);
 
   useEffect(() => {
+    if (previousPathRef.current === location.pathname) return undefined;
+    previousPathRef.current = location.pathname;
+    const focusFrame = window.requestAnimationFrame(() => {
+      mainContentRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [location.pathname]);
+
+  useEffect(() => {
     if (!searchOpen) return undefined;
     const focusFrame = window.requestAnimationFrame(() => searchInputRef.current?.focus());
     const closeOnEscape = (event) => {
@@ -146,7 +176,8 @@ export default function Layout() {
     const canonicalUrl = new URL(normalizedPath, CANONICAL_ORIGIN).href;
     document.querySelector('link[rel="canonical"]')?.setAttribute('href', canonicalUrl);
     document.querySelector('meta[property="og:url"]')?.setAttribute('content', canonicalUrl);
-  }, [location.pathname]);
+    document.title = pageTitle;
+  }, [location.pathname, pageTitle]);
 
   const submitSearch = (event) => {
     event.preventDefault();
@@ -190,8 +221,8 @@ export default function Layout() {
               ))}
             </Nav>
             <div className="navbar-tools">
-              <button ref={searchToggleRef} className="icon-button" type="button" onClick={() => setSearchOpen((value) => !value)} aria-label="Search products" aria-expanded={searchOpen}>
-                <Icon name="search" />
+              <button ref={searchToggleRef} className="icon-button" type="button" onClick={() => setSearchOpen((value) => !value)} aria-label={searchOpen ? 'Close product search' : 'Search products'} aria-expanded={searchOpen} aria-controls="header-product-search">
+                <Icon name={searchOpen ? 'close' : 'search'} />
               </button>
               {user ? (
                 <Dropdown align="end" className="account-menu d-none d-sm-block">
@@ -220,7 +251,7 @@ export default function Layout() {
             </div>
           </Navbar>
         </Container>
-        <div className={`header-search ${searchOpen ? 'is-open' : ''}`} aria-hidden={!searchOpen}>
+        <div id="header-product-search" className={`header-search ${searchOpen ? 'is-open' : ''}`} aria-hidden={!searchOpen}>
           <Container fluid="xl">
             <Form role="search" onSubmit={submitSearch}>
               <Icon name="search" />
@@ -255,6 +286,10 @@ export default function Layout() {
               <span><Icon name="spark" /> Have an idea?</span>
               <strong>Commission something completely new.</strong>
             </Link>
+            <div className="mobile-menu__utility">
+              <Link to="/contact" onClick={() => setMenuOpen(false)}><Icon name="mail" /> Contact the studio</Link>
+              <Link to="/care-and-delivery" onClick={() => setMenuOpen(false)}><Icon name="package" /> Care & delivery</Link>
+            </div>
           </nav>
           <div className="mobile-menu__footer">
             {user ? <><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/account'); }}><Icon name="user" /> My account</button>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/admin'); }}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="close" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></> : <><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); openAuth('', 'login'); }}><Icon name="user" /> Log in</button><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); openAuth('', 'signup'); }}><Icon name="spark" /> Create account</button></>}
@@ -263,7 +298,8 @@ export default function Layout() {
         </Offcanvas.Body>
       </Offcanvas>
 
-      <main id="main-content" tabIndex="-1">
+      <p className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{pageLabel} page</p>
+      <main ref={mainContentRef} id="main-content" tabIndex="-1">
         <Outlet />
       </main>
 
