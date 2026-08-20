@@ -121,7 +121,6 @@ async function uploadImage(file, purpose = 'products') {
   formData.append('folder', signature.folder);
   formData.append('upload_preset', signature.upload_preset);
   formData.append('allowed_formats', signature.allowed_formats);
-  formData.append('transformation', signature.transformation);
   formData.append('public_id', signature.public_id);
   formData.append('overwrite', String(signature.overwrite));
 
@@ -171,9 +170,15 @@ async function uploadImage(file, purpose = 'products') {
         },
       );
     }
+    const completionResult = await request('/uploads/complete', {
+      method: 'POST',
+      body: { publicId: returnedPublicId },
+      timeout: 30_000,
+    });
+    const completed = completionResult.data || completionResult;
     return {
-      url: result.secure_url,
-      publicId: returnedPublicId,
+      url: completed.url,
+      publicId: completed.publicId,
       alt: '',
       ...(purpose === 'orders' && signature.expiresAt ? { expiresAt: signature.expiresAt } : {}),
     };

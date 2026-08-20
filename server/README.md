@@ -23,9 +23,9 @@ Required for signed browser uploads:
 - `CLOUDINARY_CLOUD_NAME`
 - `CLOUDINARY_API_KEY`
 - `CLOUDINARY_API_SECRET`
-- `CLOUDINARY_UPLOAD_PRESET` (a **signed** preset configured with an 8 MB `max_file_size`, JPG/PNG/WebP `allowed_formats`, and metadata stripping; the API supplies the signed public ID)
+- `CLOUDINARY_UPLOAD_PRESET` (a **signed** preset configured for JPG/PNG/WebP and metadata stripping; the API supplies the signed public ID)
 
-The default browser flow uses Cloudinary's normal `upload` delivery type, so anyone who obtains an asset URL can view it. Accept product-reference images only, not identity documents or other sensitive media. If confidential uploads are required, switch the preset to authenticated delivery and add a signed-delivery endpoint. In production, the signature endpoint verifies through Cloudinary's Admin API that the configured preset has a server-side `max_file_size` no greater than `UPLOAD_MAX_BYTES`. Expired, unused grants are processed by the authenticated Vercel cron in bounded batches. The grant remains in MongoDB until Cloudinary confirms `ok` or `not found`; provider failures release the claim with exponential backoff for a later retry. A Cloudinary lifecycle rule can still be used as defense in depth.
+The default browser flow uses Cloudinary's normal `upload` delivery type, so anyone who obtains an asset URL can view it. Accept product-reference images only, not identity documents or other sensitive media. If confidential uploads are required, switch the preset to authenticated delivery and add a signed-delivery endpoint. In production, the signature endpoint verifies that the configured preset is signed. After the direct browser upload, `POST /api/uploads/complete` reads the provider's authoritative asset metadata and unlocks the grant only when its ID, format, secure URL, byte size, and pixel dimensions satisfy the upload policy. Invalid assets are rejected and cleaned up. Expired, unused grants are processed by the authenticated Vercel cron in bounded batches. The grant remains in MongoDB until Cloudinary confirms `ok` or `not found`; provider failures release the claim with exponential backoff for a later retry. A Cloudinary lifecycle rule can still be used as defense in depth.
 
 Optional tuning:
 
@@ -74,7 +74,9 @@ Authenticated buyer:
 - `POST /api/contact`. The saved message is linked to the verified session account.
 - `POST /api/uploads/signature` with `{ purpose: "custom-inquiries" | "orders" }`.
   Every returned snake_case field (`folder`, `public_id`, `overwrite`, `upload_preset`,
-  `allowed_formats`, and `transformation`) is signed and must be included in the Cloudinary form.
+  and `allowed_formats`) is signed and must be included in the Cloudinary form. After Cloudinary
+  accepts the file, call `POST /api/uploads/complete` with `{ publicId }`; only a successfully
+  verified grant can be attached to a saved record.
   Each grant belongs to its authenticated requester and one non-overwritable asset ID. The
   response includes `expiresAt` and `expiresInSeconds`; order/cart grants last seven days and
   other grants last two hours. Order attachments are consumed atomically with their order, custom

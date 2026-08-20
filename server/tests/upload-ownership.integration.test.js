@@ -29,6 +29,25 @@ const [
 
 let destroyedPublicIds;
 
+const uploadMaxBytes = 8 * 1_024 * 1_024;
+
+const providerResource = (publicId, overrides = {}) => ({
+  asset_id: `asset-${publicId.slice(-12)}`,
+  public_id: publicId,
+  resource_type: "image",
+  type: "upload",
+  format: "jpg",
+  bytes: 1_024,
+  width: 1_600,
+  height: 1_200,
+  version: 123,
+  secure_url: `https://res.cloudinary.com/test-cloud/image/upload/v123/${publicId}.jpg`,
+  ...overrides,
+});
+
+const publicIdFromLoaderArgs = (...args) =>
+  args.find((argument) => typeof argument === "string");
+
 beforeEach(() => {
   resetMemoryStore();
   store.resetUploadGrantConsumptionHookForTests();
@@ -36,6 +55,17 @@ beforeEach(() => {
   destroyedPublicIds = [];
   uploadRoutes.resetUploadAssetDestroyerForTests();
   uploadRoutes.setUploadAssetDestroyerForTests(async (publicId) => {
+    destroyedPublicIds.push(publicId);
+    return { result: "ok" };
+  });
+  uploadRoutes.resetUploadResourceLoaderForTests();
+  uploadRoutes.setUploadResourceLoaderForTests(async (...args) => {
+    const publicId = publicIdFromLoaderArgs(...args);
+    return providerResource(publicId);
+  });
+  uploadRoutes.resetRejectedUploadDestroyerForTests();
+  uploadRoutes.setRejectedUploadDestroyerForTests(async (...args) => {
+    const publicId = publicIdFromLoaderArgs(...args);
     destroyedPublicIds.push(publicId);
     return { result: "ok" };
   });
@@ -58,7 +88,15 @@ const baseProduct = (slug) => ({
 const deliveryUrl = (publicId, suffix = ".jpg") =>
   `https://res.cloudinary.com/test-cloud/image/upload/v123/${publicId}${suffix}`;
 
-const requestProductGrant = async (admin) => {
+const completeUpload = async (agent, publicId) => {
+  const response = await agent
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(200);
+  return response.body.data;
+};
+
+const requestProductGrant = async (admin, { complete = true } = {}) => {
   const response = await admin
     .post("/api/uploads/signature")
     .send({ purpose: "products" })
@@ -69,6 +107,7 @@ const requestProductGrant = async (admin) => {
     fullPublicId,
     /^gift-n-wrap\/products\/[A-Za-z0-9_-]+\/[0-9a-f-]{36}$/,
   );
+  if (complete) await completeUpload(admin, fullPublicId);
   return {
     publicId: fullPublicId,
     url: deliveryUrl(fullPublicId),
@@ -76,11 +115,12 @@ const requestProductGrant = async (admin) => {
   };
 };
 
-const requestOrderGrant = async (buyer) => {
+const requestOrderGrant = async (buyer, { complete = true } = {}) => {
   const response = await buyer
     .post("/api/uploads/signature")
     .send({ purpose: "orders" })
     .expect(200);
+  if (complete) await completeUpload(buyer, response.body.data.fullPublicId);
   return {
     name: "customization-reference.jpg",
     publicId: response.body.data.fullPublicId,
@@ -113,6 +153,7 @@ test("custom inquiry reference images consume their owner-scoped upload grants",
     .send({ purpose: "custom-inquiries" })
     .expect(200);
   const publicId = signature.body.data.fullPublicId;
+  await completeUpload(buyer, publicId);
 
   await buyer
     .post("/api/custom-inquiries")
@@ -180,6 +221,221 @@ test("upload signatures expose a seven-day cart lifetime and a two-hour admin li
   assert.equal(orderGrant.body.data.expiresInSeconds, 7 * 24 * 60 * 60);
   assert.ok(Date.parse(productGrant.body.data.expiresAt) >= before + 2 * 60 * 60 * 1_000);
   assert.ok(Date.parse(orderGrant.body.data.expiresAt) >= before + 7 * 24 * 60 * 60 * 1_000);
+});
+
+test("upload completion accepts an exact 8 MB provider asset and marks its grant verified", async () => {
+  const { agent: buyer } = await login("buyer");
+  uploadRoutes.setUploadResourceLoaderForTests(async (...args) => {
+    const publicId = publicIdFromLoaderArgs(...args);
+    return providerResource(publicId, { bytes: uploadMaxBytes });
+  });
+  const signature = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "orders" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+
+  const completed = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(200);
+
+  assert.equal(completed.body.data.publicId, publicId);
+  assert.equal(completed.body.data.url, deliveryUrl(publicId));
+  assert.equal(completed.body.data.secureUrl, deliveryUrl(publicId));
+  assert.equal(completed.body.data.bytes, uploadMaxBytes);
+  assert.equal(completed.body.data.format, "jpg");
+  assert.ok(Date.parse(completed.body.data.verifiedAt));
+  const grant = memoryStore.get("uploadGrants", publicId);
+  assert.ok(grant.verifiedAt);
+  assert.equal(grant.verifiedBytes, uploadMaxBytes);
+  assert.equal(grant.verifiedFormat, "jpg");
+  assert.equal(grant.verifiedSecureUrl, deliveryUrl(publicId));
+  assert.equal(grant.reservationToken, "");
+  assert.deepEqual(destroyedPublicIds, []);
+});
+
+test("upload completion is idempotent and retries after a transient provider failure", async () => {
+  const { agent: buyer } = await login("buyer");
+  let attempts = 0;
+  uploadRoutes.setUploadResourceLoaderForTests(async (...args) => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("temporary provider outage");
+    const publicId = publicIdFromLoaderArgs(...args);
+    return providerResource(publicId);
+  });
+  const signature = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "orders" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+
+  const failed = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(502);
+  assert.equal(failed.body.error.code, "UPLOAD_VERIFICATION_FAILED");
+  assert.equal(memoryStore.get("uploadGrants", publicId).reservationToken, "");
+
+  const completed = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(200);
+  const replayed = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(200);
+  assert.deepEqual(replayed.body.data, completed.body.data);
+  assert.equal(attempts, 2);
+});
+
+test("upload completion recovers a stale verification claim after a serverless interruption", async () => {
+  const { agent: buyer } = await login("buyer");
+  const signature = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "orders" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+  memoryStore.update("uploadGrants", publicId, {
+    reservationToken: "abandoned-verification",
+    reservationKind: "verification",
+    reservedAt: new Date(Date.now() - 3 * 60 * 1_000),
+  });
+
+  await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(200);
+  const grant = memoryStore.get("uploadGrants", publicId);
+  assert.ok(grant.verifiedAt);
+  assert.equal(grant.reservationToken, "");
+});
+
+test("upload completion does not report success while cleanup owns the verified asset", async () => {
+  const { agent: buyer } = await login("buyer");
+  const signature = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "orders" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+  await completeUpload(buyer, publicId);
+  memoryStore.update("uploadGrants", publicId, {
+    reservationToken: "active-cleanup",
+    reservationKind: "cleanup",
+    reservedAt: new Date(),
+  });
+
+  const replay = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(409);
+  assert.match(replay.body.error.message, /removed|try again/i);
+});
+
+test("upload completion rejects and destroys a provider asset larger than 8 MB", async () => {
+  const { agent: buyer } = await login("buyer");
+  uploadRoutes.setUploadResourceLoaderForTests(async (...args) => {
+    const publicId = publicIdFromLoaderArgs(...args);
+    return providerResource(publicId, { bytes: uploadMaxBytes + 1 });
+  });
+  const signature = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "orders" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+
+  const rejected = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(413);
+
+  assert.equal(rejected.body.error.code, "UPLOAD_TOO_LARGE");
+  assert.deepEqual(destroyedPublicIds, [publicId]);
+  assert.equal(memoryStore.get("uploadGrants", publicId), undefined);
+});
+
+test("upload completion rejects and destroys malformed provider metadata", async () => {
+  const { agent: buyer } = await login("buyer");
+  uploadRoutes.setUploadResourceLoaderForTests(async (...args) => {
+    const publicId = publicIdFromLoaderArgs(...args);
+    return providerResource(publicId, {
+      secure_url: `https://example.test/${publicId}.jpg`,
+    });
+  });
+  const signature = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+
+  const rejected = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(422);
+
+  assert.equal(rejected.body.error.code, "UPLOAD_INVALID");
+  assert.deepEqual(destroyedPublicIds, [publicId]);
+  assert.equal(memoryStore.get("uploadGrants", publicId), undefined);
+});
+
+test("upload completion rejects compressed images with unsafe pixel dimensions", async () => {
+  const { agent: buyer } = await login("buyer");
+  uploadRoutes.setUploadResourceLoaderForTests(async (...args) => {
+    const publicId = publicIdFromLoaderArgs(...args);
+    return providerResource(publicId, { width: 10_000, height: 10_000 });
+  });
+  const signature = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+
+  const rejected = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId })
+    .expect(422);
+  assert.equal(rejected.body.error.code, "UPLOAD_INVALID");
+  assert.deepEqual(destroyedPublicIds, [publicId]);
+  assert.equal(memoryStore.get("uploadGrants", publicId), undefined);
+});
+
+test("only the owner can complete a grant, and only completed grants can attach", async () => {
+  const { agent: admin } = await login("admin");
+  const { agent: buyer } = await login("buyer");
+  const image = await requestProductGrant(admin, { complete: false });
+
+  const foreignCompletion = await buyer
+    .post("/api/uploads/complete")
+    .send({ publicId: image.publicId })
+    .expect(404);
+  assert.equal(foreignCompletion.body.error.code, "NOT_FOUND");
+  await admin
+    .post("/api/admin/products")
+    .send({ ...baseProduct("uncompleted-grant"), images: [image] })
+    .expect(409);
+  assert.equal(memoryStore.get("uploadGrants", image.publicId).verifiedAt, undefined);
+
+  await completeUpload(admin, image.publicId);
+  const created = await admin
+    .post("/api/admin/products")
+    .send({ ...baseProduct("completed-grant"), images: [image] })
+    .expect(201);
+  const grant = memoryStore.get("uploadGrants", image.publicId);
+  assert.ok(grant.verifiedAt);
+  assert.ok(grant.consumedAt);
+  assert.equal(grant.productId, created.body.data.id);
+});
+
+test("pre-rollout unexpired grants remain attachable until their original expiry", async () => {
+  const { agent: admin } = await login("admin");
+  const image = await requestProductGrant(admin, { complete: false });
+  memoryStore.update("uploadGrants", image.publicId, { verificationRequired: false });
+
+  const created = await admin
+    .post("/api/admin/products")
+    .send({ ...baseProduct("legacy-unexpired-grant"), images: [image] })
+    .expect(201);
+  assert.equal(created.body.data.images[0].publicId, image.publicId);
 });
 
 test("new product images reject missing, expired, and other-user grants", async () => {

@@ -14,8 +14,26 @@ const uploadGrantSchema = new mongoose.Schema(
     reservedAt: { type: Date },
     reservationKind: {
       type: String,
-      enum: ["product-write", "order-write", "inquiry-write", "cleanup", "expired-cleanup"],
+      enum: [
+        "verification",
+        "product-write",
+        "order-write",
+        "inquiry-write",
+        "cleanup",
+        "expired-cleanup",
+      ],
     },
+    verifiedAt: { type: Date },
+    verifiedBytes: { type: Number, min: 1 },
+    verifiedWidth: { type: Number, min: 1 },
+    verifiedHeight: { type: Number, min: 1 },
+    verifiedFormat: { type: String, enum: ["jpg", "jpeg", "png", "webp"] },
+    verifiedVersion: { type: Number, min: 0 },
+    verifiedAssetId: { type: String, default: "" },
+    verifiedSecureUrl: { type: String, default: "" },
+    // Grants created before authoritative provider completion was introduced do
+    // not have this field and remain usable until their existing expiry.
+    verificationRequired: { type: Boolean, default: true },
     consumedAt: { type: Date },
     productId: { type: String, default: "", index: true },
     orderId: { type: String, default: "", index: true },

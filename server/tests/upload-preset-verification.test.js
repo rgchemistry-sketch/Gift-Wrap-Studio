@@ -23,6 +23,66 @@ beforeEach(() => {
   uploadRoutes.resetUploadPresetVerificationForTests();
 });
 
+const loginBuyer = async () => {
+  const buyer = request.agent(app);
+  await buyer.post("/api/auth/demo").send({ role: "buyer" }).expect(200);
+  return buyer;
+};
+
+test("a signed upload preset is accepted without a max_file_size field", async () => {
+  uploadRoutes.setUploadPresetLoaderForTests(async () => ({
+    unsigned: false,
+    settings: {
+      allowed_formats: ["jpg", "jpeg", "png", "webp"],
+      overwrite: false,
+    },
+  }));
+
+  const buyer = await loginBuyer();
+  const response = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(200);
+
+  assert.ok(response.body.data.signature);
+  assert.equal(response.body.data.constraints.maxBytes, 8 * 1_024 * 1_024);
+});
+
+test("an unsigned upload preset is rejected", async () => {
+  uploadRoutes.setUploadPresetLoaderForTests(async () => ({
+    unsigned: true,
+    settings: {},
+  }));
+
+  const buyer = await loginBuyer();
+  const response = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(503);
+
+  assert.equal(response.body.error.code, "SERVICE_NOT_CONFIGURED");
+  assert.match(
+    response.body.error.details.missing.join(" "),
+    /signed|unsigned/i,
+  );
+});
+
+test("a preset with an incoming transformation is rejected", async () => {
+  uploadRoutes.setUploadPresetLoaderForTests(async () => ({
+    unsigned: false,
+    settings: { transformation: "c_limit,w_2400,h_2400" },
+  }));
+
+  const buyer = await loginBuyer();
+  const response = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(503);
+
+  assert.equal(response.body.error.code, "SERVICE_NOT_CONFIGURED");
+  assert.match(response.body.error.details.missing.join(" "), /transformation/i);
+});
+
 test("a transient upload-preset verification failure can recover on the same instance", async () => {
   let attempts = 0;
   uploadRoutes.setUploadPresetLoaderForTests(async () => {
@@ -32,11 +92,10 @@ test("a transient upload-preset verification failure can recover on the same ins
       error.http_code = 503;
       throw error;
     }
-    return { settings: { max_file_size: 8 * 1_024 * 1_024 } };
+    return { unsigned: false, settings: {} };
   });
 
-  const buyer = request.agent(app);
-  await buyer.post("/api/auth/demo").send({ role: "buyer" }).expect(200);
+  const buyer = await loginBuyer();
 
   const failed = await buyer
     .post("/api/uploads/signature")

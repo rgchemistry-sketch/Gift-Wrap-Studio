@@ -523,7 +523,7 @@ test("Cloudinary signatures are constrained to a single non-overwritable public 
   assert.equal(response.body.data.overwrite, false);
   assert.equal(response.body.data.upload_preset, "test-locked-preset");
   assert.equal(response.body.data.allowed_formats, "jpg,jpeg,png,webp");
-  assert.equal(response.body.data.transformation, "c_limit,w_2400,h_2400");
+  assert.equal("transformation" in response.body.data, false);
   assert.equal(JSON.stringify(response.body).includes("apiSecret"), false);
   assert.equal(JSON.stringify(response.body).includes(process.env.CLOUDINARY_API_SECRET), false);
 });

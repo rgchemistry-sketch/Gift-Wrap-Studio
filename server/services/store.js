@@ -2277,6 +2277,7 @@ export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
       publicId,
       userId,
       purpose,
+      verificationRequired: true,
       expiresAt: grantExpiresAt,
     });
     return { ...plain(grant), expiresInSeconds };
@@ -2301,6 +2302,7 @@ export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
       publicId,
       userId,
       purpose,
+      verificationRequired: true,
       reservationToken: "",
       productId: "",
       orderId: "",
@@ -2314,6 +2316,225 @@ export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
 const unreservedGrantQuery = {
   consumedAt: { $exists: false },
   $or: [{ reservationToken: "" }, { reservationToken: { $exists: false } }],
+};
+
+const uploadVerificationReservationStaleMs = 2 * 60 * 1_000;
+
+const assertUploadGrantCanBeVerified = (grant, { allowProductUploads, now }) => {
+  if (!grant) throw notFound("Upload grant");
+  if (grant.purpose === "products" && !allowProductUploads) {
+    throw forbidden("Only an administrator can verify product images");
+  }
+  if (grant.deletedAt) throw conflict("This uploaded image has already been removed");
+  if (grant.consumedAt) throw conflict("This upload grant has already been used");
+  if (!grant.expiresAt || new Date(grant.expiresAt).getTime() <= now.getTime()) {
+    throw conflict("This upload grant has expired");
+  }
+};
+
+export const claimUploadGrantForVerification = async ({
+  userId,
+  publicId,
+  allowProductUploads = false,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  const now = new Date();
+  const reservationToken = randomBytes(24).toString("base64url");
+  const existing =
+    mode === "mongodb"
+      ? plain(await UploadGrant.findOne({ publicId, userId }))
+      : memoryStore.findOne(
+          "uploadGrants",
+          (grant) => grant.publicId === publicId && grant.userId === userId,
+        );
+
+  assertUploadGrantCanBeVerified(existing, { allowProductUploads, now });
+  if (existing.verifiedAt) {
+    if (existing.reservationToken) {
+      throw conflict("This upload is currently being removed. Please try again");
+    }
+    return { grant: existing, reservationToken: "", alreadyVerified: true };
+  }
+
+  let claimed;
+  const staleBefore = new Date(now.getTime() - uploadVerificationReservationStaleMs);
+  if (mode === "mongodb") {
+    claimed = plain(
+      await UploadGrant.findOneAndUpdate(
+        {
+          publicId,
+          userId,
+          expiresAt: { $gt: now },
+          verifiedAt: { $exists: false },
+          deletedAt: { $exists: false },
+          consumedAt: { $exists: false },
+          $or: [
+            { reservationToken: "" },
+            { reservationToken: { $exists: false } },
+            {
+              reservationKind: "verification",
+              reservedAt: { $lte: staleBefore },
+            },
+          ],
+        },
+        {
+          $set: {
+            reservationToken,
+            reservedAt: now,
+            reservationKind: "verification",
+          },
+        },
+        { new: true, runValidators: true },
+      ),
+    );
+  } else {
+    const candidate = memoryStore.get("uploadGrants", publicId);
+    if (
+      candidate &&
+      candidate.userId === userId &&
+      !candidate.verifiedAt &&
+      !candidate.deletedAt &&
+      !candidate.consumedAt &&
+      (!candidate.reservationToken ||
+        (candidate.reservationKind === "verification" &&
+          candidate.reservedAt &&
+          new Date(candidate.reservedAt).getTime() <= staleBefore.getTime())) &&
+      new Date(candidate.expiresAt).getTime() > now.getTime()
+    ) {
+      claimed = memoryStore.update("uploadGrants", candidate.id, {
+        reservationToken,
+        reservedAt: now,
+        reservationKind: "verification",
+      });
+    }
+  }
+
+  if (claimed) return { grant: claimed, reservationToken, alreadyVerified: false };
+
+  // A concurrent completion may have won after the first read. Re-read so that
+  // retries are idempotent instead of reporting a false conflict.
+  const current =
+    mode === "mongodb"
+      ? plain(await UploadGrant.findOne({ publicId, userId }))
+      : memoryStore.findOne(
+          "uploadGrants",
+          (grant) => grant.publicId === publicId && grant.userId === userId,
+        );
+  assertUploadGrantCanBeVerified(current, {
+    allowProductUploads,
+    now: new Date(),
+  });
+  if (current.verifiedAt) {
+    if (current.reservationToken) {
+      throw conflict("This upload is currently being removed. Please try again");
+    }
+    return { grant: current, reservationToken: "", alreadyVerified: true };
+  }
+  throw conflict("This upload is currently being verified. Please try again");
+};
+
+export const finalizeUploadGrantVerification = async ({
+  userId,
+  publicId,
+  reservationToken,
+  bytes,
+  width,
+  height,
+  format,
+  version,
+  assetId,
+  secureUrl,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  const verifiedAt = new Date();
+  const verifiedFields = {
+    verifiedAt,
+    verifiedBytes: bytes,
+    verifiedWidth: width,
+    verifiedHeight: height,
+    verifiedFormat: format,
+    verifiedVersion: version,
+    verifiedAssetId: assetId || "",
+    verifiedSecureUrl: secureUrl,
+    reservationToken: "",
+  };
+
+  if (mode === "mongodb") {
+    const grant = await UploadGrant.findOneAndUpdate(
+      {
+        publicId,
+        userId,
+        reservationToken,
+        reservationKind: "verification",
+        consumedAt: { $exists: false },
+        deletedAt: { $exists: false },
+        verifiedAt: { $exists: false },
+        expiresAt: { $gt: verifiedAt },
+      },
+      {
+        $set: verifiedFields,
+        $unset: { reservedAt: 1, reservationKind: 1 },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!grant) throw conflict("The upload could not be verified. Please try again");
+    return plain(grant);
+  }
+
+  const grant = memoryStore.get("uploadGrants", publicId);
+  if (
+    !grant ||
+    grant.userId !== userId ||
+    grant.reservationToken !== reservationToken ||
+    grant.reservationKind !== "verification" ||
+    grant.consumedAt ||
+    grant.deletedAt ||
+    grant.verifiedAt ||
+    new Date(grant.expiresAt).getTime() <= verifiedAt.getTime()
+  ) {
+    throw conflict("The upload could not be verified. Please try again");
+  }
+  return memoryStore.update("uploadGrants", grant.id, {
+    ...verifiedFields,
+    reservedAt: null,
+    reservationKind: undefined,
+  });
+};
+
+export const rejectUploadGrantVerification = async ({
+  userId,
+  publicId,
+  reservationToken,
+}) => {
+  const mode = assertWritable(await connectDatabase());
+  if (mode === "mongodb") {
+    const result = await UploadGrant.deleteOne({
+      publicId,
+      userId,
+      reservationToken,
+      reservationKind: "verification",
+      consumedAt: { $exists: false },
+      verifiedAt: { $exists: false },
+    });
+    if (result.deletedCount !== 1) {
+      throw conflict("The rejected upload could not be finalized");
+    }
+    return true;
+  }
+
+  const grant = memoryStore.get("uploadGrants", publicId);
+  if (
+    !grant ||
+    grant.userId !== userId ||
+    grant.reservationToken !== reservationToken ||
+    grant.reservationKind !== "verification" ||
+    grant.consumedAt ||
+    grant.verifiedAt
+  ) {
+    throw conflict("The rejected upload could not be finalized");
+  }
+  memoryStore.remove("uploadGrants", grant.id);
+  return true;
 };
 
 export const releaseUploadGrantReservation = async (reservationToken) => {
@@ -2600,6 +2821,14 @@ const reserveUploadGrantsForWrite = async ({
               userId,
               purpose,
               expiresAt: { $gt: now },
+              $and: [
+                {
+                  $or: [
+                    { verificationRequired: { $ne: true } },
+                    { verificationRequired: true, verifiedAt: { $type: "date" } },
+                  ],
+                },
+              ],
               ...unreservedGrantQuery,
             },
             {
@@ -2619,6 +2848,7 @@ const reserveUploadGrantsForWrite = async ({
           candidate.userId === userId &&
           candidate.purpose === purpose &&
           candidate.expiresAt > now &&
+          (candidate.verificationRequired !== true || candidate.verifiedAt instanceof Date) &&
           !candidate.consumedAt &&
           !candidate.reservationToken
         ) {

@@ -37,6 +37,13 @@ const productImageGrant = async (admin, alt = "Product image") => {
     .send({ purpose: "products" })
     .expect(200);
   const publicId = signature.body.data.fullPublicId;
+  memoryStore.update("uploadGrants", publicId, {
+    verifiedAt: new Date(),
+    verifiedBytes: 1_024,
+    verifiedFormat: "jpg",
+    verifiedVersion: 1,
+    verifiedSecureUrl: `https://res.cloudinary.com/test-cloud/image/upload/v1/${publicId}.jpg`,
+  });
   return {
     url: `https://res.cloudinary.com/test-cloud/image/upload/v1/${publicId}.jpg`,
     publicId,

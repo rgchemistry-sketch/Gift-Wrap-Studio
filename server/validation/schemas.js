@@ -461,15 +461,15 @@ export const uploadSignatureSchema = z
   })
   .strict();
 
-export const uploadAssetDeleteSchema = z
-  .object({
-    publicId: z
-      .string()
-      .trim()
-      .max(300)
-      .regex(
-        /^gift-n-wrap\/(?:custom-inquiries|orders|products)\/[A-Za-z0-9_-]+\/[0-9a-fA-F-]{36}$/,
-        "Enter a valid reserved upload public ID",
-      ),
-  })
-  .strict();
+const reservedUploadPublicId = z
+  .string()
+  .trim()
+  .max(300)
+  .regex(
+    /^gift-n-wrap\/(?:custom-inquiries|orders|products)\/[A-Za-z0-9_-]+\/[0-9a-fA-F-]{36}$/,
+    "Enter a valid reserved upload public ID",
+  );
+
+export const uploadCompleteSchema = z.object({ publicId: reservedUploadPublicId }).strict();
+
+export const uploadAssetDeleteSchema = z.object({ publicId: reservedUploadPublicId }).strict();
