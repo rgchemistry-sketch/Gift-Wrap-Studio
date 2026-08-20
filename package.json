@@ -15,6 +15,7 @@
     "start:api": "node server/dev.js",
     "lint": "eslint . --max-warnings=0",
     "test": "node --test",
+    "db:indexes": "node server/scripts/sync-indexes.js",
     "check": "npm run lint && npm test && npm run build"
   },
   "engines": {

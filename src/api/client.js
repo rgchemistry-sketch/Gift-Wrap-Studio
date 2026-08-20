@@ -270,6 +270,7 @@ export const api = {
   submitOrderRequest: (payload, idempotencyKey, expectedUserId) => request('/orders', {
     method: 'POST',
     body: payload,
+    timeout: 45_000,
     headers: {
       ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       ...(expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {}),
@@ -337,20 +338,20 @@ export const api = {
     const query = searchQuery(params);
     return request(`/admin/contacts${query ? `?${query}` : ''}`);
   },
-  updateOrderStatus: (orderId, status) =>
+  updateOrderStatus: (orderId, update) =>
     request(`/admin/orders/${encodeURIComponent(orderId)}/status`, {
       method: 'PATCH',
-      body: { status },
+      body: typeof update === 'string' ? { status: update } : update,
     }),
-  updateInquiryStatus: (inquiryId, status) =>
+  updateInquiryStatus: (inquiryId, update) =>
     request(`/admin/custom-inquiries/${encodeURIComponent(inquiryId)}`, {
       method: 'PATCH',
-      body: { status },
+      body: typeof update === 'string' ? { status: update } : update,
     }),
-  updateContactStatus: (contactId, status) =>
+  updateContactStatus: (contactId, update) =>
     request(`/admin/contacts/${encodeURIComponent(contactId)}`, {
       method: 'PATCH',
-      body: { status },
+      body: typeof update === 'string' ? { status: update } : update,
     }),
   getWelcomeOffer: () => request('/offers/welcome'),
   getPublicSettings: () => request('/settings'),

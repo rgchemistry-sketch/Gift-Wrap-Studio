@@ -65,6 +65,7 @@ const verificationCode = (message = sentEmails.at(-1)) => {
 test("provider status exposes only Google and email readiness without secrets", async () => {
   const response = await request(app).get("/api/auth/status").expect(200);
   assert.deepEqual(response.body.data.providers, { google: true, email: true });
+  assert.equal(response.body.data.demo, false);
   assert.deepEqual(Object.keys(response.body.data.details).sort(), ["email", "google"]);
   assert.equal(response.body.data.details.email.provider, "resend");
   assert.match(response.headers["cache-control"], /no-store/);
@@ -119,7 +120,7 @@ test("Resend email signup uses the fixed studio sender and reply-to before creat
     .expect(401);
 });
 
-test("email login does not enumerate unknown accounts before code verification", async () => {
+test("a verified email completes the sensible action even when login was selected first", async () => {
   const started = await request(app)
     .post("/api/auth/email/start")
     .send({ email: "missing@example.test", intent: "login" })
@@ -130,8 +131,71 @@ test("email login does not enumerate unknown accounts before code verification",
   const verified = await request(app)
     .post("/api/auth/email/verify")
     .send({ challengeId: started.body.data.challengeId, code: verificationCode() })
-    .expect(401);
-  assert.match(verified.body.error.message, /No account/i);
+    .expect(200);
+  assert.equal(verified.body.data.user.email, "missing@example.test");
+  assert.deepEqual(verified.body.data.user.providers, ["email"]);
+});
+
+test("email resend throttling returns retry timing and ignores consumed challenges", async () => {
+  const first = await request(app)
+    .post("/api/auth/email/start")
+    .send({ email: "cooldown@example.test", name: "Cooldown Buyer", intent: "signup" })
+    .expect(200);
+
+  const throttled = await request(app)
+    .post("/api/auth/email/start")
+    .send({ email: "cooldown@example.test", name: "Cooldown Buyer", intent: "signup" })
+    .expect(429);
+  assert.equal(throttled.body.error.code, "RATE_LIMITED");
+  assert.ok(throttled.body.error.details.retryAfterSeconds > 0);
+  assert.ok(throttled.body.error.details.retryAfterSeconds <= 60);
+
+  await request(app)
+    .post("/api/auth/email/verify")
+    .send({ challengeId: first.body.data.challengeId, code: verificationCode() })
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/email/start")
+    .send({ email: "cooldown@example.test", intent: "login" })
+    .expect(200);
+});
+
+test("a valid email code is restored when account completion fails", async () => {
+  useGoogleProfile({ subject: "recover-google", email: "recover@example.test" });
+  const google = await request(app)
+    .post("/api/auth/google")
+    .send({ credential: "recover-google-credential-safe-0001", intent: "signup" })
+    .expect(200);
+  memoryStore.create(
+    "authIdentities",
+    {
+      userId: "different-user",
+      provider: "email",
+      subject: "recover@example.test",
+      providerEmail: "recover@example.test",
+      emailVerified: true,
+    },
+    "email:recover@example.test",
+  );
+
+  const started = await request(app)
+    .post("/api/auth/email/start")
+    .send({ email: "recover@example.test", intent: "login" })
+    .expect(200);
+  const code = verificationCode();
+  await request(app)
+    .post("/api/auth/email/verify")
+    .send({ challengeId: started.body.data.challengeId, code })
+    .expect(409);
+  assert.equal(Boolean(memoryStore.all("emailAuthChallenges")[0].consumedAt), false);
+
+  memoryStore.remove("authIdentities", "email:recover@example.test");
+  const recovered = await request(app)
+    .post("/api/auth/email/verify")
+    .send({ challengeId: started.body.data.challengeId, code })
+    .expect(200);
+  assert.equal(recovered.body.data.user.id, google.body.data.user.id);
 });
 
 test("verified email login safely links an existing Google account", async () => {
@@ -161,6 +225,19 @@ test("Google routes require an explicit login or signup intent", async () => {
     assert.equal(response.body.error.code, "VALIDATION_ERROR");
     assert.equal(response.body.error.details.some((issue) => issue.field === "intent"), true);
   }
+});
+
+test("verified Google identity does not dead-end on the wrong account-action tab", async () => {
+  useGoogleProfile({ subject: "google-intent-safe", email: "intent-safe@example.test" });
+  const created = await request(app)
+    .post("/api/auth/google")
+    .send({ credential: "google-intent-login-safe-0001", intent: "login" })
+    .expect(200);
+  const existing = await request(app)
+    .post("/api/auth/google")
+    .send({ credential: "google-intent-signup-safe-0002", intent: "signup" })
+    .expect(200);
+  assert.equal(existing.body.data.user.id, created.body.data.user.id);
 });
 
 test("the configured administrator can enroll through Google", async () => {
@@ -212,4 +289,16 @@ test("logout revokes a captured JWT instead of only clearing the browser cookie"
   assert.match(logout.headers["cache-control"], /no-store/);
   assert.match(logout.headers["set-cookie"][0], /Expires=Thu, 01 Jan 1970/i);
   await request(app).get("/api/auth/me").set("Cookie", capturedCookie).expect(401);
+
+  const newerLogin = await client
+    .post("/api/auth/google")
+    .send({ credential: "logout-google-credential-safe-0002", intent: "login" })
+    .expect(200);
+  const newerCookie = newerLogin.headers["set-cookie"][0].split(";")[0];
+  const staleLogout = await request(app)
+    .post("/api/auth/logout")
+    .set("Cookie", capturedCookie)
+    .expect(200);
+  assert.equal(staleLogout.body.data.sessionsRevoked, false);
+  await request(app).get("/api/auth/me").set("Cookie", newerCookie).expect(200);
 });

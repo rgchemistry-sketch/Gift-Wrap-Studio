@@ -52,18 +52,34 @@ const maskEmail = (email) => {
   return `${visible}${"•".repeat(Math.max(2, Math.min(6, local.length - visible.length)))}@${domain}`;
 };
 
-const hasRecentChallenge = async (email) => {
+const recentChallengeRetryAfterSeconds = async (email) => {
   const mode = await challengeMode();
-  const since = new Date(Date.now() - env.emailOtpResendSeconds * 1_000);
+  const now = new Date();
+  const since = new Date(now.getTime() - env.emailOtpResendSeconds * 1_000);
+  let recent;
   if (mode === "mongodb") {
-    return Boolean(await EmailAuthChallenge.exists({ email, createdAt: { $gte: since } }));
+    recent = await EmailAuthChallenge.findOne({
+      email,
+      consumedAt: { $exists: false },
+      expiresAt: { $gt: now },
+      createdAt: { $gte: since },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+  } else {
+    [recent] = memoryStore
+      .find(
+        "emailAuthChallenges",
+        (item) => item.email === email
+          && !item.consumedAt
+          && item.expiresAt > now
+          && item.createdAt >= since,
+      )
+      .sort((left, right) => right.createdAt - left.createdAt);
   }
-  return Boolean(
-    memoryStore.findOne(
-      "emailAuthChallenges",
-      (item) => item.email === email && item.createdAt >= since,
-    ),
-  );
+  if (!recent) return 0;
+  const availableAt = new Date(recent.createdAt).getTime() + env.emailOtpResendSeconds * 1_000;
+  return Math.max(1, Math.ceil((availableAt - now.getTime()) / 1_000));
 };
 
 const saveChallenge = async (record) => {
@@ -129,14 +145,33 @@ const consumeChallenge = async (challengeHash) => {
   return true;
 };
 
+const restoreChallenge = async (challengeHash) => {
+  const mode = await challengeMode();
+  if (mode === "mongodb") {
+    await EmailAuthChallenge.updateOne(
+      { challengeHash, consumedAt: { $exists: true } },
+      { $unset: { consumedAt: 1 } },
+    );
+    return;
+  }
+  const record = memoryStore.get("emailAuthChallenges", challengeHash);
+  if (record?.consumedAt) {
+    memoryStore.update("emailAuthChallenges", challengeHash, { consumedAt: undefined });
+  }
+};
+
 export const startEmailAuthentication = async ({ email, name = "", intent }) => {
   const status = emailAuthStatus();
   if (!status.enabled) {
     throw configurationError(["RESEND_API_KEY", "AUTH_EMAIL_FROM", "EMAIL_OTP_SECRET"]);
   }
   const normalizedEmail = email.trim().toLowerCase();
-  if (await hasRecentChallenge(normalizedEmail)) {
-    throw rateLimited(`Please wait ${env.emailOtpResendSeconds} seconds before requesting another code`);
+  const retryAfterSeconds = await recentChallengeRetryAfterSeconds(normalizedEmail);
+  if (retryAfterSeconds > 0) {
+    throw rateLimited(
+      `Please wait ${retryAfterSeconds} seconds before requesting another code`,
+      { retryAfterSeconds },
+    );
   }
 
   const challengeId = randomBytes(32).toString("base64url");
@@ -187,12 +222,29 @@ export const verifyEmailAuthentication = async ({ challengeId, code }) => {
   if (!codesMatch(challenge.codeHash, hashCode(challengeHash, code))) {
     throw unauthorized("That verification code is incorrect or expired");
   }
-  if (!(await consumeChallenge(challengeHash))) {
-    throw unauthorized("This verification has already been used or has expired");
+  let consumed = false;
+  try {
+    return await authenticateEmailIdentity(
+      {
+        email: challenge.email,
+        name: challenge.name,
+        intent: challenge.intent,
+      },
+      {
+        onResolved: async () => {
+          if (!(await consumeChallenge(challengeHash))) {
+            throw unauthorized("This verification has already been used or has expired");
+          }
+          consumed = true;
+        },
+      },
+    );
+  } catch (error) {
+    // Account writes can still fail after resolution (for example, during a
+    // transient database outage). Restore the valid challenge so the user does
+    // not lose a correctly entered code. Consumed challenges also never impose
+    // a resend cooldown, so recovery remains possible if restoration itself fails.
+    if (consumed) await restoreChallenge(challengeHash).catch(() => {});
+    throw error;
   }
-  return authenticateEmailIdentity({
-    email: challenge.email,
-    name: challenge.name,
-    intent: challenge.intent,
-  });
 };

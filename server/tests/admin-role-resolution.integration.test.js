@@ -12,9 +12,16 @@ process.env.CLOUDINARY_API_SECRET = process.env.JWT_SECRET;
 process.env.CLOUDINARY_UPLOAD_PRESET = "test-locked-preset";
 delete process.env.MONGODB_URI;
 
-const [{ default: app }, { memoryStore, resetMemoryStore }] = await Promise.all([
+const [
+  { default: app },
+  { memoryStore, resetMemoryStore },
+  { signSession },
+  { env },
+] = await Promise.all([
   import("../app.js"),
   import("../lib/memory-store.js"),
+  import("../services/auth.js"),
+  import("../config/env.js"),
 ]);
 
 beforeEach(() => resetMemoryStore());
@@ -22,20 +29,30 @@ beforeEach(() => resetMemoryStore());
 const adminUserRecord = () =>
   memoryStore.findOne("users", (user) => user.email === process.env.ADMIN_EMAIL);
 
-test("ADMIN_EMAIL alone grants the admin panel without a fresh sign-in", async () => {
-  const agent = request.agent(app);
-  await agent.post("/api/auth/demo").send({ role: "admin" }).expect(200);
+const createConfiguredAdmin = (changes = {}) => memoryStore.create("users", {
+  email: process.env.ADMIN_EMAIL,
+  emailVerifiedAt: new Date(),
+  name: "Configured Owner",
+  avatar: "",
+  role: "buyer",
+  providers: ["email"],
+  sessionVersion: 0,
+  ...changes,
+});
 
+const cookieFor = (user) => `${env.cookieName}=${signSession(user)}`;
+
+test("ADMIN_EMAIL alone grants the admin panel without a fresh sign-in", async () => {
   // Simulate an account that existed before ADMIN_EMAIL named it: the stored role is
   // still "buyer" even though the verified session email is the administrator's.
-  const stored = adminUserRecord();
-  memoryStore.update("users", stored.id, { role: "buyer" });
+  const stored = createConfiguredAdmin();
+  const cookie = cookieFor(stored);
   assert.equal(adminUserRecord().role, "buyer");
 
-  const me = await agent.get("/api/auth/me").expect(200);
+  const me = await request(app).get("/api/auth/me").set("Cookie", cookie).expect(200);
   assert.equal(me.body.data.user.role, "admin");
 
-  await agent.get("/api/admin/dashboard").expect(200);
+  await request(app).get("/api/admin/dashboard").set("Cookie", cookie).expect(200);
 });
 
 test("a buyer whose email is not ADMIN_EMAIL is still refused, however its role is stored", async () => {
@@ -58,16 +75,18 @@ test("a buyer whose email is not ADMIN_EMAIL is still refused, however its role 
 });
 
 test("account and admin views mask the same phone identically", async () => {
-  const agent = request.agent(app);
-  await agent.post("/api/auth/demo").send({ role: "admin" }).expect(200);
-  const stored = adminUserRecord();
-  memoryStore.update("users", stored.id, {
+  const stored = createConfiguredAdmin({
+    role: "admin",
     phone: "+919876543210",
     phoneVerifiedAt: new Date(),
   });
+  const cookie = cookieFor(stored);
 
-  const me = await agent.get("/api/auth/me").expect(200);
-  const adminList = await agent.get("/api/admin/users").expect(200);
+  const me = await request(app).get("/api/auth/me").set("Cookie", cookie).expect(200);
+  const adminList = await request(app)
+    .get("/api/admin/users")
+    .set("Cookie", cookie)
+    .expect(200);
   const listed = adminList.body.data.find((user) => user.email === process.env.ADMIN_EMAIL);
 
   assert.equal(me.body.data.user.phoneMasked, "+91 •••••• 3210");

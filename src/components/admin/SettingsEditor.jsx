@@ -147,6 +147,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [restoredDraft, setRestoredDraft] = useState(false);
   const draftStorageKey = `${SETTINGS_DRAFT_KEY}:${String(draftScope || 'studio')}`;
   const dirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [draft, saved]);
@@ -158,13 +159,18 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
     () => normalizeAnnouncementLink(draft.announcement.linkUrl),
     [draft.announcement.linkUrl],
   );
-  const instagramError = draft.contact.instagram.trim() && !instagramPreview
-    ? INSTAGRAM_PROFILE_MESSAGE
-    : '';
-  const announcementLinkError = draft.announcement.linkUrl.trim() && announcementLinkPreview === null
-    ? 'Enter an HTTPS URL or a site path beginning with /'
-    : '';
-  const hasFieldErrors = Boolean(instagramError || announcementLinkError);
+  const fieldError = (group, name) => fieldErrors[`${group}.${name}`] || '';
+  const instagramError = fieldError('contact', 'instagram') || (
+    draft.contact.instagram.trim() && !instagramPreview ? INSTAGRAM_PROFILE_MESSAGE : ''
+  );
+  const announcementLinkError = fieldError('announcement', 'linkUrl') || (
+    draft.announcement.linkUrl.trim() && announcementLinkPreview === null
+      ? 'Enter an HTTPS URL or a site path beginning with /'
+      : ''
+  );
+  const hasFieldErrors = Boolean(
+    instagramError || announcementLinkError || Object.keys(fieldErrors).length,
+  );
   const instagramPublication = socialPublicationState({
     savedValue: saved.contact.instagram,
     draftValue: draft.contact.instagram,
@@ -174,7 +180,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
   });
 
   const loadSettings = useCallback(async () => {
-    setLoading(true); setLoaded(false); setError('');
+    setLoading(true); setLoaded(false); setError(''); setFieldErrors({});
     try {
       const result = await api.getAdminSettings();
       const value = mergeSettings(result.settings || result.data?.settings || result.data || result);
@@ -228,14 +234,24 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [dirty, saving]);
 
-  const update = (group, name, value) => setDraft((current) => ({
-    ...current,
-    [group]: { ...current[group], [name]: value },
-  }));
+  const update = (group, name, value) => {
+    const key = `${group}.${name}`;
+    setFieldErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    setDraft((current) => ({
+      ...current,
+      [group]: { ...current[group], [name]: value },
+    }));
+  };
 
   const discard = () => {
     setDraft(saved);
     setError('');
+    setFieldErrors({});
     setRestoredDraft(false);
     try { window.sessionStorage.removeItem(draftStorageKey); } catch { /* optional cache */ }
   };
@@ -246,7 +262,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
       setError('Check the highlighted links before publishing.');
       return;
     }
-    setSaving(true); setError('');
+    setSaving(true); setError(''); setFieldErrors({});
     try {
       const nextValues = {
         leadTimes: { ready: draft.leadTimes.ready, custom: draft.leadTimes.custom },
@@ -286,7 +302,24 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
       try { window.sessionStorage.removeItem(draftStorageKey); } catch { /* optional cache */ }
       onPublished?.(next);
       notify('Studio settings are live.');
-    } catch (requestError) { setError(requestError.message); notify(requestError.message, 'error'); }
+    } catch (requestError) {
+      const details = Array.isArray(requestError.details)
+        ? requestError.details
+        : Array.isArray(requestError.details?.issues)
+          ? requestError.details.issues
+          : [];
+      const nextFieldErrors = {};
+      details.forEach((detail) => {
+        const field = String(detail?.field || '').replace(/^settings\./, '');
+        if (field.includes('.')) nextFieldErrors[field] = detail.message || requestError.message;
+      });
+      setFieldErrors(nextFieldErrors);
+      const message = Object.keys(nextFieldErrors).length
+        ? 'Settings were not published. Review the highlighted fields below.'
+        : requestError.message;
+      setError(message);
+      notify(message, 'error');
+    }
     finally { setSaving(false); }
   };
 
@@ -304,24 +337,25 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
       <div className="settings-editor__forms">
         <section className="admin-panel setting-card">
           <div className="setting-card__head"><span><Icon name="spark"/></span><div><p className="eyebrow">Storefront moment</p><h3>Welcome offer popup</h3><p>Control the first message new customers see.</p></div><Form.Check type="switch" id="offer-enabled" label={draft.offer.enabled ? 'Live' : 'Hidden'} checked={draft.offer.enabled} onChange={(event) => update('offer', 'enabled', event.target.checked)}/></div>
-          <div className="admin-setting-row"><Form.Group controlId="offer-eyebrow"><Form.Label>Eyebrow</Form.Label><Form.Control maxLength={80} value={draft.offer.eyebrow} onChange={(event) => update('offer', 'eyebrow', event.target.value)}/></Form.Group><Form.Group controlId="offer-timing"><Form.Label>Popup timing</Form.Label><Form.Control readOnly value="Immediately after eligibility is confirmed"/><Form.Text>No artificial delay is added.</Form.Text></Form.Group></div>
-          <Form.Group controlId="offer-title"><Form.Label>Headline</Form.Label><Form.Control maxLength={140} value={draft.offer.title} onChange={(event) => update('offer', 'title', event.target.value)}/></Form.Group>
-          <Form.Group controlId="offer-body"><Form.Label>Message</Form.Label><Form.Control as="textarea" rows={3} maxLength={300} value={draft.offer.body} onChange={(event) => update('offer', 'body', event.target.value)}/></Form.Group>
-          <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="offer-code"><Form.Label>Offer code</Form.Label><Form.Control required value={draft.offer.code} onChange={(event) => update('offer', 'code', event.target.value.toUpperCase().replace(/\s/g, ''))}/></Form.Group><Form.Group controlId="offer-percent"><Form.Label>Discount (%)</Form.Label><Form.Control required type="number" min="0" max="100" step="1" value={draft.offer.percent} onChange={(event) => update('offer', 'percent', numericDraftValue(event))}/></Form.Group><Form.Group controlId="offer-max-discount"><Form.Label>Maximum saving (₹)</Form.Label><Form.Control required type="number" min="0" max="100000" step="1" value={draft.offer.maxDiscount} onChange={(event) => update('offer', 'maxDiscount', numericDraftValue(event))}/></Form.Group></div>
+          <div className="admin-setting-row"><Form.Group controlId="offer-eyebrow"><Form.Label>Eyebrow</Form.Label><Form.Control maxLength={80} value={draft.offer.eyebrow} isInvalid={Boolean(fieldError('offer', 'eyebrow'))} onChange={(event) => update('offer', 'eyebrow', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'eyebrow')}</Form.Control.Feedback></Form.Group><Form.Group controlId="offer-timing"><Form.Label>Popup timing</Form.Label><Form.Control readOnly value="Immediately after eligibility is confirmed"/><Form.Text>No artificial delay is added.</Form.Text></Form.Group></div>
+          <Form.Group controlId="offer-title"><Form.Label>Headline</Form.Label><Form.Control maxLength={140} value={draft.offer.title} isInvalid={Boolean(fieldError('offer', 'title'))} onChange={(event) => update('offer', 'title', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'title')}</Form.Control.Feedback></Form.Group>
+          <Form.Group controlId="offer-body"><Form.Label>Message</Form.Label><Form.Control as="textarea" rows={3} maxLength={300} value={draft.offer.body} isInvalid={Boolean(fieldError('offer', 'body'))} onChange={(event) => update('offer', 'body', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'body')}</Form.Control.Feedback></Form.Group>
+          <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="offer-code"><Form.Label>Offer code</Form.Label><Form.Control required value={draft.offer.code} isInvalid={Boolean(fieldError('offer', 'code'))} onChange={(event) => update('offer', 'code', event.target.value.toUpperCase().replace(/\s/g, ''))}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'code')}</Form.Control.Feedback></Form.Group><Form.Group controlId="offer-percent"><Form.Label>Discount (%)</Form.Label><Form.Control required type="number" min="0" max="100" step="1" value={draft.offer.percent} isInvalid={Boolean(fieldError('offer', 'percent'))} onChange={(event) => update('offer', 'percent', numericDraftValue(event))}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'percent')}</Form.Control.Feedback></Form.Group><Form.Group controlId="offer-max-discount"><Form.Label>Maximum saving (₹)</Form.Label><Form.Control required type="number" min="0" max="100000" step="1" value={draft.offer.maxDiscount} isInvalid={Boolean(fieldError('offer', 'maxDiscount'))} onChange={(event) => update('offer', 'maxDiscount', numericDraftValue(event))}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'maxDiscount')}</Form.Control.Feedback></Form.Group></div>
         </section>
 
         <section className="admin-panel setting-card">
           <div className="setting-card__head"><span><Icon name="truck"/></span><div><p className="eyebrow">Operations</p><h3>Timelines & thresholds</h3><p>Set clear expectations before customers order.</p></div></div>
-          <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="ready-lead-time"><Form.Label>Ready-piece lead time</Form.Label><Form.Control required value={draft.leadTimes.ready} onChange={(event) => update('leadTimes', 'ready', event.target.value)}/></Form.Group><Form.Group controlId="custom-lead-time"><Form.Label>Custom-piece lead time</Form.Label><Form.Control required value={draft.leadTimes.custom} onChange={(event) => update('leadTimes', 'custom', event.target.value)}/></Form.Group><Form.Group controlId="shipping-fee"><Form.Label>Standard shipping fee (₹)</Form.Label><Form.Control required type="number" min="0" max="10000" step="1" value={draft.shipping.flatFee} onChange={(event) => update('shipping', 'flatFee', numericDraftValue(event))}/></Form.Group><Form.Group controlId="free-shipping-threshold"><Form.Label>Free shipping from (₹)</Form.Label><Form.Control required type="number" min="0" max="1000000" step="1" value={draft.shipping.freeThreshold} onChange={(event) => update('shipping', 'freeThreshold', numericDraftValue(event))}/></Form.Group><Form.Group controlId="bulk-order-threshold"><Form.Label>Bulk order from (pieces)</Form.Label><Form.Control required type="number" min="2" max="100" step="1" value={draft.shipping.bulkThreshold} onChange={(event) => update('shipping', 'bulkThreshold', numericDraftValue(event))}/></Form.Group></div>
+          <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="ready-lead-time"><Form.Label>Ready-piece lead time</Form.Label><Form.Control required value={draft.leadTimes.ready} isInvalid={Boolean(fieldError('leadTimes', 'ready'))} onChange={(event) => update('leadTimes', 'ready', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('leadTimes', 'ready')}</Form.Control.Feedback></Form.Group><Form.Group controlId="custom-lead-time"><Form.Label>Custom-piece lead time</Form.Label><Form.Control required value={draft.leadTimes.custom} isInvalid={Boolean(fieldError('leadTimes', 'custom'))} onChange={(event) => update('leadTimes', 'custom', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('leadTimes', 'custom')}</Form.Control.Feedback></Form.Group><Form.Group controlId="shipping-fee"><Form.Label>Standard shipping fee (₹)</Form.Label><Form.Control required type="number" min="0" max="10000" step="1" value={draft.shipping.flatFee} isInvalid={Boolean(fieldError('shipping', 'flatFee'))} onChange={(event) => update('shipping', 'flatFee', numericDraftValue(event))}/><Form.Control.Feedback type="invalid">{fieldError('shipping', 'flatFee')}</Form.Control.Feedback></Form.Group><Form.Group controlId="free-shipping-threshold"><Form.Label>Free shipping from (₹)</Form.Label><Form.Control required type="number" min="0" max="1000000" step="1" value={draft.shipping.freeThreshold} isInvalid={Boolean(fieldError('shipping', 'freeThreshold'))} onChange={(event) => update('shipping', 'freeThreshold', numericDraftValue(event))}/><Form.Control.Feedback type="invalid">{fieldError('shipping', 'freeThreshold')}</Form.Control.Feedback></Form.Group><Form.Group controlId="bulk-order-threshold"><Form.Label>Bulk order from (pieces)</Form.Label><Form.Control required type="number" min="2" max="100" step="1" value={draft.shipping.bulkThreshold} isInvalid={Boolean(fieldError('shipping', 'bulkThreshold'))} onChange={(event) => update('shipping', 'bulkThreshold', numericDraftValue(event))}/><Form.Control.Feedback type="invalid">{fieldError('shipping', 'bulkThreshold')}</Form.Control.Feedback></Form.Group></div>
         </section>
 
         <section className="admin-panel setting-card">
           <div className="setting-card__head"><span><Icon name="mail"/></span><div><p className="eyebrow">Storefront communication</p><h3>Announcement & contact</h3><p>Keep customers informed and make the studio easy to reach.</p></div><Form.Check type="switch" id="announcement-enabled" label={draft.announcement.enabled ? 'Live' : 'Hidden'} checked={draft.announcement.enabled} onChange={(event) => update('announcement', 'enabled', event.target.checked)}/></div>
-          <Form.Group controlId="announcement-text"><Form.Label>Announcement text</Form.Label><Form.Control maxLength={160} value={draft.announcement.text} onChange={(event) => update('announcement', 'text', event.target.value)} placeholder="Wedding orders for October are now open."/></Form.Group>
+          <Form.Group controlId="announcement-text"><Form.Label>Announcement text</Form.Label><Form.Control maxLength={160} value={draft.announcement.text} isInvalid={Boolean(fieldError('announcement', 'text'))} onChange={(event) => update('announcement', 'text', event.target.value)} placeholder="Wedding orders for October are now open."/><Form.Control.Feedback type="invalid">{fieldError('announcement', 'text')}</Form.Control.Feedback></Form.Group>
           <div className="admin-setting-row">
             <Form.Group controlId="announcement-link-label">
               <Form.Label>Link label</Form.Label>
-              <Form.Control maxLength={40} value={draft.announcement.linkLabel} onChange={(event) => update('announcement', 'linkLabel', event.target.value)} placeholder="Explore the shop"/>
+              <Form.Control maxLength={40} value={draft.announcement.linkLabel} isInvalid={Boolean(fieldError('announcement', 'linkLabel'))} onChange={(event) => update('announcement', 'linkLabel', event.target.value)} placeholder="Explore the shop"/>
+              <Form.Control.Feedback type="invalid">{fieldError('announcement', 'linkLabel')}</Form.Control.Feedback>
             </Form.Group>
             <Form.Group controlId="announcement-link-url">
               <Form.Label>Link URL</Form.Label>
@@ -344,12 +378,14 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
           <div className="admin-setting-row">
             <Form.Group controlId="contact-email">
               <Form.Label>Customer email</Form.Label>
-              <Form.Control type="email" value={draft.contact.email} onChange={(event) => update('contact', 'email', event.target.value)} placeholder="hello@giftnwrapstudio.com"/>
+              <Form.Control type="email" value={draft.contact.email} isInvalid={Boolean(fieldError('contact', 'email'))} onChange={(event) => update('contact', 'email', event.target.value)} placeholder="hello@giftnwrapstudio.com"/>
+              <Form.Control.Feedback type="invalid">{fieldError('contact', 'email')}</Form.Control.Feedback>
               <Form.Text>Leave blank to hide email links on the storefront.</Form.Text>
             </Form.Group>
             <Form.Group controlId="contact-phone">
               <Form.Label>Customer phone</Form.Label>
-              <Form.Control type="tel" value={draft.contact.phone} onChange={(event) => update('contact', 'phone', event.target.value)} placeholder="+91 98765 43210"/>
+              <Form.Control type="tel" value={draft.contact.phone} isInvalid={Boolean(fieldError('contact', 'phone'))} onChange={(event) => update('contact', 'phone', event.target.value)} placeholder="+91 98765 43210"/>
+              <Form.Control.Feedback type="invalid">{fieldError('contact', 'phone')}</Form.Control.Feedback>
               <Form.Text>Leave blank to hide phone links on the storefront.</Form.Text>
             </Form.Group>
           </div>

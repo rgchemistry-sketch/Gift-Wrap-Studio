@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Button from 'react-bootstrap/Button';
 import Modal from 'react-bootstrap/Modal';
 import { useLocation } from 'react-router-dom';
@@ -18,6 +18,7 @@ const hasSessionFlag = (key) => {
 
 export default function OfferPopup() {
   const [dismissed, setDismissed] = useState(() => hasSessionFlag(DISMISSED_KEY));
+  const [delayElapsed, setDelayElapsed] = useState(false);
   const location = useLocation();
   const { authModalOpen, loading: authLoading, user } = useAuth();
   const { notify, welcomeOffer, claimedOfferCode, claimWelcomeOffer } = useShop();
@@ -26,14 +27,35 @@ export default function OfferPopup() {
   const eligible = welcomeOffer?.eligible ?? true;
   const code = String(welcomeOffer?.code || popup.code || 'FIRST10').toUpperCase();
   const percent = Number(welcomeOffer?.percent ?? popup.percent ?? 10);
+  const delaySeconds = Math.min(
+    60,
+    Math.max(0, Number(popup.delaySeconds ?? welcomeOffer?.popupDelaySeconds ?? 0) || 0),
+  );
   const claimed = Boolean(claimedOfferCode || hasSessionFlag(CLAIMED_KEY));
   const suppressed = authModalOpen || location.pathname.startsWith('/admin') || location.pathname.startsWith('/account') || user?.role === 'admin';
   const viewer = welcomeOffer?.viewer;
   const viewerMatches = viewer
     ? String(viewer.id || '') === String(user?.id || '')
     : !authLoading;
+
+  useEffect(() => {
+    setDelayElapsed(false);
+    if (!welcomeOffer || !enabled || !eligible || !viewerMatches || dismissed || claimed) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setDelayElapsed(true), delaySeconds * 1_000);
+    return () => window.clearTimeout(timer);
+  }, [claimed, delaySeconds, dismissed, eligible, enabled, viewerMatches, welcomeOffer]);
+
   const show = Boolean(
-    welcomeOffer && enabled && eligible && viewerMatches && !dismissed && !claimed && !suppressed,
+    welcomeOffer
+    && enabled
+    && eligible
+    && viewerMatches
+    && delayElapsed
+    && !dismissed
+    && !claimed
+    && !suppressed,
   );
 
   const dismiss = () => {

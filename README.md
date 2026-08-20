@@ -52,7 +52,7 @@ Never place server secrets in a variable prefixed with `VITE_`; Vite variables a
 2. Copy the driver connection string to `MONGODB_URI`.
 3. Optionally set `MONGODB_DATABASE`; it defaults to `gift_n_wrap`.
 
-The connection is cached for serverless reuse. Without a URI—or when Atlas is temporarily unavailable in local development—the API reports that it is using its non-persistent preview store. Production falls back read-only instead of accepting writes that could be lost.
+The connection is cached for serverless reuse. Without a URI—or when Atlas is temporarily unavailable in local development—the API reports that it is using its non-persistent preview store. Production fails closed for both catalogue reads and writes, so a database outage never exposes demo products or accepts work that could be lost.
 
 ### Authentication providers
 
@@ -63,6 +63,10 @@ least 32 characters. The sending domain must be verified in Resend. The browser 
 the sender. Codes are HMAC-protected at rest, expire, have bounded attempts and resend cooldowns,
 and are consumed once. A preview code is returned only when `ALLOW_DEMO_AUTH=true` outside
 production and Resend is not configured.
+
+The same verified Resend sender delivers order confirmations, studio alerts, status notes,
+message/request acknowledgements, and admin replies. Set `APP_URL` so those emails can link back to
+the customer account and the correct admin section.
 
 For Google:
 
@@ -95,7 +99,7 @@ email code.
 
 ### Cloudinary
 
-Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and `CLOUDINARY_UPLOAD_PRESET` on the server, plus `VITE_CLOUDINARY_CLOUD_NAME` in the frontend. Configure the signed upload preset to allow JPG/JPEG/PNG/WebP images up to 8 MB; the API also signs a 2400 × 2400 pixel limit transformation. Each grant is tied to one non-overwritable asset ID, and `UPLOAD_SIGNATURES_PER_HOUR` defaults to 20 per buyer. Order/cart grants last seven days; product and other grants last two hours, with both expiry values returned by the signature endpoint. Consumed product and order grants retain ownership provenance, while removed product assets can be retired only by the owning configured admin after no product references them. Expired unused grants are retained in MongoDB until a bounded cleanup sweep receives Cloudinary's `ok` or `not found` confirmation; failed deletions use exponential backoff and retry on later signature traffic. The browser asks the API for a short-lived signature and uploads directly, so the API secret never reaches the browser. Customer photos are personal data: configure restricted/authenticated delivery and an appropriate retention policy in Cloudinary before launch.
+Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and `CLOUDINARY_UPLOAD_PRESET` on the server, plus `VITE_CLOUDINARY_CLOUD_NAME` in the frontend. Configure the signed upload preset to allow JPG/JPEG/PNG/WebP images up to 8 MB; production verifies that cap through Cloudinary's Admin API, and the API also signs a 2400 × 2400 pixel limit transformation. Each grant is tied to one non-overwritable asset ID, and `UPLOAD_SIGNATURES_PER_HOUR` defaults to 20 per buyer. Order/cart grants last seven days; product and inquiry grants last two hours, with both expiry values returned by the signature endpoint. Consumed product, order, and inquiry grants retain ownership provenance, while removed product assets can be retired only by the owning configured admin after no product references them. Expired unused grants are retained in MongoDB until the authenticated Vercel cleanup cron receives Cloudinary's `ok` or `not found` confirmation; failed deletions use exponential backoff. Set `CRON_SECRET`, and run `npm run db:indexes` during deployment rather than synchronizing every index on a serverless cold start. The browser asks the API for a short-lived signature and uploads directly, so the API secret never reaches the browser. Customer photos are personal data: configure restricted/authenticated delivery and an appropriate retention policy in Cloudinary before launch.
 
 ### Sessions and first-order offer
 
@@ -110,9 +114,10 @@ Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, and 
 1. Import the repository into Vercel.
 2. Add the variables from `.env.example` to the appropriate Preview/Production environments.
 3. Set `NODE_ENV=production`, `ALLOW_DEMO_AUTH=false`, and `VITE_ENABLE_DEMO_AUTH=false` in production.
-   Also keep `ALLOW_MEMORY_WRITES=false`, so a database outage cannot create non-persistent orders.
-4. Add the final domain to Google authorized origins, verify the sender domain in Resend, and add the final origin to `CLIENT_ORIGINS`.
-5. Deploy. `vercel.json` builds the Vite app, sends `/api/*` to the Express function, and serves `index.html` for client-side routes.
+   Also keep `ALLOW_MEMORY_WRITES=false`, so a database outage fails closed.
+4. Set `APP_URL`, add the final domain to Google authorized origins, verify the sender domain in Resend, and add the final origin to `CLIENT_ORIGINS`.
+5. Set a random `CRON_SECRET`, verify the Cloudinary preset has `max_file_size <= UPLOAD_MAX_BYTES`, and run `npm run db:indexes` against the production database during deployment.
+6. Deploy. `vercel.json` builds the Vite app, sends `/api/*` to the Express function, serves `index.html` for client-side routes, and schedules the authenticated upload cleanup job.
 
 The project follows Vercel's current [Vite SPA routing](https://vercel.com/docs/frameworks/frontend/vite), Google's [server-side ID-token verification](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token), and Cloudinary's [signed browser upload](https://cloudinary.com/documentation/authentication_signatures) guidance.
 

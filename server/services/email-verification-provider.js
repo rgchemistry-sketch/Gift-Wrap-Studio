@@ -1,51 +1,33 @@
 import { emailAuthStatus, env } from "../config/env.js";
-import { AppError, configurationError, rateLimited } from "../lib/errors.js";
-
-let providerFetch = (...args) => fetch(...args);
+import { configurationError } from "../lib/errors.js";
+import {
+  renderBrandedEmail,
+  resetEmailProviderForTests,
+  sendEmail,
+  setEmailProviderFetchForTests as setSharedEmailProviderFetchForTests,
+} from "./email.js";
 
 const resendProvider = {
   async send({ email, code, expiresInMinutes }) {
     if (!emailAuthStatus().configured) {
       throw configurationError(["RESEND_API_KEY", "AUTH_EMAIL_FROM", "EMAIL_OTP_SECRET"]);
     }
-    let response;
-    try {
-      response = await providerFetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.resendApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: env.authEmailFrom,
-          to: [email],
-          ...(env.authEmailReplyTo ? { reply_to: env.authEmailReplyTo } : {}),
-          subject: "Your Gift N Wrap verification code",
-          text: `Your Gift N Wrap verification code is ${code}. It expires in ${expiresInMinutes} minutes. If you did not request this code, you can ignore this email.`,
-          html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#173f35"><p>Your Gift N Wrap verification code is:</p><p style="font-size:30px;font-weight:700;letter-spacing:8px">${code}</p><p>It expires in ${expiresInMinutes} minutes. If you did not request this code, you can ignore this email.</p></div>`,
-        }),
-        signal: AbortSignal.timeout(8_000),
-      });
-    } catch {
-      throw new AppError(
-        502,
-        "EMAIL_DELIVERY_UNAVAILABLE",
-        "Verification email is temporarily unavailable. Please try again",
-      );
-    }
-    const payload = await response.json().catch(() => ({}));
-    if (response.ok && payload.id) return true;
-    if (response.status === 429) {
-      throw rateLimited("Too many verification emails. Please wait before trying again");
-    }
-    if ([401, 403, 422].includes(response.status)) {
-      throw configurationError(["Resend verification sender"]);
-    }
-    throw new AppError(
-      502,
-      "EMAIL_DELIVERY_UNAVAILABLE",
-      "Verification email is temporarily unavailable. Please try again",
+    const content = renderBrandedEmail(
+      {
+        eyebrow: "Secure sign in",
+        title: "Your verification code",
+        preheader: `Use ${code} to continue securely.`,
+        bodyHtml: `<p style="margin:0 0 14px">Use this one-time code to continue securely:</p><p style="margin:18px 0 22px;font-family:Arial,sans-serif;font-size:32px;font-weight:700;letter-spacing:8px;color:#6d1f35">${code}</p><p style="margin:0">It expires in ${expiresInMinutes} minutes. If you did not request this code, you can ignore this email.</p>`,
+        bodyText: `Your Gift N Wrap verification code is ${code}.\n\nIt expires in ${expiresInMinutes} minutes. If you did not request this code, you can ignore this email.`,
+      },
     );
+    await sendEmail({
+      to: email,
+      subject: "Your Gift N Wrap verification code",
+      replyTo: env.authEmailReplyTo,
+      ...content,
+    });
+    return true;
   },
 };
 
@@ -69,11 +51,11 @@ export const setEmailVerificationProviderForTests = (provider) => {
 
 export const setEmailProviderFetchForTests = (implementation) => {
   if (!env.isTest) throw new Error("Email provider fetch test doubles are test-only");
-  providerFetch = implementation;
+  setSharedEmailProviderFetchForTests(implementation);
 };
 
 export const resetEmailVerificationProviderForTests = () => {
   if (!env.isTest) throw new Error("Email verification reset is test-only");
   testProvider = undefined;
-  providerFetch = (...args) => fetch(...args);
+  resetEmailProviderForTests();
 };

@@ -270,7 +270,8 @@ export default function ProductPage() {
   const { slug } = useParams();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [validated, setValidated] = useState(false);
@@ -300,7 +301,8 @@ export default function ProductPage() {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    setError('');
+    setError(null);
+    setProduct(null);
     // /product/:slug keeps the same component mounted between products, so every
     // per-product choice has to be cleared or it follows the visitor to the next piece.
     setSelectedImage(0);
@@ -313,13 +315,17 @@ export default function ProductPage() {
         if (active) setProduct(result.product);
       })
       .catch((requestError) => {
-        if (active) setError(requestError.message);
+        if (active) setError({
+          message: requestError.message,
+          status: requestError.status,
+          code: requestError.code,
+        });
       })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [slug]);
+  }, [loadAttempt, slug]);
 
   const related = useMemo(
     () => catalog.filter((item) => item.id !== product?.id && item.category === product?.category).slice(0, 3),
@@ -328,13 +334,17 @@ export default function ProductPage() {
 
   if (loading || (formOwner !== currentFormOwner && formOwner !== 'guest')) return <RouteLoader />;
   if (error || !product) {
+    const notFound = !error || error.status === 404 || error.code === 'NOT_FOUND';
     return (
       <Container className="access-state page-section">
         <div className="access-state__icon"><Icon name="spark" size={30} /></div>
-        <p className="eyebrow">This piece has wandered</p>
-        <h1>We can’t find that studio piece.</h1>
-        <p>{error || 'It may have been a one-of-one design or is no longer in the current collection.'}</p>
-        <Button as={Link} to="/shop" className="button-burgundy">Browse the collection</Button>
+        <p className="eyebrow">{notFound ? 'This piece has wandered' : 'The studio connection slipped'}</p>
+        <h1>{notFound ? 'We can’t find that studio piece.' : 'We couldn’t load this piece.'}</h1>
+        <p>{error?.message || 'It may have been a one-of-one design or is no longer in the current collection.'}</p>
+        <div className="d-flex flex-wrap justify-content-center gap-3">
+          {!notFound && <Button type="button" className="button-burgundy" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>Try again</Button>}
+          <Button as={Link} to="/shop" variant={notFound ? undefined : 'outline-dark'} className={notFound ? 'button-burgundy' : undefined}>Browse the collection</Button>
+        </div>
       </Container>
     );
   }
@@ -398,7 +408,7 @@ export default function ProductPage() {
   const saved = wishlist.includes(product.id);
 
   return (
-    <>
+    <div className="product-page-shell">
       <section className="product-page page-section">
         <Container fluid="xl">
           <nav className="breadcrumbs" aria-label="Breadcrumb"><Link to="/">Home</Link><span>/</span><Link to="/shop">Shop</Link><span>/</span><span aria-current="page">{product.title}</span></nav>
@@ -408,12 +418,12 @@ export default function ProductPage() {
                 <div className="product-gallery__thumbs" aria-label="Product images">
                   {gallery.map((image, index) => (
                     <button key={`${image}-${index}`} type="button" className={activeImageIndex === index ? 'is-active' : ''} onClick={() => setSelectedImage(index)} aria-label={`Show image ${index + 1}`} aria-pressed={activeImageIndex === index}>
-                      <SmartImage src={image} alt="" fallbackLabel={product.category} />
+                      <SmartImage src={image} alt="" fallbackLabel={product.category} imageWidth={160} responsiveWidths={[96, 160, 240]} sizes="82px" loading="lazy" decoding="async" />
                     </button>
                   ))}
                 </div>
                 <div className="product-gallery__main">
-                  <SmartImage src={gallery[activeImageIndex]} alt={`${product.title}, view ${activeImageIndex + 1}`} fallbackLabel={product.title} />
+                  <SmartImage src={gallery[activeImageIndex]} alt={`${product.title}, view ${activeImageIndex + 1}`} fallbackLabel={product.title} imageWidth={1200} responsiveWidths={[640, 900, 1200, 1600]} sizes="(max-width: 991px) calc(100vw - 1.5rem), 58vw" loading={activeImageIndex === 0 ? 'eager' : 'lazy'} decoding="async" fetchPriority={activeImageIndex === 0 ? 'high' : 'auto'} />
                   {product.badge && <span className="product-gallery__badge">{product.badge}</span>}
                 </div>
               </div>
@@ -511,6 +521,6 @@ export default function ProductPage() {
         <div><small>{product.title}</small><strong>{formatCurrency(product.price * quantity)}</strong></div>
         <Button className="button-burgundy" onClick={() => document.querySelector('.personalization-form')?.requestSubmit()} disabled={!product.inStock || mediaBusy}>{mediaBusy ? 'Uploading…' : product.customizable ? 'Personalize & add' : 'Add to bag'}</Button>
       </div>
-    </>
+    </div>
   );
 }

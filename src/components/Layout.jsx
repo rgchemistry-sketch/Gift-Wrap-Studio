@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Link, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
 import Container from 'react-bootstrap/Container';
@@ -52,8 +52,11 @@ export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const searchInputRef = useRef(null);
+  const searchToggleRef = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const navigationType = useNavigationType();
   const { cartCount, notify, studioSettings } = useShop();
   const { user, openAuth, signOut, signingOut, authModalOpen } = useAuth();
   const announcement = studioSettings?.announcement || {};
@@ -95,7 +98,47 @@ export default function Layout() {
   useEffect(() => {
     setMenuOpen(false);
     setSearchOpen(false);
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    setQuery('');
+  }, [location.pathname]);
+
+  useEffect(() => {
+    let hashFrame;
+    let hashTimer;
+    if (location.hash) {
+      const scrollToHash = () => {
+        let targetId = location.hash.slice(1);
+        try { targetId = decodeURIComponent(targetId); } catch { /* use the literal hash */ }
+        document.getElementById(targetId)?.scrollIntoView({ block: 'start' });
+      };
+      hashFrame = window.requestAnimationFrame(scrollToHash);
+      hashTimer = window.setTimeout(scrollToHash, 160);
+    } else if (navigationType !== 'POP') {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+
+    return () => {
+      if (hashFrame) window.cancelAnimationFrame(hashFrame);
+      if (hashTimer) window.clearTimeout(hashTimer);
+    };
+  }, [location.hash, location.pathname, navigationType]);
+
+  useEffect(() => {
+    if (!searchOpen) return undefined;
+    const focusFrame = window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setSearchOpen(false);
+      window.requestAnimationFrame(() => searchToggleRef.current?.focus());
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [searchOpen]);
+
+  useEffect(() => {
 
     const normalizedPath = location.pathname === '/'
       ? '/'
@@ -108,8 +151,22 @@ export default function Layout() {
   const submitSearch = (event) => {
     event.preventDefault();
     const clean = query.trim();
+    setSearchOpen(false);
+    setQuery('');
     if (clean) navigate(`/shop?q=${encodeURIComponent(clean)}`);
   };
+
+  const activeShopItem = (() => {
+    if (location.pathname !== '/shop') return '';
+    const params = new URLSearchParams(location.search);
+    if (params.get('category') === 'Personalized gifts') return 'Personalized';
+    if (params.get('occasion') === 'Wedding') return 'Wedding';
+    return 'Shop';
+  })();
+
+  const navItemIsActive = (label, to) => to.startsWith('/shop')
+    ? activeShopItem === label
+    : location.pathname === to || location.pathname.startsWith(`${to}/`);
 
   return (
     <div className="site-shell">
@@ -127,13 +184,13 @@ export default function Layout() {
               <Icon name="menu" />
             </button>
             <Navbar.Brand as="div"><Brand /></Navbar.Brand>
-            <Nav className="mx-auto desktop-nav d-none d-lg-flex" aria-label="Main navigation">
+            <Nav as="nav" className="mx-auto desktop-nav d-none d-lg-flex" aria-label="Main navigation">
               {navItems.map(([label, to]) => (
-                <Nav.Link key={label} as={NavLink} to={to} end={to === '/shop'}>{label}</Nav.Link>
+                <Nav.Link key={label} as={Link} to={to} className={navItemIsActive(label, to) ? 'active' : undefined} aria-current={navItemIsActive(label, to) ? 'page' : undefined}>{label}</Nav.Link>
               ))}
             </Nav>
             <div className="navbar-tools">
-              <button className="icon-button" type="button" onClick={() => setSearchOpen((value) => !value)} aria-label="Search products" aria-expanded={searchOpen}>
+              <button ref={searchToggleRef} className="icon-button" type="button" onClick={() => setSearchOpen((value) => !value)} aria-label="Search products" aria-expanded={searchOpen}>
                 <Icon name="search" />
               </button>
               {user ? (
@@ -168,6 +225,7 @@ export default function Layout() {
             <Form role="search" onSubmit={submitSearch}>
               <Icon name="search" />
               <Form.Control
+                ref={searchInputRef}
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -189,14 +247,14 @@ export default function Layout() {
         <Offcanvas.Body>
           <nav aria-label="Mobile navigation">
             {navItems.map(([label, to], index) => (
-              <NavLink key={label} to={to} className="mobile-menu__link" onClick={() => setMenuOpen(false)}>
+              <Link key={label} to={to} className={`mobile-menu__link ${navItemIsActive(label, to) ? 'active' : ''}`} aria-current={navItemIsActive(label, to) ? 'page' : undefined} onClick={() => setMenuOpen(false)}>
                 <span>0{index + 1}</span>{label}<Icon name="arrow" />
-              </NavLink>
+              </Link>
             ))}
-            <NavLink to="/custom-order" className="mobile-menu__feature" onClick={() => setMenuOpen(false)}>
+            <Link to="/custom-order" className="mobile-menu__feature" onClick={() => setMenuOpen(false)}>
               <span><Icon name="spark" /> Have an idea?</span>
               <strong>Commission something completely new.</strong>
-            </NavLink>
+            </Link>
           </nav>
           <div className="mobile-menu__footer">
             {user ? <><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/account'); }}><Icon name="user" /> My account</button>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/admin'); }}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="close" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></> : <><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); openAuth('', 'login'); }}><Icon name="user" /> Log in</button><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); openAuth('', 'signup'); }}><Icon name="spark" /> Create account</button></>}

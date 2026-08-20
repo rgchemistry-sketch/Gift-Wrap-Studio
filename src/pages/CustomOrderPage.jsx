@@ -23,6 +23,7 @@ import {
   INDIAN_MOBILE_MESSAGE,
   normalizeIndianMobile,
 } from '../../shared/indian-phone.js';
+import { resolveStudioContact } from '../utils/studio-contact';
 
 const DRAFT_KEY = 'gnw-custom-order-draft';
 const initialForm = {
@@ -44,7 +45,8 @@ export default function CustomOrderPage() {
     requireAuth,
     refreshSession,
   } = useAuth();
-  const { notify } = useShop();
+  const { notify, studioSettings } = useShop();
+  const contact = resolveStudioContact(studioSettings);
   const draftUserId = String(sessionOwnerId || user?.id || '');
   const draftOwner = scopedDraftOwner(draftUserId);
   const [step, setStep] = useState(0);
@@ -217,7 +219,7 @@ export default function CustomOrderPage() {
             {stepMeta.map(([label], index) => <button key={label} type="button" onClick={() => index < step && setStep(index)} className={`${index === step ? 'is-active' : ''} ${index < step ? 'is-complete' : ''}`} disabled={index > step}><span>{index < step ? <Icon name="check" size={13} /> : index + 1}</span><small>{label}</small></button>)}
           </div>
           <Row className="g-5 wizard-layout">
-            <Col lg={4}><div className="wizard-aside"><p className="eyebrow">Step {step + 1} of 4</p><h2>{stepMeta[step][1]}</h2><p>{step === 0 ? 'Start broad. A few vivid details are more useful than having every measurement worked out.' : step === 1 ? 'Names, flowers, colours and little symbols are what turn an object into your object.' : step === 2 ? 'We keep your details private and use them only to discuss this request.' : 'Nothing goes into production yet. This simply gives our artist enough context to begin the conversation.'}</p><div className="wizard-help"><Icon name="phone" /><span>Prefer to talk it through?<a href="tel:+919588281126">Call 95882 81126</a></span></div></div></Col>
+            <Col lg={4}><div className="wizard-aside"><p className="eyebrow">Step {step + 1} of 4</p><h2>{stepMeta[step][1]}</h2><p>{step === 0 ? 'Start broad. A few vivid details are more useful than having every measurement worked out.' : step === 1 ? 'Names, flowers, colours and little symbols are what turn an object into your object.' : step === 2 ? 'We keep your details private and use them only to discuss this request.' : 'Nothing goes into production yet. This simply gives our artist enough context to begin the conversation.'}</p>{contact.phoneHref && <div className="wizard-help"><Icon name="phone" /><span>Prefer to talk it through?<a href={contact.phoneHref}>Call {contact.phoneLabel}</a></span></div>}</div></Col>
             <Col lg={{ span: 7, offset: 1 }}>
               <div className="wizard-card">
                 {error && <Alert variant="danger" className="soft-alert" role="alert">{error}</Alert>}
@@ -253,6 +255,16 @@ function StepContact({ form, update }) {
 }
 
 function StepReview({ form, edit }) {
-  const rows = [['Piece', form.productType], ['Occasion', form.occasion || 'Not specified'], ['Your idea', form.description], ['Personal details', form.personalization], ['Palette', form.palette || 'Artist guidance requested'], ['Budget', form.budget || 'To discuss'], ['Needed by', form.neededBy || 'No fixed date'], ['Contact', `${form.name} · ${form.phone} · ${form.email}`], ['Preferred contact', form.contactPreference]];
-  return <div className="wizard-step review-step"><p className="eyebrow">Review your request</p><h3>Does this sound like your idea?</h3><div className="review-list">{rows.map(([label, value], index) => <div key={label}><span>{label}</span><p>{value}</p>{[1, 3, 6].includes(index) && <button type="button" onClick={() => edit(index < 2 ? 0 : index < 5 ? 1 : 2)}>Edit</button>}</div>)}</div><Alert variant="info" className="soft-alert"><strong>Sending this is free.</strong> The studio will review the brief and contact you before any design is confirmed or payment is requested.</Alert></div>;
+  const rows = [
+    ['Piece', form.productType, 0],
+    ['Occasion', form.occasion || 'Not specified', 0],
+    ['Your idea', form.description, 0],
+    ['Personal details', form.personalization, 1],
+    ['Palette', form.palette || 'Artist guidance requested', 1],
+    ['Budget', form.budget || 'To discuss', 1],
+    ['Needed by', form.neededBy || 'No fixed date', 0],
+    ['Contact', `${form.name} · ${form.phone} · ${form.email}`, 2],
+    ['Preferred contact', form.contactPreference, 2],
+  ];
+  return <div className="wizard-step review-step"><p className="eyebrow">Review your request</p><h3>Does this sound like your idea?</h3><div className="review-list">{rows.map(([label, value, ownerStep]) => <div key={label}><span>{label}</span><p>{value}</p><button type="button" onClick={() => edit(ownerStep)}>Edit</button></div>)}</div><Alert variant="info" className="soft-alert"><strong>Sending this is free.</strong> The studio will review the brief and contact you before any design is confirmed or payment is requested.</Alert></div>;
 }

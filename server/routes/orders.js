@@ -3,6 +3,7 @@ import { asyncHandler } from "../lib/async-handler.js";
 import { badRequest, forbidden } from "../lib/errors.js";
 import { authenticate, requireExpectedUser } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
+import { sendOrderCreatedEmails } from "../services/email-notifications.js";
 import { createOrder, getOrder, listBuyerOrders } from "../services/store.js";
 import { createOrderSchema, idParamsSchema, orderQuerySchema } from "../validation/schemas.js";
 
@@ -20,6 +21,7 @@ ordersRouter.post(
     }
     const result = await createOrder(request.user, request.validated.body, { idempotencyKey });
     if (result.replayed) response.setHeader("Idempotency-Replayed", "true");
+    if (!result.replayed) await sendOrderCreatedEmails(result.order);
     response.status(result.replayed ? 200 : 201).json({ data: result.order });
   }),
 );

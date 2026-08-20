@@ -8,9 +8,13 @@ import {
   conflict,
   databaseUnavailable,
   forbidden,
+  idempotencyKeyReused,
   notFound,
   rateLimited,
   unauthorized,
+  welcomeOfferExcluded,
+  welcomeOfferIneligible,
+  welcomeOfferInvalid,
 } from "../lib/errors.js";
 import { memoryStore } from "../lib/memory-store.js";
 import { maskPhone } from "./auth.js";
@@ -672,6 +676,70 @@ export const upsertGoogleUser = async ({ googleSub, email, name, avatar, phone, 
   return record;
 };
 
+const cloudinaryPublicIdFromUrl = (value) => {
+  if (String(value || "").startsWith("/")) return "";
+  let imageUrl;
+  let decodedPath;
+  try {
+    imageUrl = new URL(value);
+    decodedPath = decodeURIComponent(imageUrl.pathname);
+  } catch {
+    return "";
+  }
+  if (
+    imageUrl.protocol !== "https:" ||
+    imageUrl.hostname.toLowerCase() !== "res.cloudinary.com" ||
+    !env.cloudinaryCloudName
+  ) {
+    return "";
+  }
+  const uploadPrefix = `/${env.cloudinaryCloudName}/image/upload/`;
+  if (!decodedPath.startsWith(uploadPrefix)) return "";
+  const deliveryPath = decodedPath.slice(uploadPrefix.length);
+  const versionMarker = /(?:^|\/)v\d+\//g;
+  let versionMatch;
+  let latestVersionMatch;
+  while ((versionMatch = versionMarker.exec(deliveryPath))) latestVersionMatch = versionMatch;
+  const deliveredAsset = latestVersionMatch
+    ? deliveryPath.slice(latestVersionMatch.index + latestVersionMatch[0].length)
+    : deliveryPath;
+  return deliveredAsset.replace(/\.[A-Za-z0-9]+$/, "");
+};
+
+export const upsertDemoUser = async (requestedRole = "buyer") => {
+  const mode = assertWritable(await connectDatabase());
+  const role = requestedRole === "admin" ? "admin" : "buyer";
+  const email = `preview-${role}@giftnwrap.local`;
+  const now = new Date();
+  const changes = {
+    email,
+    emailVerifiedAt: now,
+    name: role === "admin" ? "Preview Administrator" : "Preview Buyer",
+    avatar: "",
+    role,
+    providers: ["demo"],
+    lastLoginAt: now,
+  };
+
+  // Demo identities live under reserved local-only addresses. In particular,
+  // never upsert by ADMIN_EMAIL: doing so would overwrite the real administrator
+  // account's name, avatar and Google subject in a shared development database.
+  if (mode === "mongodb") {
+    return plain(
+      await User.findOneAndUpdate(
+        { email },
+        { $set: changes, $setOnInsert: { sessionVersion: 0 } },
+        { new: true, upsert: true, runValidators: true },
+      ),
+    );
+  }
+
+  const existing = memoryStore.findOne("users", (user) => user.email === email);
+  return existing
+    ? memoryStore.update("users", existing.id, changes)
+    : memoryStore.create("users", { ...changes, sessionVersion: 0 });
+};
+
 export const findUserByGoogleIdentity = async ({ googleSub, email }) => {
   const mode = await connectDatabase();
   const normalizedEmail = email.toLowerCase();
@@ -1044,13 +1112,43 @@ const findProductForOrder = async ({ productId, slug }, selectedMode) => {
 
 const orderNumber = () => {
   const date = new Date().toISOString().slice(2, 10).replaceAll("-", "");
-  return `GNW-${date}-${randomBytes(3).toString("hex").toUpperCase()}`;
+  // A 48-bit suffix keeps the human-readable daily prefix while making a
+  // collision vanishingly unlikely, even at high order volumes.
+  return `GNW-${date}-${randomBytes(6).toString("hex").toUpperCase()}`;
 };
 
 const hasOrdersForBuyer = async (buyerId, mode) =>
   mode === "mongodb"
-    ? Boolean(await Order.exists({ buyerId }))
-    : memoryStore.count("orders", (order) => order.buyerId === buyerId) > 0;
+    ? Boolean(await Order.exists({ buyerId, status: { $ne: "cancelled" } }))
+    : memoryStore.count(
+        "orders",
+        (order) => order.buyerId === buyerId && order.status !== "cancelled",
+      ) > 0;
+
+const releaseCancelledOrderClaims = async (buyerId, mode) => {
+  if (mode === "mongodb") {
+    await Order.updateMany(
+      {
+        buyerId,
+        status: "cancelled",
+        $or: [{ isFirstOrder: true }, { welcomeOfferClaimed: true }],
+      },
+      { $unset: { isFirstOrder: 1, welcomeOfferClaimed: 1 } },
+    );
+    return;
+  }
+  memoryStore
+    .find(
+      "orders",
+      (order) => order.buyerId === buyerId
+        && order.status === "cancelled"
+        && (order.isFirstOrder || order.welcomeOfferClaimed),
+    )
+    .forEach((order) => memoryStore.update("orders", order.id, {
+      isFirstOrder: undefined,
+      welcomeOfferClaimed: undefined,
+    }));
+};
 
 const findIdempotentOrder = async (buyerId, idempotencyKey, mode) => {
   if (!idempotencyKey) return undefined;
@@ -1086,9 +1184,15 @@ const persistMongoOrder = async (record, stockRequests, grantReservation) => {
 
         for (const request of stockRequests.values()) {
           const current = currentById.get(request.productId);
-          if (!current) throw conflict(`${request.name} is no longer available`);
+          if (!current) {
+            throw notFound("One of the selected products", [
+              { field: "items", productId: request.productId },
+            ]);
+          }
           if (current.price !== request.unitPrice) {
-            throw conflict(`${request.name}'s price changed. Refresh your bag before ordering`);
+            throw conflict(`${request.name}'s price changed. Refresh your bag before ordering`, [
+              { field: "items", productId: request.productId, currentPrice: current.price },
+            ]);
           }
           if (current.inventory == null) continue;
           const result = await Product.updateOne(
@@ -1138,9 +1242,15 @@ const reserveMemoryInventory = (stockRequests) => {
   const reservations = [];
   for (const request of stockRequests.values()) {
     const current = memoryStore.get("products", request.productId);
-    if (!current || !current.active) throw conflict(`${request.name} is no longer available`);
+    if (!current || !current.active) {
+      throw notFound("One of the selected products", [
+        { field: "items", productId: request.productId },
+      ]);
+    }
     if (current.price !== request.unitPrice) {
-      throw conflict(`${request.name}'s price changed. Refresh your bag before ordering`);
+      throw conflict(`${request.name}'s price changed. Refresh your bag before ordering`, [
+        { field: "items", productId: request.productId, currentPrice: current.price },
+      ]);
     }
     if (current.inventory != null && current.inventory < request.quantity) {
       throw conflict(`${request.name} does not have enough stock`, [
@@ -1168,7 +1278,7 @@ const hashOrderRequest = (input) =>
 
 const assertMatchingReplay = (order, requestHash) => {
   if (order.idempotencyHash && order.idempotencyHash !== requestHash) {
-    throw conflict("This Idempotency-Key was already used for a different order");
+    throw idempotencyKeyReused();
   }
   return order;
 };
@@ -1226,7 +1336,13 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
 
   for (const requestedItem of input.items) {
     const product = await findProductForOrder(requestedItem, mode);
-    if (!product) throw notFound("One of the selected products");
+    if (!product) {
+      throw notFound("One of the selected products", [{
+        field: "items",
+        productId: requestedItem.productId || "",
+        slug: requestedItem.slug || "",
+      }]);
+    }
     const requestedTotal =
       (stockRequests.get(product.id)?.quantity || 0) + requestedItem.quantity;
     if (product.inventory != null && product.inventory < requestedTotal) {
@@ -1264,7 +1380,7 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
       input.couponCode !== studioSettings.offer.code ||
       studioSettings.offer.percent === 0
     ) {
-      throw badRequest("This coupon code is not valid");
+      throw welcomeOfferInvalid();
     }
     const quantityByProduct = items.reduce((totals, item) => {
       totals.set(item.productId, (totals.get(item.productId) || 0) + item.quantity);
@@ -1277,9 +1393,7 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
       (quantity) => quantity >= studioSettings.shipping.bulkThreshold,
     );
     if (hasCorporateItem || hasBulkItem) {
-      throw badRequest(
-        `The welcome offer is not available for corporate gifts or quantities of ${studioSettings.shipping.bulkThreshold} or more`,
-      );
+      throw welcomeOfferExcluded(studioSettings.shipping.bulkThreshold);
     }
     discount = Math.min(
       Math.round((subtotal * studioSettings.offer.percent) / 100),
@@ -1288,8 +1402,9 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
   }
 
   const hasPriorOrder = await hasOrdersForBuyer(buyer.id, mode);
+  if (!hasPriorOrder) await releaseCancelledOrderClaims(buyer.id, mode);
   if (input.couponCode && hasPriorOrder) {
-    throw conflict("The welcome offer is available on your first order only");
+    throw welcomeOfferIneligible();
   }
 
   const now = new Date();
@@ -1331,9 +1446,12 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
         replayed: true,
       };
     }
-    const firstOrderNow = !memoryStore.findOne("orders", (order) => order.buyerId === buyer.id);
+    const firstOrderNow = !memoryStore.findOne(
+      "orders",
+      (order) => order.buyerId === buyer.id && order.status !== "cancelled",
+    );
     if (input.couponCode && !firstOrderNow) {
-      throw conflict("The welcome offer is available on your first order only");
+      throw welcomeOfferIneligible();
     }
     const grantAttempt = await reserveOrderGrantsForIdempotentWrite({
       buyerId: buyer.id,
@@ -1404,7 +1522,7 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
     if (record.isFirstOrder && duplicateIndex(error, "uniq_buyer_first_order", "isFirstOrder")) {
       if (input.couponCode) {
         await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
-        throw conflict("The welcome offer is available on your first order only");
+        throw welcomeOfferIneligible();
       }
       try {
         return {
@@ -1424,7 +1542,7 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
     }
     if (duplicateIndex(error, "uniq_buyer_welcome_offer", "welcomeOfferClaimed")) {
       await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
-      throw conflict("The welcome offer is available on your first order only");
+      throw welcomeOfferIneligible();
     }
     await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
     throw error;
@@ -1452,10 +1570,7 @@ export const listBuyerOrders = async (buyerId, { status, page, limit }) => {
 
 export const buyerHasOrders = async (buyerId) => {
   const mode = await connectDatabase();
-  if (mode === "mongodb") {
-    return Boolean(await Order.exists({ buyerId }));
-  }
-  return Boolean(memoryStore.findOne("orders", (order) => order.buyerId === buyerId));
+  return hasOrdersForBuyer(buyerId, mode);
 };
 
 export const listAllOrders = async ({ status, page, limit }) => {
@@ -1464,7 +1579,7 @@ export const listAllOrders = async ({ status, page, limit }) => {
     const query = status ? { status } : {};
     const [records, total] = await Promise.all([
       Order.find(query)
-        .select("orderNumber buyerName buyerEmail items.name status total createdAt")
+        .select("orderNumber buyerName buyerEmail items.name items.quantity status total createdAt")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -1517,7 +1632,7 @@ const assertStatusTransition = (from, to) => {
   }
 };
 
-export const updateOrderStatus = async (id, { status, note }) => {
+export const updateOrderStatus = async (id, { status, note }, { withMeta = false } = {}) => {
   const mode = assertWritable(await connectDatabase());
   const now = new Date();
   const entry = { status, note, at: now };
@@ -1525,15 +1640,24 @@ export const updateOrderStatus = async (id, { status, note }) => {
   if (mode === "mongodb") {
     const session = await mongoose.startSession();
     let updated;
+    let changed = false;
     try {
       await session.withTransaction(
         async () => {
+          // Mongoose may retry this callback after a transient transaction error.
+          // Recompute the transition flag from the snapshot used by each attempt.
+          changed = false;
           const query = mongoose.isValidObjectId(id) ? { _id: id } : { orderNumber: id };
           const order = await Order.findOne(query)
             .select("+inventoryReservations +inventoryReleasedAt")
             .session(session);
           if (!order) throw notFound("Order");
+          if (order.status === status) {
+            updated = order;
+            return;
+          }
           assertStatusTransition(order.status, status);
+          changed = true;
 
           if (status === "cancelled" && !order.inventoryReleasedAt) {
             for (const reservation of order.inventoryReservations || []) {
@@ -1545,6 +1669,12 @@ export const updateOrderStatus = async (id, { status, note }) => {
             }
             order.inventoryReleasedAt = now;
           }
+          if (status === "cancelled") {
+            // A studio-cancelled request must not consume the customer's first-order
+            // slot or the welcome-offer partial unique index.
+            order.set("isFirstOrder", undefined);
+            order.set("welcomeOfferClaimed", undefined);
+          }
           order.status = status;
           order.statusHistory.push(entry);
           updated = await order.save({ session });
@@ -1554,7 +1684,8 @@ export const updateOrderStatus = async (id, { status, note }) => {
           writeConcern: { w: "majority" },
         },
       );
-      return publicOrder(updated);
+      const record = publicOrder(updated);
+      return withMeta ? { record, changed } : record;
     } finally {
       await session.endSession();
     }
@@ -1564,6 +1695,10 @@ export const updateOrderStatus = async (id, { status, note }) => {
     memoryStore.get("orders", id) ||
     memoryStore.findOne("orders", (order) => order.orderNumber === id);
   if (!existing) throw notFound("Order");
+  if (existing.status === status) {
+    const record = publicOrder(existing);
+    return withMeta ? { record, changed: false } : record;
+  }
   assertStatusTransition(existing.status, status);
   let inventoryReleasedAt = existing.inventoryReleasedAt || null;
   if (status === "cancelled" && !inventoryReleasedAt) {
@@ -1577,18 +1712,35 @@ export const updateOrderStatus = async (id, { status, note }) => {
     }
     inventoryReleasedAt = now;
   }
-  return publicOrder(
+  const record = publicOrder(
     memoryStore.update("orders", existing.id, {
       status,
       inventoryReleasedAt,
+      ...(status === "cancelled"
+        ? { isFirstOrder: undefined, welcomeOfferClaimed: undefined }
+        : {}),
       statusHistory: [...existing.statusHistory, entry],
     }),
   );
+  return withMeta ? { record, changed: true } : record;
 };
 
 export const createCustomInquiry = async (input, user) => {
   if (!user?.id || !user?.email) throw unauthorized();
   const mode = assertWritable(await connectDatabase());
+  const parsedReferencePublicIds = input.referenceImages.map(cloudinaryPublicIdFromUrl);
+  const invalidReferenceIndex = parsedReferencePublicIds.findIndex((publicId) => !publicId);
+  if (invalidReferenceIndex >= 0) {
+    throw conflict(
+      "Every uploaded reference image must come from this studio's upload service",
+      [{ field: "referenceImages", index: invalidReferenceIndex }],
+    );
+  }
+  const referencePublicIds = [...new Set(parsedReferencePublicIds)];
+  const reservation = await reserveCustomInquiryGrants({
+    userId: user.id,
+    publicIds: referencePublicIds,
+  });
   const record = {
     ...input,
     userId: user.id,
@@ -1596,24 +1748,71 @@ export const createCustomInquiry = async (input, user) => {
     status: "new",
     adminNote: "",
   };
-  return mode === "mongodb"
-    ? plain(await CustomInquiry.create(record))
-    : memoryStore.create("customInquiries", record);
+  if (mode === "mongodb") {
+    const session = await mongoose.startSession();
+    let created;
+    try {
+      await session.withTransaction(async () => {
+        [created] = await CustomInquiry.create([record], { session });
+        await consumeCustomInquiryGrants({
+          reservationToken: reservation?.reservationToken,
+          inquiryId: created.id,
+          expectedCount: referencePublicIds.length,
+          session,
+          mode,
+        });
+      });
+      return plain(created);
+    } catch (error) {
+      await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+  let created;
+  try {
+    created = memoryStore.create("customInquiries", record);
+    await consumeCustomInquiryGrants({
+      reservationToken: reservation?.reservationToken,
+      inquiryId: created.id,
+      expectedCount: referencePublicIds.length,
+      mode,
+    });
+    return created;
+  } catch (error) {
+    if (created) memoryStore.remove("customInquiries", created.id);
+    await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
+    throw error;
+  }
 };
 
-export const listBuyerInquiries = async (userId) => {
+export const listBuyerInquiries = async (userId, { page = 1, limit = 20 } = {}) => {
   const mode = await connectDatabase();
-  const records =
-    mode === "mongodb"
-      ? await CustomInquiry.find({ userId }).sort({ createdAt: -1 })
-      : memoryStore
-          .find("customInquiries", (inquiry) => inquiry.userId === userId)
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  return records.map((record) => {
+  let records;
+  let total;
+  if (mode === "mongodb") {
+    [records, total] = await Promise.all([
+      CustomInquiry.find({ userId })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      CustomInquiry.countDocuments({ userId }),
+    ]);
+  } else {
+    const allRecords = memoryStore
+      .find("customInquiries", (inquiry) => inquiry.userId === userId)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    total = allRecords.length;
+    records = slicePage(allRecords, page, limit);
+  }
+  const items = records.map((record) => {
     const buyerSafe = plain(record);
     delete buyerSafe.adminNote;
     return buyerSafe;
   });
+  return paginate(items, page, limit, total);
 };
 
 const listInbox = async (collectionName, Model, { status, page, limit }) => {
@@ -1638,22 +1837,38 @@ const listInbox = async (collectionName, Model, { status, page, limit }) => {
 
 const updateInbox = async (collectionName, Model, id, input, resourceName) => {
   const mode = assertWritable(await connectDatabase());
+  const changes = Object.entries(input);
   if (mode === "mongodb") {
     if (!mongoose.isValidObjectId(id)) throw notFound(resourceName);
-    const record = await Model.findByIdAndUpdate(id, { $set: input }, { new: true, runValidators: true });
-    if (!record) throw notFound(resourceName);
-    return plain(record);
+    const record = await Model.findOneAndUpdate(
+      {
+        _id: id,
+        ...(changes.length > 0
+          ? { $or: changes.map(([field, value]) => ({ [field]: { $ne: value } })) }
+          : {}),
+      },
+      { $set: input },
+      { new: true, runValidators: true },
+    );
+    if (record) return { record: plain(record), changed: true };
+    const existing = await Model.findById(id);
+    if (!existing) throw notFound(resourceName);
+    return { record: plain(existing), changed: false };
   }
-  const record = memoryStore.update(collectionName, id, input);
-  if (!record) throw notFound(resourceName);
-  return record;
+  const existing = memoryStore.get(collectionName, id);
+  if (!existing) throw notFound(resourceName);
+  const changed = changes.some(([field, value]) => existing[field] !== value);
+  if (!changed) return { record: existing, changed: false };
+  return { record: memoryStore.update(collectionName, id, input), changed: true };
 };
 
 export const listCustomInquiries = (query) =>
   listInbox("customInquiries", CustomInquiry, query);
 
-export const updateCustomInquiry = (id, input) =>
-  updateInbox("customInquiries", CustomInquiry, id, input, "Custom inquiry");
+export const updateCustomInquiry = async (id, input, { withMeta = false } = {}) => {
+  const result = await updateInbox("customInquiries", CustomInquiry, id, input, "Custom inquiry");
+  return withMeta ? result : result.record;
+};
 
 export const createContact = async (input, user) => {
   if (!user?.id || !user?.email) throw unauthorized();
@@ -1671,8 +1886,10 @@ export const createContact = async (input, user) => {
 
 export const listContacts = (query) => listInbox("contacts", Contact, query);
 
-export const updateContact = (id, input) =>
-  updateInbox("contacts", Contact, id, input, "Contact message");
+export const updateContact = async (id, input, { withMeta = false } = {}) => {
+  const result = await updateInbox("contacts", Contact, id, input, "Contact message");
+  return withMeta ? result : result.record;
+};
 
 const adminUserView = (record, relationship = {}) => {
   const user = plain(record);
@@ -2452,6 +2669,16 @@ const reserveOrderCustomizationGrants = async ({ userId, publicIds = [] }) =>
     message: "Every customization image requires an unused upload grant owned by this customer",
   });
 
+const reserveCustomInquiryGrants = async ({ userId, publicIds = [] }) =>
+  reserveUploadGrantsForWrite({
+    userId,
+    publicIds,
+    purpose: "custom-inquiries",
+    reservationKind: "inquiry-write",
+    field: "referenceImages",
+    message: "Every reference image requires an unused upload grant owned by this customer",
+  });
+
 const consumeReservedUploadGrants = async ({
   reservationToken,
   reservationKind,
@@ -2554,6 +2781,24 @@ const consumeOrderCustomizationGrants = async ({
     session,
     mode,
     failureMessage: "Order customization image grants could not be finalized",
+  });
+
+const consumeCustomInquiryGrants = async ({
+  reservationToken,
+  inquiryId,
+  expectedCount = 0,
+  session,
+  mode,
+}) =>
+  consumeReservedUploadGrants({
+    reservationToken,
+    reservationKind: "inquiry-write",
+    attachmentField: "inquiryId",
+    attachmentId: inquiryId,
+    expectedCount,
+    session,
+    mode,
+    failureMessage: "Custom inquiry reference image grants could not be finalized",
   });
 
 const productReferencesPublicId = async (publicId, mode) =>

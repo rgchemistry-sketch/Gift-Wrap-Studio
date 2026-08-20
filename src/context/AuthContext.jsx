@@ -1,15 +1,21 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { removeScopedDraft } from '../utils/scoped-draft';
 
 const AuthContext = createContext(null);
 const LEGACY_USER_KEY = 'gnw-user';
 const AUTH_SYNC_KEY = 'gnw-auth-sync';
 const AUTH_SYNC_CHANNEL = 'gift-n-wrap-auth';
+const CHECKOUT_DRAFT_KEY = 'gnw-checkout-draft';
 
 const userFrom = (result) => result?.user || result?.data?.user || null;
 const dataFrom = (result) => result?.data || result;
 const providerEnabled = (provider) => Boolean(
   typeof provider === 'object' && provider !== null ? provider.enabled : provider,
+);
+const cancelledAuthentication = () => Object.assign(
+  new Error('This sign-in attempt was closed.'),
+  { code: 'AUTH_FLOW_CANCELLED' },
 );
 
 export function AuthProvider({ children }) {
@@ -26,6 +32,7 @@ export function AuthProvider({ children }) {
   const [authStatus, setAuthStatus] = useState({
     loading: true,
     error: false,
+    demo: false,
     providers: { google: false, email: false },
   });
   const [emailChallenge, setEmailChallenge] = useState(null);
@@ -36,9 +43,18 @@ export function AuthProvider({ children }) {
   const pendingAuthActionRef = useRef(null);
   const authChannelRef = useRef(null);
   const tabIdRef = useRef('');
+  const sessionUserRef = useRef(null);
+  const localAuthCompletedForRef = useRef('');
 
   const updateUser = useCallback((nextUser) => {
-    setUser(nextUser || null);
+    const normalizedUser = nextUser || null;
+    const previousOwnerId = String(sessionUserRef.current?.id || '');
+    const nextOwnerId = String(normalizedUser?.id || '');
+    if (previousOwnerId && previousOwnerId !== nextOwnerId) {
+      removeScopedDraft(CHECKOUT_DRAFT_KEY, previousOwnerId);
+    }
+    sessionUserRef.current = normalizedUser;
+    setUser(normalizedUser);
     setSessionInvalid(false);
     // Older builds cached account PII in localStorage. Sessions now live only in
     // the secure HttpOnly cookie, so remove that legacy copy whenever auth runs.
@@ -94,7 +110,21 @@ export function AuthProvider({ children }) {
   // handlers (notably requestSubmit on product/checkout forms) see the newly
   // authenticated user instead of reopening the auth modal from a stale render.
   useEffect(() => {
-    if (!user || sessionInvalid || !pendingAuthActionRef.current) return;
+    if (!user || sessionInvalid) return;
+    const userId = String(user.id || '');
+    const completedInThisTab = localAuthCompletedForRef.current === userId;
+    localAuthCompletedForRef.current = '';
+    if (!pendingAuthActionRef.current) return;
+    if (!completedInThisTab) {
+      // A session appearing through BroadcastChannel/storage/focus must never
+      // auto-submit an order or another side effect queued in this tab.
+      pendingAuthActionRef.current = null;
+      setAuthModalOpen(false);
+      setAuthMessage('');
+      setAuthMessageTone('');
+      setEmailChallenge(null);
+      return;
+    }
     setAuthModalOpen(false);
     setAuthMessage('');
     setAuthMessageTone('');
@@ -264,20 +294,26 @@ export function AuthProvider({ children }) {
         onAccountMismatch,
       }
       : null;
-    if (force) setSessionInvalid(true);
+    if (force) {
+      if (user?.id) removeScopedDraft(CHECKOUT_DRAFT_KEY, user.id);
+      setSessionInvalid(true);
+    }
     openAuth(message, intent, 'info');
     return false;
   }, [openAuth, sessionInvalid, user]);
 
   const closeAuth = useCallback(() => {
-    if (authenticating) return;
+    authGenerationRef.current += 1;
+    authInFlightRef.current = 0;
+    localAuthCompletedForRef.current = '';
+    setAuthenticating(false);
     setAuthModalOpen(false);
     setAuthMessage('');
     setAuthMessageTone('');
     setEmailChallenge(null);
     setAuthMethod('');
     pendingAuthActionRef.current = null;
-  }, [authenticating]);
+  }, []);
 
   const runAuthentication = useCallback(async (method, operation, fallbackMessage) => {
     if (authInFlightRef.current) {
@@ -294,9 +330,11 @@ export function AuthProvider({ children }) {
     setAuthMethod(method);
     try {
       const result = await operation();
+      if (generation !== authGenerationRef.current) throw cancelledAuthentication();
       const nextUser = userFrom(result);
       if (!nextUser) throw new Error('No account was returned. Please try again.');
       if (generation === authGenerationRef.current) {
+        localAuthCompletedForRef.current = String(nextUser.id || '');
         updateUser(nextUser);
         setEmailChallenge(null);
         setAuthModalOpen(false);
@@ -349,6 +387,7 @@ export function AuthProvider({ children }) {
     setAuthMethod('email');
     try {
       const rawChallenge = dataFrom(await api.startEmailAuthentication({ email, name, intent }));
+      if (authInFlightRef.current !== operationToken) throw cancelledAuthentication();
       if (!rawChallenge?.challengeId) throw new Error('The email verification code could not be sent.');
       const challenge = {
         ...rawChallenge,
@@ -402,6 +441,7 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(async () => {
     const generation = ++authGenerationRef.current;
     authInFlightRef.current = 0;
+    localAuthCompletedForRef.current = '';
     setAuthenticating(false);
     setAuthMethod('');
     setSigningOut(true);

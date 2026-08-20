@@ -13,6 +13,7 @@ import { formatCurrency } from '../data/catalog';
 import { useCatalog } from '../data/useCatalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
+import { resolveStudioContact } from '../utils/studio-contact';
 
 const tabs = [
   ['overview', 'Overview'],
@@ -34,7 +35,7 @@ const statusLabels = {
 
 export default function AccountPage() {
   const { user, loading: authLoading, openAuth, signOut, signingOut } = useAuth();
-  const { wishlist } = useShop();
+  const { wishlist, studioSettings } = useShop();
   const { products: catalog } = useCatalog();
   const [tab, setTab] = useState('overview');
   const [orders, setOrders] = useState([]);
@@ -43,6 +44,7 @@ export default function AccountPage() {
   const [signOutError, setSignOutError] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
+  const contact = resolveStudioContact(studioSettings);
 
   const loadOrders = useCallback(async () => {
     if (!user) return;
@@ -58,6 +60,11 @@ export default function AccountPage() {
   }, [user]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
+
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(location.search).get('tab');
+    if (tabs.some(([key]) => key === requestedTab)) setTab(requestedTab);
+  }, [location.search]);
 
   // The wishlist stores live catalogue ids, so it has to be matched against the live
   // catalogue — matching fixture ids left every saved piece invisible.
@@ -100,8 +107,8 @@ export default function AccountPage() {
         {signOutError && <Alert variant="warning" className="soft-alert">{signOutError} <button type="button" className="plain-link" disabled={signingOut} onClick={handleSignOut}>Retry sign out</button></Alert>}
         <div className="account-tabs" role="group" aria-label="Account sections">{tabs.map(([key,label])=><button type="button" key={key} aria-pressed={tab===key} className={tab===key?'is-active':''} onClick={()=>setTab(key)}>{label}</button>)}</div>
         {error && <Alert variant="warning" className="soft-alert">{error} <button type="button" className="plain-link" onClick={loadOrders}>Retry</button></Alert>}
-        {tab === 'overview' && <Overview user={user} latestOrder={latestOrder} orders={orders} savedCount={savedProducts.length} loading={ordersLoading} goTo={setTab} />}
-        {tab === 'orders' && <OrdersPanel orders={orders} loading={ordersLoading} />}
+        {tab === 'overview' && <Overview user={user} latestOrder={latestOrder} orders={orders} savedCount={savedProducts.length} loading={ordersLoading} goTo={setTab} contact={contact} />}
+        {tab === 'orders' && <OrdersPanel orders={orders} loading={ordersLoading} contact={contact} />}
         {tab === 'saved' && <SavedPanel products={savedProducts} />}
         {tab === 'profile' && <ProfilePanel user={user} />}
       </Container>
@@ -109,22 +116,22 @@ export default function AccountPage() {
   );
 }
 
-function Overview({ user, latestOrder, orders, savedCount, loading, goTo }) {
-  return <div className="account-panel"><div className="account-stat-grid"><button type="button" onClick={()=>goTo('orders')}><span><Icon name="package"/></span><p><strong>{orders.length}</strong><small>Orders & requests</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('saved')}><span><Icon name="heart"/></span><p><strong>{savedCount}</strong><small>Saved pieces</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('profile')}><span><Icon name="map"/></span><p><strong>{user.addresses?.length || 0}</strong><small>Saved addresses</small></p><Icon name="arrow"/></button></div><Row className="g-4"><Col lg={8}>{loading?<div className="account-loading"><Spinner/><span>Gathering your studio updates…</span></div>:latestOrder?<OrderCard order={latestOrder}/>:<div className="account-empty"><span><Icon name="spark"/></span><div><p className="eyebrow">No requests yet</p><h2>Your first keepsake can begin whenever you’re ready.</h2><p>Choose a studio design to personalize or bring us a completely new idea.</p><Button as={Link} to="/shop" className="button-burgundy">Explore pieces</Button><Link to="/custom-order" className="text-link">Start a custom design <Icon name="arrow"/></Link></div></div>}</Col><Col lg={4}><aside className="account-help"><Icon name="phone"/><p className="eyebrow">Direct studio help</p><h2>A real person, close to every order.</h2><p>For a date-sensitive gift or customization question, speak with our studio.</p><a href="tel:+919588281126">95882 81126 <Icon name="arrow"/></a></aside></Col></Row></div>;
+function Overview({ user, latestOrder, orders, savedCount, loading, goTo, contact }) {
+  return <div className="account-panel"><div className="account-stat-grid"><button type="button" onClick={()=>goTo('orders')}><span><Icon name="package"/></span><p><strong>{orders.length}</strong><small>Orders & requests</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('saved')}><span><Icon name="heart"/></span><p><strong>{savedCount}</strong><small>Saved pieces</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('profile')}><span><Icon name="map"/></span><p><strong>{user.addresses?.length || 0}</strong><small>Saved addresses</small></p><Icon name="arrow"/></button></div><Row className="g-4"><Col lg={contact.phoneHref ? 8 : 12}>{loading?<div className="account-loading"><Spinner/><span>Gathering your studio updates…</span></div>:latestOrder?<OrderCard order={latestOrder} contact={contact}/>:<div className="account-empty"><span><Icon name="spark"/></span><div><p className="eyebrow">No requests yet</p><h2>Your first keepsake can begin whenever you’re ready.</h2><p>Choose a studio design to personalize or bring us a completely new idea.</p><Button as={Link} to="/shop" className="button-burgundy">Explore pieces</Button><Link to="/custom-order" className="text-link">Start a custom design <Icon name="arrow"/></Link></div></div>}</Col>{contact.phoneHref && <Col lg={4}><aside className="account-help"><Icon name="phone"/><p className="eyebrow">Direct studio help</p><h2>A real person, close to every order.</h2><p>For a date-sensitive gift or customization question, speak with our studio.</p><a href={contact.phoneHref}>{contact.phoneLabel} <Icon name="arrow"/></a></aside></Col>}</Row></div>;
 }
 
-function OrdersPanel({ orders, loading }) {
+function OrdersPanel({ orders, loading, contact }) {
   if(loading)return <div className="account-loading"><Spinner/><span>Loading your requests…</span></div>;
   if(!orders.length)return <div className="account-empty account-empty--wide"><span><Icon name="package"/></span><div><p className="eyebrow">Orders & requests</p><h2>Nothing here yet.</h2><p>When you send a custom or catalogue order request, its design and delivery progress will appear here.</p><Button as={Link} to="/shop" className="button-burgundy">Find a piece</Button></div></div>;
-  return <div className="orders-list">{orders.map(order=><OrderCard key={order.id||order._id||order.orderNumber} order={order}/>)}</div>;
+  return <div className="orders-list">{orders.map(order=><OrderCard key={order.id||order._id||order.orderNumber} order={order} contact={contact}/>)}</div>;
 }
 
-function OrderCard({ order }) {
+function OrderCard({ order, contact }) {
   const status = order.status || 'placed';
   const normalizedStatus = status;
   const currentIndex = statusOrder.indexOf(normalizedStatus);
   const items = order.items || [];
-  return <article className="order-card"><div className="order-card__head"><div><p className="eyebrow">{order.orderNumber||`Request ${String(order._id||order.id||'').slice(-6).toUpperCase()}`}</p><h2>{items[0]?.product?.title||items[0]?.name||'Custom studio order'}{items.length>1&&` + ${items.length-1} more`}</h2></div><span className={`order-status status-${status}`}>{statusLabels[status]||status.replaceAll('_',' ')}</span></div>{status==='cancelled'?<Alert variant="secondary" className="soft-alert">This request was closed. Contact the studio if you’d like to revisit the design.</Alert>:<div className="order-timeline" aria-label={`Order status: ${statusLabels[status]||status}`} >{statusOrder.map((key,index)=><div className={`${index<=currentIndex?'is-complete':''} ${index===currentIndex?'is-current':''}`} key={key}><i>{index<currentIndex?<Icon name="check" size={12}/>:index+1}</i><span>{statusLabels[key]}</span></div>)}</div>}<div className="order-card__foot"><p><small>Request total</small><strong>{order.total?formatCurrency(order.total):'Pending studio review'}</strong></p><p><small>Last updated</small><strong>{order.updatedAt?new Date(order.updatedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}):'Recently'}</strong></p><a href="tel:+919588281126" className="text-link">Ask the studio <Icon name="arrow"/></a></div></article>;
+  return <article className="order-card"><div className="order-card__head"><div><p className="eyebrow">{order.orderNumber||`Request ${String(order._id||order.id||'').slice(-6).toUpperCase()}`}</p><h2>{items[0]?.product?.title||items[0]?.name||'Custom studio order'}{items.length>1&&` + ${items.length-1} more`}</h2></div><span className={`order-status status-${status}`}>{statusLabels[status]||status.replaceAll('_',' ')}</span></div>{status==='cancelled'?<Alert variant="secondary" className="soft-alert">This request was closed. Contact the studio if you’d like to revisit the design.</Alert>:<div className="order-timeline" aria-label={`Order status: ${statusLabels[status]||status}`} >{statusOrder.map((key,index)=><div className={`${index<=currentIndex?'is-complete':''} ${index===currentIndex?'is-current':''}`} key={key}><i>{index<currentIndex?<Icon name="check" size={12}/>:index+1}</i><span>{statusLabels[key]}</span></div>)}</div>}<div className="order-card__foot"><p><small>Request total</small><strong>{order.total != null?formatCurrency(order.total):'Pending studio review'}</strong></p><p><small>Last updated</small><strong>{order.updatedAt?new Date(order.updatedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}):'Recently'}</strong></p>{contact.phoneHref && <a href={contact.phoneHref} className="text-link">Ask the studio <Icon name="arrow"/></a>}</div></article>;
 }
 
 function SavedPanel({ products }) {

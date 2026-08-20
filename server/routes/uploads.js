@@ -3,16 +3,13 @@ import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { env } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
-import { configurationError } from "../lib/errors.js";
-import { authenticate, requireAdmin } from "../middleware/auth.js";
+import { AppError, configurationError } from "../lib/errors.js";
+import { authenticate, hasAdminAccess, requireAdmin } from "../middleware/auth.js";
+import { DurableRateLimitStore } from "../middleware/durable-rate-limit.js";
 import { rateLimitHandler } from "../middleware/rate-limit.js";
 import { validate } from "../middleware/validate.js";
 import { reserveUploadGrant } from "../services/store.js";
-import {
-  cleanupUploadAssetForUser,
-  scheduleExpiredUploadGrantSweep,
-  waitForUploadCleanupBudget,
-} from "../services/upload-cleanup.js";
+import { cleanupUploadAssetForUser } from "../services/upload-cleanup.js";
 import { uploadAssetDeleteSchema, uploadSignatureSchema } from "../validation/schemas.js";
 
 export {
@@ -23,6 +20,22 @@ export {
 export const uploadsRouter = Router();
 
 let cloudinaryPromise;
+let uploadPresetVerificationPromise;
+const defaultUploadPresetLoader = (cloudinary) =>
+  cloudinary.api.upload_preset(env.cloudinaryUploadPreset);
+let uploadPresetLoader = defaultUploadPresetLoader;
+
+export const setUploadPresetLoaderForTests = (loader) => {
+  if (!env.isTest) throw new Error("Upload preset test doubles are test-only");
+  uploadPresetLoader = loader;
+  uploadPresetVerificationPromise = undefined;
+};
+
+export const resetUploadPresetVerificationForTests = () => {
+  if (!env.isTest) throw new Error("Upload preset verification resets are test-only");
+  uploadPresetLoader = defaultUploadPresetLoader;
+  uploadPresetVerificationPromise = undefined;
+};
 
 const getCloudinary = () => {
   if (!cloudinaryPromise) {
@@ -48,6 +61,45 @@ const requireCloudinaryConfig = ({ uploadPreset = true } = {}) => {
   if (missing.length) throw configurationError(missing);
 };
 
+const verifyUploadPreset = async (cloudinary) => {
+  if (!env.verifyCloudinaryUploadPreset) return;
+  if (!uploadPresetVerificationPromise) {
+    uploadPresetVerificationPromise = (async () => {
+      cloudinary.config({
+        cloud_name: env.cloudinaryCloudName,
+        api_key: env.cloudinaryApiKey,
+        api_secret: env.cloudinaryApiSecret,
+        secure: true,
+      });
+      let preset;
+      try {
+        preset = await uploadPresetLoader(cloudinary);
+      } catch (error) {
+        throw new AppError(
+          503,
+          "UPLOAD_PRESET_UNVERIFIED",
+          "The image upload policy could not be verified",
+          { providerStatus: error?.http_code || error?.status || 0 },
+        );
+      }
+      const maxFileSize = Number(
+        preset?.settings?.max_file_size ?? preset?.max_file_size,
+      );
+      if (!Number.isFinite(maxFileSize) || maxFileSize > env.uploadMaxBytes) {
+        throw configurationError([
+          `CLOUDINARY_UPLOAD_PRESET max_file_size <= ${env.uploadMaxBytes}`,
+        ]);
+      }
+    })().catch((error) => {
+      // Cache only a successful verification. A transient Admin API outage or a
+      // corrected preset must be recoverable without recycling the server instance.
+      uploadPresetVerificationPromise = undefined;
+      throw error;
+    });
+  }
+  return uploadPresetVerificationPromise;
+};
+
 const uploadSignatureLimiter = rateLimit({
   windowMs: 60 * 60 * 1_000,
   limit: env.uploadSignaturesPerHour,
@@ -55,6 +107,8 @@ const uploadSignatureLimiter = rateLimit({
   legacyHeaders: false,
   skip: () => env.isTest,
   keyGenerator: (request) => request.user.id,
+  store: new DurableRateLimitStore("upload-signatures"),
+  passOnStoreError: !env.isProduction,
   handler: rateLimitHandler("Too many upload requests. Please try again later"),
 });
 
@@ -72,7 +126,7 @@ uploadsRouter.post(
   asyncHandler(async (request, response) => {
     requireCloudinaryConfig();
     const cloudinary = await getCloudinary();
-    await waitForUploadCleanupBudget(scheduleExpiredUploadGrantSweep());
+    await verifyUploadPreset(cloudinary);
 
     const timestamp = Math.floor(Date.now() / 1_000);
     const folder = `gift-n-wrap/${request.validated.body.purpose}/${request.user.id}`;
@@ -105,7 +159,7 @@ uploadsRouter.post(
         apiKey: env.cloudinaryApiKey,
         uploadUrl: `https://api.cloudinary.com/v1_1/${env.cloudinaryCloudName}/image/upload`,
         constraints: {
-          maxBytes: 8 * 1_024 * 1_024,
+          maxBytes: env.uploadMaxBytes,
           allowedFormats: ["jpg", "jpeg", "png", "webp"],
         },
       },
@@ -122,8 +176,7 @@ uploadsRouter.delete(
     const finalized = await cleanupUploadAssetForUser({
       userId: request.user.id,
       publicId,
-      allowConsumedProductCleanup:
-        request.user.role === "admin" && request.user.email === env.adminEmail,
+      allowConsumedProductCleanup: hasAdminAccess(request.user),
     });
     response.json({
       data: {

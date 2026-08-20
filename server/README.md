@@ -14,7 +14,9 @@ Required for production authentication:
   32 random characters
 - Google identity verification: `GOOGLE_CLIENT_ID`
 - `ADMIN_EMAIL` (the only email that receives the `admin` role)
+- `APP_URL` (used for account/admin links in transactional email)
 - `CLIENT_ORIGINS` (comma-separated origins when the frontend and API are on different hosts)
+- `CRON_SECRET` (at least 16 random characters; Vercel attaches it to the upload-cleanup cron)
 
 Required for signed browser uploads:
 
@@ -23,7 +25,7 @@ Required for signed browser uploads:
 - `CLOUDINARY_API_SECRET`
 - `CLOUDINARY_UPLOAD_PRESET` (a **signed** preset configured with an 8 MB `max_file_size`, JPG/PNG/WebP `allowed_formats`, and metadata stripping; the API supplies the signed public ID)
 
-The default browser flow uses Cloudinary's normal `upload` delivery type, so anyone who obtains an asset URL can view it. Accept product-reference images only, not identity documents or other sensitive media. If confidential uploads are required, switch the preset to authenticated delivery and add a signed-delivery endpoint. Expired, unused grants are cleaned lazily in bounded batches when new signatures are requested. The grant remains in MongoDB until Cloudinary confirms `ok` or `not found`; provider failures release the claim with exponential backoff for a later retry. A Cloudinary lifecycle rule can still be used as defense in depth.
+The default browser flow uses Cloudinary's normal `upload` delivery type, so anyone who obtains an asset URL can view it. Accept product-reference images only, not identity documents or other sensitive media. If confidential uploads are required, switch the preset to authenticated delivery and add a signed-delivery endpoint. In production, the signature endpoint verifies through Cloudinary's Admin API that the configured preset has a server-side `max_file_size` no greater than `UPLOAD_MAX_BYTES`. Expired, unused grants are processed by the authenticated Vercel cron in bounded batches. The grant remains in MongoDB until Cloudinary confirms `ok` or `not found`; provider failures release the claim with exponential backoff for a later retry. A Cloudinary lifecycle rule can still be used as defense in depth.
 
 Optional tuning:
 
@@ -33,10 +35,14 @@ Optional tuning:
   `EMAIL_OTP_MAX_ATTEMPTS=5`, `AUTH_EMAIL_REPLY_TO`
 - `FLAT_SHIPPING_FEE=99`, `FREE_SHIPPING_THRESHOLD=2000`, `BULK_ORDER_THRESHOLD=10`
 - `WELCOME_COUPON_CODE=FIRST10`, `WELCOME_DISCOUNT_PERCENT=10`, `WELCOME_DISCOUNT_MAX=500`
+- `UPLOAD_MAX_BYTES=8388608`, `UPLOAD_CLEANUP_BATCH_SIZE=20`
+- `DATABASE_SYNC_INDEXES=false` in production; run `npm run db:indexes` during deployment
 - `ALLOW_DEMO_AUTH=true` enables `POST /api/auth/demo` only outside production. Never enable this on a public production deployment.
 - `ALLOW_MEMORY_WRITES=true` permits non-durable writes in demo mode. It defaults to false in production; leave it false for real deployments.
 
-If Atlas is absent or cannot be reached during startup, the service falls back to an in-memory catalogue and store. This is convenient for local review, but writes in fallback mode are process-local and non-durable. Production therefore rejects fallback writes by default, while `/api/health` returns a degraded `503` until durable storage is available. Set `ALLOW_MEMORY_WRITES=true` only for a deliberate non-production demo.
+If Atlas is absent or cannot be reached during startup, local development falls back to an in-memory catalogue and store. Production fails closed for both reads and writes, so real customers never receive the demo catalogue during an outage; `/api/health` returns a degraded `503` until durable storage is available. Set `ALLOW_MEMORY_WRITES=true` only for a deliberate non-production demo.
+
+Order confirmations, studio alerts, order-status messages, inquiry/contact acknowledgements, and admin replies use the same Resend sender and branded HTML/plain-text layout as authentication. API writes still succeed if a notification provider call fails; the provider status, error summary, and successful Resend message ID are logged for operations. An idempotent order replay never sends a second confirmation.
 
 ## Response contract
 
@@ -57,23 +63,23 @@ Public:
 - `GET /api/auth/me` reads the secure cookie session. `POST /api/auth/logout` always clears the
   current cookie and, when the user record is reachable, increments the session version to revoke
   the account's other issued sessions.
-- Login and signup are distinct intents. Signup rejects an existing identity, login rejects a
-  missing identity, and matching email text alone never silently links two provider accounts.
+- Login and signup labels guide the initial flow, but a successfully verified mailbox completes
+  the sensible account action instead of burning the code on the wrong tab. Matching email text
+  alone never links an unverified provider account.
 
 Authenticated buyer:
 
 - `POST /api/orders`, `GET /api/orders/my`, `GET /api/orders/:id`. Send a stable `Idempotency-Key` header (8-100 letters, digits, `.`, `_`, `:`, or `-`) for each checkout attempt; a safe retry returns the original order with `Idempotency-Replayed: true`.
 - `POST /api/custom-inquiries`, `GET /api/custom-inquiries/mine`. The server binds each brief to the verified session account and never trusts a submitted email as account identity.
 - `POST /api/contact`. The saved message is linked to the verified session account.
-- `POST /api/uploads/signature` with `{ purpose: "custom-inquiries" | "orders" | "profiles" }`.
+- `POST /api/uploads/signature` with `{ purpose: "custom-inquiries" | "orders" }`.
   Every returned snake_case field (`folder`, `public_id`, `overwrite`, `upload_preset`,
   `allowed_formats`, and `transformation`) is signed and must be included in the Cloudinary form.
   Each grant belongs to its authenticated requester and one non-overwritable asset ID. The
   response includes `expiresAt` and `expiresInSeconds`; order/cart grants last seven days and
-  other grants last two hours. Order attachments are consumed atomically with their order, and
-  same-key concurrent checkout retries return the completed idempotent order. A signature request
-  also gives the expired-upload collector up to 250 ms to process a batch; it continues in the
-  background on a long-running server and runs at most once per minute per process.
+  other grants last two hours. Order attachments are consumed atomically with their order, custom
+  inquiry references are consumed with the saved brief, and same-key concurrent checkout retries
+  return the completed idempotent order.
 - `DELETE /api/uploads/asset` with `{ publicId }` destroys the caller's unconsumed upload. The
   exact configured admin may also retire an owned, consumed product image after a successful
   product update, but only once no product references it. Its ownership record is retained as a
@@ -86,16 +92,16 @@ Configured admin only:
 - Admin product uploads use `POST /api/uploads/signature` with `{ purpose: "products" }`. New
   product images must match the admin's owned grants, which are consumed with the product write.
   Consumed product and order grants retain ownership provenance. Upload-grant expiry uses a normal
-  lookup index, never Mongo TTL; on the first connection after upgrade, the server removes the
-  legacy `expiresAt` TTL index before creating declared indexes. Only the separate hourly upload
-  quota keeps its TTL index.
+  lookup index, never Mongo TTL. Run `npm run db:indexes` during deployment to remove legacy
+  indexes and synchronize declared indexes without adding migration latency to serverless cold
+  starts. Only the separate hourly upload quota and rate-limit counters keep TTL indexes.
 - `GET /api/admin/orders`, `PATCH /api/admin/orders/:id/status`
 - `GET /api/admin/custom-inquiries`, `PATCH /api/admin/custom-inquiries/:id`
 - `GET /api/admin/contacts`, `PATCH /api/admin/contacts/:id`
 
 All product prices, shipping, and first-order discounts are recalculated by the server. `FIRST10` is rejected for corporate gifts and line-item quantities at or above the bulk threshold. The only checkout payment method is `manual_confirmation`; the studio confirms payment separately and the initial payment status remains pending. The API never trusts client-submitted prices or roles.
 
-MongoDB Atlas (or another replica-set deployment) is required for the transaction that atomically reserves finite inventory, assigns the first-order slot, and creates an order. Declared indexes are created after each fresh connection before the database is marked ready.
+MongoDB Atlas (or another replica-set deployment) is required for the transaction that atomically reserves finite inventory, assigns the first-order slot, and creates an order. API, authentication, inquiry, contact, and upload throttles use MongoDB-backed counters in production so limits survive serverless instance recycling.
 
 ## Dependencies
 

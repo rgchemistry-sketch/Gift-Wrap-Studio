@@ -3,6 +3,11 @@ import { asyncHandler } from "../lib/async-handler.js";
 import { authenticate, requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import {
+  sendContactReplyEmail,
+  sendInquiryReplyEmail,
+  sendOrderStatusEmail,
+} from "../services/email-notifications.js";
+import {
   archiveProduct,
   createProduct,
   getDashboardStats,
@@ -187,8 +192,14 @@ adminRouter.patch(
   "/orders/:id/status",
   validate({ params: idParamsSchema, body: orderStatusSchema }),
   asyncHandler(async (request, response) => {
+    const { record: order, changed } = await updateOrderStatus(
+      request.validated.params.id,
+      request.validated.body,
+      { withMeta: true },
+    );
+    if (changed) await sendOrderStatusEmail(order);
     response.json({
-      data: await updateOrderStatus(request.validated.params.id, request.validated.body),
+      data: order,
     });
   }),
 );
@@ -214,8 +225,16 @@ adminRouter.patch(
   "/custom-inquiries/:id",
   validate({ params: idParamsSchema, body: inquiryStatusSchema }),
   asyncHandler(async (request, response) => {
+    const { record: inquiry, changed } = await updateCustomInquiry(
+      request.validated.params.id,
+      request.validated.body,
+      { withMeta: true },
+    );
+    if (changed && request.validated.body.adminNote) {
+      await sendInquiryReplyEmail(inquiry);
+    }
     response.json({
-      data: await updateCustomInquiry(request.validated.params.id, request.validated.body),
+      data: inquiry,
     });
   }),
 );
@@ -241,6 +260,14 @@ adminRouter.patch(
   "/contacts/:id",
   validate({ params: idParamsSchema, body: contactStatusSchema }),
   asyncHandler(async (request, response) => {
-    response.json({ data: await updateContact(request.validated.params.id, request.validated.body) });
+    const { record: message, changed } = await updateContact(
+      request.validated.params.id,
+      request.validated.body,
+      { withMeta: true },
+    );
+    if (changed && request.validated.body.adminNote) {
+      await sendContactReplyEmail(message);
+    }
+    response.json({ data: message });
   }),
 );

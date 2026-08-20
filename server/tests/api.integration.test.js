@@ -183,7 +183,7 @@ test("the storefront inquiry payload is normalized and accepted", async () => {
       personalization: "Add our initials and wedding date.",
       palette: "Ivory and gold",
       contactPreference: "WhatsApp",
-      referenceUrl: "https://example.com/reference.jpg",
+      referenceUrl: "/assets/reference.jpg",
     })
     .expect(201);
 
@@ -192,6 +192,8 @@ test("the storefront inquiry payload is normalized and accepted", async () => {
   const mine = await buyer.get("/api/custom-inquiries/mine").expect(200);
   assert.equal(mine.body.data[0].userId, user.id);
   assert.equal(mine.body.data[0].email, user.email);
+  assert.equal(mine.body.data[0].referenceUrl, "/assets/reference.jpg");
+  assert.deepEqual(mine.body.data[0].referenceImages, []);
 });
 
 test("demo buyer auth, server-priced first order, and one-time offer work together", async () => {
@@ -240,18 +242,19 @@ test("demo buyer auth, server-priced first order, and one-time offer work togeth
   assert.equal(replay.headers["idempotency-replayed"], "true");
   assert.equal(replay.body.data.id, created.body.data.id);
   assert.equal("idempotencyHash" in replay.body.data, false);
-  await buyer
+  const conflictingReplay = await buyer
     .post("/api/orders")
     .set("Idempotency-Key", idempotencyKey)
     .send({ ...orderPayload, note: "A different order attempt" })
     .expect(409);
+  assert.equal(conflictingReplay.body.error.code, "IDEMPOTENCY_KEY_REUSED");
 
   const mine = await buyer.get("/api/orders/my").expect(200);
   assert.equal(mine.body.meta.total, 1);
   assert.equal(mine.body.data[0].id, created.body.data.id);
 
   const repeated = await buyer.post("/api/orders").send(orderPayload).expect(409);
-  assert.equal(repeated.body.error.code, "CONFLICT");
+  assert.equal(repeated.body.error.code, "WELCOME_OFFER_INELIGIBLE");
 
   const consumedOffer = await buyer.get("/api/offers/welcome").expect(200);
   assert.equal(consumedOffer.body.data.eligible, false);
@@ -278,7 +281,7 @@ test("only the configured admin identity can access admin APIs", async () => {
 
   const admin = request.agent(app);
   const login = await admin.post("/api/auth/demo").send({ role: "admin" }).expect(200);
-  assert.equal(login.body.data.user.email, "owner@example.test");
+  assert.equal(login.body.data.user.email, "preview-admin@giftnwrap.local");
   assert.equal(login.body.data.user.role, "admin");
 
   const dashboard = await admin.get("/api/admin/dashboard").expect(200);
@@ -314,6 +317,25 @@ test("FIRST10 cannot be applied to corporate or split bulk quantities", async ()
     postalCode: "411001",
   };
 
+  const invalidCode = await buyer
+    .post("/api/orders")
+    .send({
+      items: [{ slug: "pressed-flower-name-plaque", quantity: 1 }],
+      shippingAddress: address,
+      couponCode: "OLDWELCOME",
+    })
+    .expect(400);
+  assert.equal(invalidCode.body.error.code, "WELCOME_OFFER_INVALID");
+
+  const missingProduct = await buyer
+    .post("/api/orders")
+    .send({
+      items: [{ productId: "retired-product", slug: "retired-product", quantity: 1 }],
+      shippingAddress: address,
+    })
+    .expect(404);
+  assert.equal(missingProduct.body.error.details[0].productId, "retired-product");
+
   const corporate = await buyer
     .post("/api/orders")
     .send({
@@ -322,7 +344,7 @@ test("FIRST10 cannot be applied to corporate or split bulk quantities", async ()
       couponCode: "FIRST10",
     })
     .expect(400);
-  assert.equal(corporate.body.error.code, "BAD_REQUEST");
+  assert.equal(corporate.body.error.code, "WELCOME_OFFER_EXCLUDED");
 
   const splitBulk = await buyer
     .post("/api/orders")
@@ -335,7 +357,7 @@ test("FIRST10 cannot be applied to corporate or split bulk quantities", async ()
       couponCode: "FIRST10",
     })
     .expect(400);
-  assert.equal(splitBulk.body.error.code, "BAD_REQUEST");
+  assert.equal(splitBulk.body.error.code, "WELCOME_OFFER_EXCLUDED");
 });
 
 test("finite inventory is reserved once across idempotent order retries", async () => {
@@ -375,6 +397,17 @@ test("finite inventory is reserved once across idempotent order retries", async 
     .expect(200);
   const restored = await request(app).get("/api/products/malachite-serving-tray").expect(200);
   assert.equal(restored.body.data.inventory, 8);
+  const restoredOffer = await buyer.get("/api/offers/welcome").expect(200);
+  assert.equal(restoredOffer.body.data.eligible, true);
+  const replacement = await buyer
+    .post("/api/orders")
+    .send({
+      ...payload,
+      items: [{ slug: "pressed-flower-name-plaque", quantity: 1 }],
+      couponCode: "FIRST10",
+    })
+    .expect(201);
+  assert.ok(replacement.body.data.discount > 0);
   await admin
     .patch(`/api/admin/orders/${placed.body.data.id}/status`)
     .send({ status: "confirmed" })

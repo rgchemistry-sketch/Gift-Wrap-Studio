@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import compression from "compression";
 import express from "express";
+import helmet from "helmet";
+import { env } from "./config/env.js";
 
 const defaultClientDirectory = fileURLToPath(new URL("../dist/", import.meta.url));
 
@@ -30,12 +32,37 @@ export const createWebApp = ({ apiApp, clientDirectory = defaultClientDirectory 
     return next();
   });
 
-  webApp.use((_request, response, next) => {
-    response.setHeader("X-Content-Type-Options", "nosniff");
-    response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-    response.setHeader("Permissions-Policy", "camera=(), geolocation=(), microphone=()");
-    next();
-  });
+  webApp.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: "same-site" },
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          baseUri: ["'self'"],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+          formAction: ["'self'"],
+          scriptSrc: ["'self'", "https://accounts.google.com"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+          imgSrc: [
+            "'self'",
+            "data:",
+            "blob:",
+            "https://res.cloudinary.com",
+            "https://*.googleusercontent.com",
+          ],
+          connectSrc: [
+            "'self'",
+            "https://accounts.google.com",
+            "https://api.cloudinary.com",
+          ],
+          frameSrc: ["https://accounts.google.com"],
+          upgradeInsecureRequests: env.isProduction ? [] : null,
+        },
+      },
+    }),
+  );
   webApp.use(compression());
   webApp.use(
     "/assets",

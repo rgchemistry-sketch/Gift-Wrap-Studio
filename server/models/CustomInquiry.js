@@ -16,6 +16,9 @@ const customInquirySchema = new mongoose.Schema(
     budget: { type: String, default: "", trim: true, maxlength: 80 },
     neededBy: { type: Date, default: null },
     contactPreference: { type: String, default: "", trim: true, maxlength: 50 },
+    // Inspiration links are untrusted outbound references. Keep them separate from
+    // grant-backed images so no renderer can mistake an arbitrary link for owned media.
+    referenceUrl: { type: String, default: "", trim: true, maxlength: 1_000 },
     referenceImages: { type: [String], default: [] },
     status: {
       type: String,

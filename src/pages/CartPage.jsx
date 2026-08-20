@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
@@ -11,21 +12,66 @@ import { formatCurrency } from '../data/catalog';
 import { useCatalog } from '../data/useCatalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
+import { resolveStudioContact } from '../utils/studio-contact';
 
 export default function CartPage() {
   const navigate = useNavigate();
   const { user, requireAuth } = useAuth();
-  const { cart, subtotal, updateQuantity, removeFromCart, claimedOfferCode, welcomeOffer, studioSettings, notify } = useShop();
-  const { products: catalog } = useCatalog();
+  const {
+    cart,
+    subtotal,
+    updateQuantity,
+    removeFromCart,
+    claimedOfferCode,
+    welcomeOffer,
+    studioSettings,
+    notify,
+    removeWelcomeOffer,
+    revalidateCart,
+  } = useShop();
+  const {
+    products: catalog,
+    loading: catalogLoading,
+    error: catalogError,
+    refresh: refreshCatalog,
+  } = useCatalog();
+  const [liveCatalogReady, setLiveCatalogReady] = useState(false);
   const suggestions = [...catalog]
     .sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.inStock) - Number(a.inStock))
     .slice(0, 3);
-  const claimedOffer = claimedOfferCode || (window.sessionStorage.getItem('gnw-first-offer-claimed') === 'true' ? welcomeOffer?.code || 'FIRST10' : '');
-  const contactPhone = studioSettings?.contact?.phone || '+919588281126';
-  const contactDigits = String(contactPhone).replace(/\D/g, '');
-  const contactLocal = contactDigits.length > 10 ? contactDigits.slice(-10) : contactDigits;
-  const contactLabel = contactLocal.length === 10 ? `${contactLocal.slice(0, 5)} ${contactLocal.slice(5)}` : contactPhone;
+  const claimedOffer = claimedOfferCode;
+  const unavailableItems = cart.filter((line) => line.unavailable);
+  const contact = resolveStudioContact(studioSettings);
+
+  const refreshLiveCart = async () => {
+    setLiveCatalogReady(false);
+    const liveProducts = await refreshCatalog({ force: true });
+    if (!Array.isArray(liveProducts)) return false;
+    revalidateCart(liveProducts);
+    setLiveCatalogReady(true);
+    return true;
+  };
+
+  useEffect(() => {
+    let active = true;
+    setLiveCatalogReady(false);
+    refreshCatalog({ force: true }).then((liveProducts) => {
+      if (!active || !Array.isArray(liveProducts)) return;
+      revalidateCart(liveProducts);
+      setLiveCatalogReady(true);
+    });
+    return () => { active = false; };
+  }, [refreshCatalog, revalidateCart]);
+
+  useEffect(() => {
+    if (liveCatalogReady && !catalogLoading && !catalogError) revalidateCart(catalog);
+  }, [cart, catalog, catalogError, catalogLoading, liveCatalogReady, revalidateCart]);
+
   const continueToCheckout = () => {
+    if (unavailableItems.length) {
+      notify('Remove unavailable pieces from your bag before continuing.', 'warning');
+      return;
+    }
     if (user) {
       navigate('/checkout');
       return;
@@ -58,6 +104,7 @@ export default function CartPage() {
     <section className="cart-page page-section">
       <Container fluid="xl">
         <div className="cart-title"><div><p className="eyebrow">Your gift bag</p><h1>Chosen with care.</h1></div><Link to="/shop" className="text-link">Continue browsing <Icon name="arrow" /></Link></div>
+        {catalogError && <Alert variant="warning" className="soft-alert">We couldn’t refresh live prices right now. You can keep editing your bag and <button type="button" className="plain-link" onClick={refreshLiveCart}>try again</button>.</Alert>}
         <Row className="g-5">
           <Col lg={8}>
             <div className="cart-lines">
@@ -65,7 +112,9 @@ export default function CartPage() {
                 <article className="cart-line" key={line.lineId}>
                   <Link to={`/product/${line.product.slug}`} className="cart-line__image"><SmartImage src={line.product.image} alt={line.product.title} fallbackLabel={line.product.category} /></Link>
                   <div className="cart-line__content">
-                    <div className="cart-line__head"><div><p className="eyebrow">{line.product.category}</p><h2><Link to={`/product/${line.product.slug}`}>{line.product.title}</Link></h2></div><strong>{formatCurrency(line.product.price * line.quantity)}</strong></div>
+                    <div className="cart-line__head"><div><p className="eyebrow">{line.product.category}</p><h2><Link to={`/product/${line.product.slug}`}>{line.product.title}</Link></h2></div><strong>{line.unavailable ? 'Unavailable' : formatCurrency(line.product.price * line.quantity)}</strong></div>
+                    {line.priceUpdatedFrom != null && Number(line.priceUpdatedFrom) !== Number(line.product.price) && <Alert variant="info" className="soft-alert"><Icon name="spark" size={14} /> Price updated from {formatCurrency(line.priceUpdatedFrom)} to {formatCurrency(line.product.price)}.</Alert>}
+                    {line.unavailable && <Alert variant="warning" className="soft-alert"><strong>{line.unavailableReason || 'This piece is unavailable.'}</strong> <button type="button" className="plain-link" onClick={() => removeFromCart(line.lineId)}>Remove it from my bag</button></Alert>}
                     {line.customization && Object.keys(line.customization).length > 0 && (
                       <div className="cart-customization">
                         <span>Personalized</span>
@@ -91,11 +140,11 @@ export default function CartPage() {
             <aside className="order-summary">
               <p className="eyebrow">Order estimate</p>
               <h2>Your summary</h2>
-              {claimedOffer && <Alert variant="success" className="offer-claimed"><Icon name="spark" /> {claimedOffer} saved. Eligibility will be checked before final confirmation.</Alert>}
+              {claimedOffer && <Alert variant={welcomeOffer?.eligible === false ? 'warning' : 'success'} className="offer-claimed"><Icon name="spark" /> {welcomeOffer?.eligible === false ? `${claimedOffer} is not available for this account.` : `${claimedOffer} saved. Eligibility will be checked before final confirmation.`} <button type="button" className="plain-link" onClick={removeWelcomeOffer}>Remove offer</button></Alert>}
               <dl><div><dt>Pieces ({cart.reduce((count, line) => count + line.quantity, 0)})</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed by studio</dd></div><div className="summary-total"><dt>Current item total</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
-              <Button type="button" onClick={continueToCheckout} className="button-burgundy w-100">Continue to order request <Icon name="arrow" /></Button>
+              <Button type="button" onClick={continueToCheckout} disabled={!liveCatalogReady || catalogLoading || Boolean(catalogError) || unavailableItems.length > 0} className="button-burgundy w-100">{!liveCatalogReady || catalogLoading || catalogError ? 'Checking your bag…' : <>Continue to order request <Icon name="arrow" /></>}</Button>
               <p className="summary-note"><Icon name="lock" size={14} /> No payment is taken on this page. The studio confirms customization, delivery and final amount first.</p>
-              <div className="summary-contact"><p>Need help with your design?</p><a href={`tel:${contactPhone.replace(/[^+\d]/g, '')}`}>Call the studio · {contactLabel}</a></div>
+              {contact.phoneHref && <div className="summary-contact"><p>Need help with your design?</p><a href={contact.phoneHref}>Call the studio · {contact.phoneLabel}</a></div>}
             </aside>
           </Col>
         </Row>

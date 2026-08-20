@@ -7,6 +7,7 @@ import Icon from '../Icon';
 import SmartImage from '../SmartImage';
 import { api } from '../../api/client';
 import { occasions } from '../../data/catalog';
+import { invalidateCatalog } from '../../data/useCatalog';
 import {
   imageFromReusableUrl,
   imageKey,
@@ -74,10 +75,40 @@ const FIELD_CONTROL_IDS = {
   tags: 'product-tags',
   customizationOptions: 'product-customization',
 };
+const PRODUCT_DRAFT_KEY = 'gnw-admin-product-draft';
+const PRODUCT_DRAFT_VERSION = 1;
 
 const splitList = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
 const makeSlug = (value) => String(value || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const numericOrNull = (value) => value === '' || value == null ? null : Number(value);
+
+const productDraftStorageKey = (product) => `${PRODUCT_DRAFT_KEY}:${String(product?.id || product?._id || 'new')}`;
+
+function readProductDraft(key, product) {
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem(key) || 'null');
+    if (
+      stored?.version !== PRODUCT_DRAFT_VERSION
+      || !stored.draft
+      || typeof stored.draft !== 'object'
+      || !Array.isArray(stored.draft.images)
+      || !Array.isArray(stored.draft.variants)
+    ) return null;
+    return {
+      ...stored,
+      draft: { ...toDraft(product), ...stored.draft },
+      pendingUploadIds: Array.isArray(stored.pendingUploadIds) ? stored.pendingUploadIds.filter(Boolean) : [],
+      pendingRetirementIds: Array.isArray(stored.pendingRetirementIds) ? stored.pendingRetirementIds.filter(Boolean) : [],
+    };
+  } catch {
+    try { window.sessionStorage.removeItem(key); } catch { /* optional cache */ }
+    return null;
+  }
+}
+
+const removeProductDraft = (key) => {
+  try { window.sessionStorage.removeItem(key); } catch { /* optional cache */ }
+};
 
 function toDraft(product) {
   if (!product) return { ...emptyProduct };
@@ -107,16 +138,22 @@ function toDraft(product) {
 }
 
 export default function ProductEditor({ product, onClose, onSaved }) {
+  const draftStorageKey = productDraftStorageKey(product);
+  const restoredStateRef = useRef(undefined);
+  if (restoredStateRef.current === undefined) {
+    restoredStateRef.current = readProductDraft(draftStorageKey, product);
+  }
+  const restoredState = restoredStateRef.current;
   const backdropRef = useRef(null);
   const dialogRef = useRef(null);
   const fileInputRef = useRef(null);
   const previousFocusRef = useRef(null);
   const focusedErrorRef = useRef('');
-  const pendingUploadIdsRef = useRef(new Set());
-  const pendingRetirementIdsRef = useRef(new Set());
+  const pendingUploadIdsRef = useRef(new Set(restoredState?.pendingUploadIds || []));
+  const pendingRetirementIdsRef = useRef(new Set(restoredState?.pendingRetirementIds || []));
   const mountedRef = useRef(true);
   const [initialDraft, setInitialDraft] = useState(() => toDraft(product));
-  const [draft, setDraft] = useState(() => toDraft(product));
+  const [draft, setDraft] = useState(() => restoredState?.draft || toDraft(product));
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -125,8 +162,9 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   const [checkingImageUrl, setCheckingImageUrl] = useState(false);
   const [failedImageKeys, setFailedImageKeys] = useState(() => new Set());
   const [uploadStatus, setUploadStatus] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
-  const [slugTouched, setSlugTouched] = useState(Boolean(product));
+  const [imageUrl, setImageUrl] = useState(() => restoredState?.imageUrl || '');
+  const [slugTouched, setSlugTouched] = useState(() => restoredState?.slugTouched ?? Boolean(product));
+  const [restoredDraft, setRestoredDraft] = useState(Boolean(restoredState));
   const editing = Boolean(product);
   const busy = saving || uploading || cleaningUploads || checkingImageUrl;
   const normalizedImageUrl = useMemo(() => normalizeProductImageUrl(imageUrl), [imageUrl]);
@@ -191,28 +229,47 @@ export default function ProductEditor({ product, onClose, onSaved }) {
 
   useEffect(() => {
     const nextDraft = toDraft(product);
+    const stored = readProductDraft(draftStorageKey, product);
     setInitialDraft(nextDraft);
-    setDraft(nextDraft);
-    setImageUrl('');
+    setDraft(stored?.draft || nextDraft);
+    setImageUrl(stored?.imageUrl || '');
     setError('');
     setFieldErrors({});
     setFailedImageKeys(new Set());
     setCheckingImageUrl(false);
     setUploadStatus('');
-    setSlugTouched(Boolean(product));
-  }, [product]);
+    setSlugTouched(stored?.slugTouched ?? Boolean(product));
+    setRestoredDraft(Boolean(stored));
+    pendingUploadIdsRef.current = new Set(stored?.pendingUploadIds || []);
+    pendingRetirementIdsRef.current = new Set(stored?.pendingRetirementIds || []);
+  }, [draftStorageKey, product]);
 
   useEffect(() => {
     mountedRef.current = true;
-    const pendingUploadIds = pendingUploadIdsRef.current;
-    const pendingRetirementIds = pendingRetirementIdsRef.current;
     return () => {
       mountedRef.current = false;
-      for (const publicId of new Set([...pendingUploadIds, ...pendingRetirementIds])) {
-        void api.deleteUploadedAsset(publicId).catch(() => {});
-      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isDirty) {
+      removeProductDraft(draftStorageKey);
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(draftStorageKey, JSON.stringify({
+        version: PRODUCT_DRAFT_VERSION,
+        draft,
+        imageUrl,
+        slugTouched,
+        pendingUploadIds: [...pendingUploadIdsRef.current],
+        pendingRetirementIds: [...pendingRetirementIdsRef.current],
+        savedAt: new Date().toISOString(),
+      }));
+    } catch {
+      // The editor remains usable when private browsing blocks session storage.
+    }
+  }, [draft, draftStorageKey, imageUrl, isDirty, slugTouched]);
 
   const requestClose = useCallback(async () => {
     if (busy) {
@@ -241,8 +298,9 @@ export default function ProductEditor({ product, onClose, onSaved }) {
         return;
       }
     }
+    removeProductDraft(draftStorageKey);
     onClose();
-  }, [busy, checkingImageUrl, cleaningUploads, cleanupUploadedAssets, isDirty, onClose, uploading]);
+  }, [busy, checkingImageUrl, cleaningUploads, cleanupUploadedAssets, draftStorageKey, isDirty, onClose, uploading]);
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -665,6 +723,8 @@ export default function ProductEditor({ product, onClose, onSaved }) {
         }
       }
       if (!mountedRef.current) return;
+      removeProductDraft(draftStorageKey);
+      invalidateCatalog();
       onSaved(savedProduct, cleanupWarning);
     } catch (requestError) {
       if (mountedRef.current) {
@@ -720,6 +780,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
 
         <Form className="product-editor__form" onSubmit={submit} aria-busy={busy}>
           {error && <Alert variant="danger" className="soft-alert">{error}</Alert>}
+          {restoredDraft && isDirty && <Alert variant="info" className="soft-alert"><strong>Unsaved product restored.</strong> Your draft and newly uploaded images were kept when you left the editor.</Alert>}
 
           <fieldset className="product-editor__fieldset" disabled={busy}>
 

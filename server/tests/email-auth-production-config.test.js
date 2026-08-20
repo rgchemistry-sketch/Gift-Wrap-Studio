@@ -16,6 +16,8 @@ test("production never enables or returns a local preview email code", async () 
   const status = await request(app).get("/api/auth/status").expect(200);
   assert.equal(status.body.data.providers.email, false);
   assert.equal(status.body.data.details.email.demo, false);
+  assert.equal(status.body.data.demo, false);
+  await request(app).post("/api/auth/demo").send({ role: "admin" }).expect(404);
 
   const started = await request(app)
     .post("/api/auth/email/start")

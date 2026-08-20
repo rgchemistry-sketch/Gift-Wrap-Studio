@@ -50,8 +50,6 @@ function SocialMark() {
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const errorMessage = (error, fallback) => String(error?.message || fallback);
-
 function signedInMessage(user, intent) {
   const firstName = String(user?.name || '').trim().split(/\s+/)[0];
   const greeting = firstName ? `, ${firstName}` : '';
@@ -86,9 +84,11 @@ export default function AuthModal() {
   const authIntentRef = useRef(authIntent);
   const notifyRef = useRef(notify);
   const codeInputRef = useRef(null);
+  const nameInputRef = useRef(null);
+  const emailInputRef = useRef(null);
   const providerBusyRef = useRef(false);
   const providerFlowRef = useRef(0);
-  const googleErrorToastRef = useRef(-1);
+  const cooldownEmailRef = useRef('');
   const [sdkReady, setSdkReady] = useState({ google: false });
   const [sdkErrors, setSdkErrors] = useState({});
   const [sdkRetry, setSdkRetry] = useState(0);
@@ -103,9 +103,24 @@ export default function AuthModal() {
   const providers = authStatus.providers || {};
   const emailValid = emailPattern.test(email.trim());
   const nameValid = authIntent !== 'signup' || name.trim().length >= 2;
-  const googleConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID) && providers.google;
+  const googleClientConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
+  const googleConfigured = googleClientConfigured && (providers.google || authStatus.error);
+  const emailConfigured = providers.email || authStatus.error;
   const uiBusy = authenticating || Boolean(providerStarting);
   const providerErrors = Object.entries(sdkErrors).filter(([, message]) => Boolean(message));
+  const googleUnavailableCopy = sdkErrors.google
+    ? 'Unavailable'
+    : authStatus.error
+      ? 'Couldn’t check'
+      : googleClientConfigured
+        ? 'Not configured'
+        : 'Unavailable in this build';
+
+  const focusActiveInput = useCallback(() => {
+    if (emailChallenge) codeInputRef.current?.focus();
+    else if (authIntent === 'signup') nameInputRef.current?.focus();
+    else emailInputRef.current?.focus();
+  }, [authIntent, emailChallenge]);
 
   useEffect(() => {
     authenticateGoogleRef.current = authenticateGoogle;
@@ -129,11 +144,10 @@ export default function AuthModal() {
   }, []);
 
   const requestClose = useCallback(() => {
-    if (uiBusy) return;
     providerFlowRef.current += 1;
     providerBusyRef.current = false;
     closeAuth();
-  }, [closeAuth, uiBusy]);
+  }, [closeAuth]);
 
   const chooseIntent = (intent) => {
     if (uiBusy) return;
@@ -147,8 +161,8 @@ export default function AuthModal() {
     setSdkErrors({});
     setSdkReady({ google: false });
     setSdkRetry((current) => current + 1);
-    refreshAuthStatus().catch((error) => {
-      notify(errorMessage(error, 'Secure sign-in options could not be refreshed.'), 'error');
+    refreshAuthStatus().catch(() => {
+      // The persistent availability alert carries the retry failure.
     });
   };
 
@@ -162,6 +176,7 @@ export default function AuthModal() {
       setCode('');
       setLocalError('');
       setResendSeconds(0);
+      cooldownEmailRef.current = '';
       setEntrySubmitted(false);
     }
   }, [authModalOpen]);
@@ -171,7 +186,12 @@ export default function AuthModal() {
     setLocalError('');
     setEntrySubmitted(false);
     if (authIntent === 'login') setName('');
-  }, [authIntent]);
+    if (authModalOpen && !emailChallenge) {
+      const timer = window.setTimeout(focusActiveInput, 0);
+      return () => window.clearTimeout(timer);
+    }
+    return undefined;
+  }, [authIntent, authModalOpen, emailChallenge, focusActiveInput]);
 
   useEffect(() => {
     if (authStatus.loading || !authModalOpen || !googleConfigured || !googleButtonRef.current) return undefined;
@@ -183,10 +203,6 @@ export default function AuthModal() {
       if (!active) return;
       setSdkReady((current) => ({ ...current, google: false }));
       setSdkErrors((current) => ({ ...current, google: 'Google sign-in could not load.' }));
-      if (googleErrorToastRef.current !== sdkRetry) {
-        googleErrorToastRef.current = sdkRetry;
-        notifyRef.current('Google sign-in is unavailable right now. You can still use a secure email code.', 'warning');
-      }
     };
     const renderGoogle = async () => {
       try {
@@ -202,7 +218,9 @@ export default function AuthModal() {
               if (!flowId) return;
               authenticateGoogleRef.current(credential)
                 .then((user) => notifyRef.current(signedInMessage(user, authIntentRef.current)))
-                .catch((error) => notifyRef.current(errorMessage(error, 'Google sign-in could not be completed. Please try again.'), 'error'))
+                .catch(() => {
+                  // AuthContext presents request failures in the modal once.
+                })
                 .finally(() => finishProviderFlow(flowId));
             },
           });
@@ -256,17 +274,31 @@ export default function AuthModal() {
   useEffect(() => {
     if (!emailChallenge) return undefined;
     setResendSeconds(Number(emailChallenge.retryAfterSeconds || 60));
+    cooldownEmailRef.current = String(emailChallenge.email || email).trim().toLowerCase();
     setCode('');
-    window.setTimeout(() => codeInputRef.current?.focus(), 120);
-    const timer = window.setInterval(() => {
+    const focusTimer = window.setTimeout(() => codeInputRef.current?.focus(), 120);
+    return () => window.clearTimeout(focusTimer);
+  }, [email, emailChallenge]);
+
+  useEffect(() => {
+    if (resendSeconds <= 0) return undefined;
+    const timer = window.setTimeout(() => {
       setResendSeconds((current) => Math.max(0, current - 1));
     }, 1000);
-    return () => window.clearInterval(timer);
-  }, [emailChallenge]);
+    return () => window.clearTimeout(timer);
+  }, [resendSeconds]);
+
+  const applyRetryAfter = (error, targetEmail) => {
+    const retryAfter = Number(error?.details?.retryAfterSeconds || 0);
+    if (!Number.isFinite(retryAfter) || retryAfter <= 0) return;
+    cooldownEmailRef.current = String(targetEmail || '').trim().toLowerCase();
+    setResendSeconds(Math.ceil(retryAfter));
+  };
 
   const submitEmail = async (event) => {
     event.preventDefault();
     setEntrySubmitted(true);
+    if (resendSeconds > 0) return;
     if (!emailValid) {
       setLocalError('Enter a valid email address.');
       return;
@@ -285,7 +317,7 @@ export default function AuthModal() {
       });
       notify(`Verification code sent to ${normalizedEmail}.`, 'info');
     } catch (error) {
-      notify(errorMessage(error, 'The verification email could not be sent. Please try again.'), 'error');
+      applyRetryAfter(error, email);
     }
   };
 
@@ -299,8 +331,8 @@ export default function AuthModal() {
     try {
       const user = await verifyEmailAuthentication(code);
       notify(signedInMessage(user, authIntent));
-    } catch (error) {
-      notify(errorMessage(error, 'That verification code could not be confirmed.'), 'error');
+    } catch {
+      // AuthContext presents the verification failure in the inline alert.
     }
   };
 
@@ -315,7 +347,7 @@ export default function AuthModal() {
       });
       notify('A new verification code is on its way.', 'info');
     } catch (error) {
-      notify(errorMessage(error, 'A new verification code could not be sent yet.'), 'error');
+      applyRetryAfter(error, emailChallenge.email || email);
     }
   };
 
@@ -323,8 +355,8 @@ export default function AuthModal() {
     try {
       const user = await authenticateDemo(role);
       notify(signedInMessage(user, 'login'));
-    } catch (error) {
-      notify(errorMessage(error, 'Preview sign-in could not be completed.'), 'error');
+    } catch {
+      // AuthContext presents the preview failure in the inline alert.
     }
   };
 
@@ -334,6 +366,7 @@ export default function AuthModal() {
     <Modal
       show={authModalOpen}
       onHide={requestClose}
+      onEntered={focusActiveInput}
       centered
       scrollable
       restoreFocus
@@ -342,7 +375,7 @@ export default function AuthModal() {
       dialogClassName="auth-dialog auth-dialog--passwordless"
     >
       <Modal.Body>
-        <button type="button" className="icon-button modal-close" onClick={requestClose} disabled={uiBusy} aria-label="Close account dialog">
+        <button type="button" className="icon-button modal-close" onClick={requestClose} aria-label="Close account dialog">
           <Icon name="close" />
         </button>
 
@@ -375,15 +408,15 @@ export default function AuthModal() {
                 role={localError || authMessageTone !== 'info' ? 'alert' : 'status'}
               >
                 <Icon name={localError || authMessageTone !== 'info' ? 'shield' : 'lock'} size={16} />
-                <span>{authMessage || localError}</span>
+                <span>{localError || authMessage}</span>
               </Alert>
             )}
             {authStatus.loading && <Alert variant="info" className="soft-alert auth-service-note" role="status"><Spinner size="sm" /> Checking secure sign-in options…</Alert>}
-            {(authStatus.error || providerErrors.length > 0) && !authMessage && !localError && (
+            {(authStatus.error || providerErrors.length > 0) && !localError && (
               <Alert variant="warning" className="soft-alert auth-service-note" role="alert">
-                <Icon name="shield" /> {providerErrors.length
-                  ? `${providerErrors.map(([provider]) => provider[0].toUpperCase() + provider.slice(1)).join(', ')} sign-in could not load.`
-                  : 'Sign-in availability could not be checked.'}{' '}
+                <Icon name="shield" /> {authStatus.error
+                  ? 'We couldn’t check sign-in availability. You can still request an email code.'
+                  : `${providerErrors.map(([provider]) => provider[0].toUpperCase() + provider.slice(1)).join(', ')} sign-in could not load.`}{' '}
                 <button type="button" className="plain-link" disabled={uiBusy} onClick={retryProviderSdks}>Retry</button>
               </Alert>
             )}
@@ -399,7 +432,7 @@ export default function AuthModal() {
                   ? <><SocialMark /><span>Checking Google…</span></>
                   : googleConfigured && !sdkErrors.google
                     ? <div className="google-signin-target" ref={googleButtonRef} />
-                    : <><SocialMark /><span>Continue with Google</span><small>{sdkErrors.google ? 'Unavailable' : 'Not configured'}</small></>}
+                    : <><SocialMark /><span>Continue with Google</span><small>{googleUnavailableCopy}</small></>}
                 {googleConfigured && !sdkReady.google && !sdkErrors.google && !authStatus.loading && <span className="social-auth-loading" role="status">Preparing Google…</span>}
                 {(providerStarting === 'google' || authMethod === 'google') && <span className="social-auth-busy" role="status" aria-label="Signing in with Google"><Spinner size="sm" /></span>}
               </div>
@@ -412,6 +445,7 @@ export default function AuthModal() {
                 <Form.Group className="email-auth-form__group" controlId="account-name">
                   <Form.Label>Your name</Form.Label>
                   <Form.Control
+                    ref={nameInputRef}
                     type="text"
                     value={name}
                     onChange={(event) => {
@@ -424,7 +458,6 @@ export default function AuthModal() {
                     aria-invalid={(entrySubmitted || name.length > 0) && !nameValid}
                     aria-describedby={(entrySubmitted || name.length > 0) && !nameValid ? 'account-name-error' : undefined}
                     disabled={uiBusy}
-                    autoFocus
                   />
                   <Form.Control.Feedback id="account-name-error" type="invalid">Enter at least 2 characters.</Form.Control.Feedback>
                 </Form.Group>
@@ -434,10 +467,19 @@ export default function AuthModal() {
                 <div className="email-auth-form__field">
                   <Icon name="mail" size={18} />
                   <Form.Control
+                    ref={emailInputRef}
                     type="email"
                     value={email}
                     onChange={(event) => {
-                      setEmail(event.target.value.slice(0, 254));
+                      const nextEmail = event.target.value.slice(0, 254);
+                      setEmail(nextEmail);
+                      if (
+                        cooldownEmailRef.current
+                        && nextEmail.trim().toLowerCase() !== cooldownEmailRef.current
+                      ) {
+                        cooldownEmailRef.current = '';
+                        setResendSeconds(0);
+                      }
                       if (localError) setLocalError('');
                     }}
                     autoComplete="email"
@@ -446,18 +488,21 @@ export default function AuthModal() {
                     aria-invalid={(entrySubmitted || email.length > 2) && !emailValid}
                     aria-describedby={(entrySubmitted || email.length > 2) && !emailValid ? 'account-email-error' : undefined}
                     disabled={uiBusy}
-                    autoFocus={authIntent === 'login'}
                   />
                 </div>
                 {(entrySubmitted || email.length > 2) && !emailValid && <div id="account-email-error" className="invalid-feedback d-block">Enter a valid email address.</div>}
               </Form.Group>
-              <Button type="submit" className="button-burgundy auth-email-submit" disabled={uiBusy || authStatus.loading || !providers.email}>
-                {authenticating && authMethod === 'email' ? <><Spinner size="sm" /> Sending code…</> : <>Email me a verification code <Icon name="arrow" size={17} /></>}
+              <Button type="submit" className="button-burgundy auth-email-submit" disabled={uiBusy || authStatus.loading || !emailConfigured || resendSeconds > 0}>
+                {authenticating && authMethod === 'email'
+                  ? <><Spinner size="sm" /> Sending code…</>
+                  : resendSeconds > 0
+                    ? `Try again in ${resendSeconds}s`
+                    : <>Email me a verification code <Icon name="arrow" size={17} /></>}
               </Button>
-              {!authStatus.loading && !providers.email && <p className="auth-provider-note">Email verification is awaiting activation by the studio.</p>}
+              {!authStatus.loading && !authStatus.error && !providers.email && <p className="auth-provider-note">Email verification is awaiting activation by the studio.</p>}
             </Form>
 
-            {import.meta.env.VITE_ENABLE_DEMO_AUTH === 'true' && (
+            {authStatus.demo === true && (
               <div className="demo-auth"><span>Local preview only</span><div><button type="button" disabled={uiBusy} onClick={() => previewAccount('buyer')}>Preview buyer</button><button type="button" disabled={uiBusy} onClick={() => previewAccount('admin')}>Preview admin</button></div></div>
             )}
             <p className="privacy-note"><Icon name="lock" size={13} /> Password-free sign-in. We only use verified identity details to secure your account.</p>
@@ -471,7 +516,7 @@ export default function AuthModal() {
             {(authMessage || localError) && (
               <Alert variant="danger" className="soft-alert auth-otp__alert" role="alert">
                 <Icon name="shield" size={16} />
-                <span>{authMessage || localError}</span>
+                <span>{localError || authMessage}</span>
               </Alert>
             )}
             {emailChallenge.previewCode && (

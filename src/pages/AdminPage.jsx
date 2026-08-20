@@ -4,6 +4,8 @@ import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
 import Container from 'react-bootstrap/Container';
 import Dropdown from 'react-bootstrap/Dropdown';
+import Form from 'react-bootstrap/Form';
+import Modal from 'react-bootstrap/Modal';
 import Table from 'react-bootstrap/Table';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
@@ -37,6 +39,19 @@ const adminSectionLabels = Object.fromEntries(adminNav.map(([key, , label]) => [
 const ADMIN_PAGE_LIMIT = 50;
 const PRODUCT_PAGE_LIMIT = 12;
 const attentionOrderStatuses = new Set(['placed', 'confirmed', 'in_progress', 'ready', 'shipped']);
+
+const safeReferenceHref = (value) => {
+  const candidate = String(value || '').trim();
+  if (candidate.startsWith('/') && !candidate.startsWith('//') && !candidate.startsWith('/\\')) {
+    return candidate;
+  }
+  try {
+    const reference = new URL(candidate);
+    return ['http:', 'https:'].includes(reference.protocol) ? reference.href : '';
+  } catch {
+    return '';
+  }
+};
 
 const orderStatusOptions = [
   { value: 'placed', label: 'Placed' },
@@ -166,6 +181,9 @@ export default function AdminPage() {
   const [sectionState, setSectionState] = useState(initialSectionState);
   const [preview, setPreview] = useState(false);
   const [workingItems, setWorkingItems] = useState({});
+  const [pendingStatusChange, setPendingStatusChange] = useState(null);
+  const [statusNote, setStatusNote] = useState('');
+  const [statusSubmitting, setStatusSubmitting] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const { user, signOut, setUser, signingOut } = useAuth();
   const { notify, applyStudioSettings } = useShop();
@@ -420,48 +438,75 @@ export default function AdminPage() {
     });
   };
 
-  const updateStatus = async (orderId, status) => {
+  const updateStatus = async (orderId, status, note = '') => {
     const workingKey = `order:${orderId}`;
     markWorking(workingKey, true);
     try {
-      await api.updateOrderStatus(orderId, status);
+      await api.updateOrderStatus(orderId, { status, note: note.trim() });
       applyStatusLocally('recentOrders', orderId, status);
       notify('Order status updated.');
       void loadDashboard({ quiet: true });
+      return true;
     } catch (requestError) {
       notify(requestError.message, 'error');
+      return false;
     } finally {
       markWorking(workingKey, false);
     }
   };
 
-  const updateInquiryStatus = async (inquiryId, status) => {
+  const updateInquiryStatus = async (inquiryId, status, adminNote = '') => {
     const workingKey = `inquiry:${inquiryId}`;
     markWorking(workingKey, true);
     try {
-      await api.updateInquiryStatus(inquiryId, status);
+      await api.updateInquiryStatus(inquiryId, { status, adminNote: adminNote.trim() });
       applyStatusLocally('inquiries', inquiryId, status);
       notify('Custom request stage updated.');
       void loadDashboard({ quiet: true });
+      return true;
     } catch (requestError) {
       notify(requestError.message, 'error');
+      return false;
     } finally {
       markWorking(workingKey, false);
     }
   };
 
-  const updateMessageStatus = async (contactId, status) => {
+  const updateMessageStatus = async (contactId, status, adminNote = '') => {
     const workingKey = `message:${contactId}`;
     markWorking(workingKey, true);
     try {
-      await api.updateContactStatus(contactId, status);
+      await api.updateContactStatus(contactId, { status, adminNote: adminNote.trim() });
       applyStatusLocally('messages', contactId, status);
       notify('Message status updated.');
       void loadDashboard({ quiet: true });
+      return true;
     } catch (requestError) {
       notify(requestError.message, 'error');
+      return false;
     } finally {
       markWorking(workingKey, false);
+    }
+  };
+
+  const requestStatusChange = (change) => {
+    setStatusNote('');
+    setPendingStatusChange(change);
+  };
+
+  const submitStatusChange = async () => {
+    if (!pendingStatusChange || statusSubmitting) return;
+    setStatusSubmitting(true);
+    const { kind, id, status } = pendingStatusChange;
+    const succeeded = kind === 'order'
+      ? await updateStatus(id, status, statusNote)
+      : kind === 'inquiry'
+        ? await updateInquiryStatus(id, status, statusNote)
+        : await updateMessageStatus(id, status, statusNote);
+    setStatusSubmitting(false);
+    if (succeeded) {
+      setPendingStatusChange(null);
+      setStatusNote('');
     }
   };
 
@@ -618,10 +663,10 @@ export default function AdminPage() {
             ) : (
               <>
                 {activeCollectionState?.error && <Alert variant="warning" className="soft-alert admin-section-alert"><strong>{activeSectionLabel} may be out of date.</strong> {activeCollectionState.error}{' '}<button type="button" className="plain-link" onClick={retryActiveSection}>Retry</button></Alert>}
-                {section === 'orders' && <Orders summary={summary} preview={false} updateStatus={updateStatus} loading={activeCollectionState.loading} workingItems={workingItems} onPageChange={(page) => loadSection('orders', { page })} />}
+                {section === 'orders' && <Orders summary={summary} preview={false} updateStatus={(id, status, context) => requestStatusChange({ kind: 'order', id, status, ...context })} loading={activeCollectionState.loading} workingItems={workingItems} onPageChange={(page) => loadSection('orders', { page })} />}
                 {section === 'products' && <Suspense fallback={<AdminSectionState loading title="Opening the catalogue" message="Preparing product tools…" />}><ProductManager products={summary.productsList} preview={false} notify={notify} onRefresh={refreshProducts} query={productQuery.q} status={productQuery.status} pagination={summary.pagination.products} loading={activeCollectionState.loading} onQueryChange={requestProducts} /></Suspense>}
-                {section === 'requests' && <Requests summary={summary} preview={false} updateInquiryStatus={updateInquiryStatus} loading={activeCollectionState.loading} workingItems={workingItems} onPageChange={(page) => loadSection('requests', { page })} />}
-                {section === 'messages' && <Messages summary={summary} preview={false} updateMessageStatus={updateMessageStatus} loading={activeCollectionState.loading} workingItems={workingItems} onPageChange={(page) => loadSection('messages', { page })} />}
+                {section === 'requests' && <Requests summary={summary} preview={false} updateInquiryStatus={(id, status, context) => requestStatusChange({ kind: 'inquiry', id, status, ...context })} loading={activeCollectionState.loading} workingItems={workingItems} onPageChange={(page) => loadSection('requests', { page })} />}
+                {section === 'messages' && <Messages summary={summary} preview={false} updateMessageStatus={(id, status, context) => requestStatusChange({ kind: 'message', id, status, ...context })} loading={activeCollectionState.loading} workingItems={workingItems} onPageChange={(page) => loadSection('messages', { page })} />}
                 {section === 'users' && <Suspense fallback={<AdminSectionState loading title="Opening customer registry" message="Preparing customer tools…" />}><UsersManager dashboardMetrics={summary.metrics} /></Suspense>}
                 {section === 'settings' && <Suspense fallback={<AdminSectionState loading title="Opening studio settings" message="Preparing storefront controls…" />}><SettingsEditor preview={false} notify={notify} onPublished={applyStudioSettings} draftScope={user?.id} /></Suspense>}
               </>
@@ -629,6 +674,16 @@ export default function AdminPage() {
           </div>
         </div>
       </Container>
+      <StatusChangeModal
+        change={pendingStatusChange}
+        note={statusNote}
+        submitting={statusSubmitting}
+        onNoteChange={setStatusNote}
+        onCancel={() => {
+          if (!statusSubmitting) setPendingStatusChange(null);
+        }}
+        onConfirm={submitStatusChange}
+      />
     </section>
   );
 }
@@ -709,13 +764,17 @@ function Orders({ summary, preview, updateStatus, loading, workingItems, onPageC
             <tbody>{filteredOrders.map((order) => {
               const id = order.id || order._id;
               const isWorking = Boolean(workingItems[`order:${id}`]);
+              const pieceCount = (order.items || []).reduce(
+                (total, item) => total + Math.max(0, Number(item?.quantity) || 0),
+                0,
+              );
               return (
                 <tr key={id || order.orderNumber}>
-                  <td data-label="Order"><strong>{order.orderNumber || String(id).slice(-6).toUpperCase()}</strong><small>{order.items?.length || 0} pieces</small></td>
+                  <td data-label="Order"><strong>{order.orderNumber || String(id).slice(-6).toUpperCase()}</strong><small>{pieceCount} {pieceCount === 1 ? 'piece' : 'pieces'}</small></td>
                   <td data-label="Buyer"><span className="admin-table-primary">{order.buyerName || order.customer?.name || order.user?.name || 'Buyer'}</span><small>{order.buyerEmail || order.customer?.email || ''}</small></td>
                   <td data-label="Placed">{order.createdAt ? new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</td>
                   <td data-label="Amount"><strong>{order.total != null ? formatCurrency(order.total) : 'Pending'}</strong></td>
-                  <td data-label="Status"><AdminStatusDropdown value={order.status || 'placed'} options={orderStatusOptions} disabled={preview || loading} busy={isWorking} onChange={(value) => updateStatus(id, value)} label={`Status for ${order.orderNumber || 'order'}`} /></td>
+                  <td data-label="Status"><AdminStatusDropdown value={order.status || 'placed'} options={orderStatusOptions} disabled={preview || loading} busy={isWorking} onChange={(value) => updateStatus(id, value, { subject: order.orderNumber || 'this order', currentStatus: order.status || 'placed' })} label={`Status for ${order.orderNumber || 'order'}`} /></td>
                 </tr>
               );
             })}</tbody>
@@ -735,7 +794,42 @@ function Requests({ summary, preview, updateInquiryStatus, loading, workingItems
     <>
       <div className="admin-section-head"><div><p className="eyebrow">Bespoke work</p><h2>Custom requests</h2><p className="admin-section-copy">A clear board from first idea to finished conversation. Stage counts reflect the current page.</p></div></div>
       <div className={`request-board ${loading ? 'is-updating' : ''}`} aria-busy={loading}>
-        {columns.map(([status, label]) => { const items = requests.filter((item) => (item.status || 'new') === status); return <section key={status} className={`request-column request-column--${status}`}><h3><span className="request-column__dot" aria-hidden="true" />{label}<b>{items.length}</b></h3><div className="request-column__items">{items.map((item) => { const id = item.id || item._id; const brief = item.description || item.idea || 'Open brief'; return <article key={id}><p className="eyebrow">{item.productType || item.category || 'Custom piece'}</p><h4>{item.name}</h4><p>{brief}</p><small>{item.budget || 'Budget to discuss'}</small><details className="admin-content-disclosure"><summary>View full brief</summary><p>{brief}</p>{item.email && <a href={`mailto:${item.email}`}>{item.email}</a>}{item.phone && <a href={`tel:${item.phone}`}>{item.phone}</a>}</details><AdminStatusDropdown value={item.status || 'new'} options={inquiryStatusOptions} disabled={preview || loading} busy={Boolean(workingItems[`inquiry:${id}`])} onChange={(value) => updateInquiryStatus(id, value)} label={`Stage for ${item.name}'s request`} align="start" /></article>; })}{!items.length && <span className="request-empty">No requests in this stage</span>}</div></section>; })}
+        {columns.map(([status, label]) => {
+          const items = requests.filter((item) => (item.status || 'new') === status);
+          return (
+            <section key={status} className={`request-column request-column--${status}`}>
+              <h3><span className="request-column__dot" aria-hidden="true" />{label}<b>{items.length}</b></h3>
+              <div className="request-column__items">
+                {items.map((item) => {
+                  const id = item.id || item._id;
+                  const brief = item.description || item.idea || 'Open brief';
+                  const referenceHref = safeReferenceHref(item.referenceUrl);
+                  return (
+                    <article key={id}>
+                      <p className="eyebrow">{item.productType || item.category || 'Custom piece'}</p>
+                      <h4>{item.name}</h4>
+                      <p>{brief}</p>
+                      <small>{item.budget || 'Budget to discuss'}</small>
+                      <details className="admin-content-disclosure">
+                        <summary>View full brief</summary>
+                        <p>{brief}</p>
+                        {item.email && <a href={`mailto:${item.email}`}>{item.email}</a>}
+                        {item.phone && <a href={`tel:${item.phone}`}>{item.phone}</a>}
+                        {referenceHref && (
+                          <a href={referenceHref} target="_blank" rel="noopener noreferrer">
+                            Open external inspiration link
+                          </a>
+                        )}
+                      </details>
+                      <AdminStatusDropdown value={item.status || 'new'} options={inquiryStatusOptions} disabled={preview || loading} busy={Boolean(workingItems[`inquiry:${id}`])} onChange={(value) => updateInquiryStatus(id, value, { subject: `${item.name || 'Customer'}'s request`, currentStatus: item.status || 'new' })} label={`Stage for ${item.name}'s request`} align="start" />
+                    </article>
+                  );
+                })}
+                {!items.length && <span className="request-empty">No requests in this stage</span>}
+              </div>
+            </section>
+          );
+        })}
       </div>
       <AdminPager pagination={pagination} visibleCount={requests.length} noun="requests" loading={loading} onPageChange={onPageChange} />
     </>
@@ -761,7 +855,7 @@ function Messages({ summary, preview, updateMessageStatus, loading, workingItems
                   <td data-label="Subject">{message.subject || 'Studio question'}</td>
                   <td data-label="Message" className="admin-message-cell"><span>{message.message}</span><details className="admin-content-disclosure"><summary>Read full message</summary><p>{message.message}</p></details></td>
                   <td data-label="Received">{message.createdAt ? new Date(message.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</td>
-                  <td data-label="Status"><AdminStatusDropdown value={message.status || 'new'} options={messageStatusOptions} disabled={preview || loading} busy={Boolean(workingItems[`message:${id}`])} onChange={(value) => updateMessageStatus(id, value)} label={`Status for message from ${message.name}`} /></td>
+                  <td data-label="Status"><AdminStatusDropdown value={message.status || 'new'} options={messageStatusOptions} disabled={preview || loading} busy={Boolean(workingItems[`message:${id}`])} onChange={(value) => updateMessageStatus(id, value, { subject: `message from ${message.name || 'customer'}`, currentStatus: message.status || 'new' })} label={`Status for message from ${message.name}`} /></td>
                 </tr>
               );
             })}</tbody>
@@ -770,6 +864,45 @@ function Messages({ summary, preview, updateMessageStatus, loading, workingItems
         <AdminPager pagination={pagination} visibleCount={messages.length} noun="messages" loading={loading} onPageChange={onPageChange} />
       </div>
     </>
+  );
+}
+
+function StatusChangeModal({ change, note, submitting, onNoteChange, onCancel, onConfirm }) {
+  const options = change?.kind === 'order'
+    ? orderStatusOptions
+    : change?.kind === 'inquiry'
+      ? inquiryStatusOptions
+      : messageStatusOptions;
+  const nextLabel = options.find((option) => option.value === change?.status)?.label || change?.status || 'new status';
+  const currentLabel = options.find((option) => option.value === change?.currentStatus)?.label || change?.currentStatus || 'current status';
+  const terminalOrder = change?.kind === 'order' && ['delivered', 'cancelled'].includes(change.status);
+  const noteLimit = change?.kind === 'order' ? 500 : 2000;
+  const customerFacing = (
+    change?.kind === 'order' && ['confirmed', 'shipped', 'cancelled'].includes(change.status)
+  ) || (
+    change?.kind === 'inquiry' && ['contacted', 'quoted'].includes(change.status)
+  ) || (
+    change?.kind === 'message' && change.status === 'replied'
+  );
+
+  return (
+    <Modal show={Boolean(change)} onHide={onCancel} centered className="admin-confirm-modal" aria-labelledby="admin-status-change-title">
+      <Modal.Header closeButton={!submitting}>
+        <div><p className="eyebrow">Status update</p><Modal.Title id="admin-status-change-title">{terminalOrder ? `Confirm ${nextLabel.toLowerCase()} status?` : `Move to ${nextLabel}?`}</Modal.Title></div>
+      </Modal.Header>
+      <Modal.Body>
+        <p><strong>{change?.subject || 'This record'}</strong> will move from {currentLabel} to {nextLabel}.{terminalOrder ? ' This is a final workflow step and may not be reversible.' : ''}</p>
+        <Form.Group controlId="admin-status-note" className="mt-3">
+          <Form.Label>{customerFacing ? 'Message to the customer' : 'Studio note'} <small>optional</small></Form.Label>
+          <Form.Control as="textarea" rows={4} maxLength={noteLimit} value={note} disabled={submitting} onChange={(event) => onNoteChange(event.target.value)} placeholder={customerFacing ? 'Add the update, reply, quote or next steps they should receive…' : 'Add context for this status change…'} />
+          <Form.Text>{customerFacing ? 'When provided, this note is included in the customer update.' : 'This note is saved with the status change.'} {note.length}/{noteLimit}</Form.Text>
+        </Form.Group>
+      </Modal.Body>
+      <Modal.Footer>
+        <Button type="button" variant="outline-dark" onClick={onCancel} disabled={submitting}>Keep {currentLabel.toLowerCase()}</Button>
+        <Button type="button" variant={change?.status === 'cancelled' ? 'danger' : 'dark'} onClick={onConfirm} disabled={submitting}>{submitting ? 'Updating…' : `Confirm ${nextLabel}`}</Button>
+      </Modal.Footer>
+    </Modal>
   );
 }
 

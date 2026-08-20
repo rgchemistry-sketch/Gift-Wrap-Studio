@@ -22,9 +22,13 @@ const normalizeError = (error) => {
     return new AppError(413, "PAYLOAD_TOO_LARGE", "The request body is too large");
   }
   if (error?.code === 11_000 || error?.code === 11000) {
-    return new AppError(409, "DUPLICATE_VALUE", "That value is already in use", {
-      fields: Object.keys(error.keyPattern || error.keyValue || {}),
-    });
+    const fields = Object.keys(error.keyPattern || error.keyValue || {});
+    return new AppError(
+      409,
+      "DUPLICATE_VALUE",
+      "That value is already in use",
+      fields.map((field) => ({ field, message: "That value is already in use" })),
+    );
   }
   if (error?.name === "ValidationError") {
     return new AppError(

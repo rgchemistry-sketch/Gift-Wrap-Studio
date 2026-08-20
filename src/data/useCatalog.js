@@ -6,6 +6,7 @@ import { api } from '../api/client';
 // refetch the whole catalogue per route.
 let cachedCatalog = null;
 let inFlightCatalog = null;
+let catalogGeneration = 0;
 const subscribers = new Set();
 
 const publish = () => {
@@ -14,28 +15,41 @@ const publish = () => {
 
 export function loadCatalog({ force = false } = {}) {
   if (force) {
-    cachedCatalog = null;
-    inFlightCatalog = null;
+    invalidateCatalog();
   }
   if (cachedCatalog) return Promise.resolve(cachedCatalog);
   if (!inFlightCatalog) {
+    const generation = catalogGeneration;
     inFlightCatalog = api
       .getAllProducts()
       .then((result) => {
-        cachedCatalog = { products: result.products, total: result.total };
-        return cachedCatalog;
+        const nextCatalog = {
+          products: result.products,
+          total: result.total,
+          truncated: Boolean(result.truncated),
+        };
+        if (generation === catalogGeneration) cachedCatalog = nextCatalog;
+        return nextCatalog;
       })
       .finally(() => {
-        inFlightCatalog = null;
+        if (generation === catalogGeneration) inFlightCatalog = null;
         publish();
       });
   }
   return inFlightCatalog;
 }
 
+export function invalidateCatalog() {
+  catalogGeneration += 1;
+  cachedCatalog = null;
+  inFlightCatalog = null;
+  publish();
+}
+
 export function useCatalog() {
   const [state, setState] = useState(() => ({
     products: cachedCatalog?.products || [],
+    truncated: Boolean(cachedCatalog?.truncated),
     loading: !cachedCatalog,
     error: '',
   }));
@@ -44,13 +58,15 @@ export function useCatalog() {
     setState((current) => ({ ...current, loading: true, error: '' }));
     try {
       const result = await loadCatalog({ force });
-      setState({ products: result.products, loading: false, error: '' });
+      setState({ products: result.products, truncated: Boolean(result.truncated), loading: false, error: '' });
       return result.products;
     } catch (requestError) {
       // Fixture products used to stand in here. Showing an honest empty state is safer:
       // placeholder pieces were addable to the bag and then rejected at checkout.
-      setState({ products: [], loading: false, error: requestError.message });
-      return [];
+      setState({ products: [], truncated: false, loading: false, error: requestError.message });
+      // Callers that gate a money-path action must be able to distinguish an
+      // honestly empty catalogue from a catalogue that could not be checked.
+      return null;
     }
   }, []);
 
@@ -58,7 +74,7 @@ export function useCatalog() {
     let active = true;
     const sync = () => {
       if (!active || !cachedCatalog) return;
-      setState({ products: cachedCatalog.products, loading: false, error: '' });
+      setState({ products: cachedCatalog.products, truncated: Boolean(cachedCatalog.truncated), loading: false, error: '' });
     };
     subscribers.add(sync);
 
@@ -68,7 +84,7 @@ export function useCatalog() {
       loadCatalog()
         .then(() => active && sync())
         .catch((requestError) => {
-          if (active) setState({ products: [], loading: false, error: requestError.message });
+          if (active) setState({ products: [], truncated: false, loading: false, error: requestError.message });
         });
     }
 

@@ -18,6 +18,10 @@ export default function ProductCard({ product, index = 0 }) {
             alt={product.title}
             fallbackLabel={product.category}
             loading="lazy"
+            decoding="async"
+            imageWidth={600}
+            responsiveWidths={[320, 480, 600, 800]}
+            sizes="(max-width: 575px) calc(100vw - 1.5rem), (max-width: 991px) 50vw, 33vw"
           />
         </Link>
         {product.badge && <span className="product-card__badge">{product.badge}</span>}
@@ -46,7 +50,6 @@ export default function ProductCard({ product, index = 0 }) {
           className="text-link product-card__action"
           as={product.customizable || !product.inStock ? Link : 'button'}
           to={product.customizable || !product.inStock ? `/product/${product.slug}` : undefined}
-          disabled={!product.inStock && !product.customizable}
           onClick={product.customizable || !product.inStock ? undefined : () => addToCart(product)}
         >
           {!product.inStock ? 'View details' : product.customizable ? 'Personalize this piece' : 'Add to bag'}

@@ -6,6 +6,7 @@ import Icon from '../Icon';
 import SmartImage from '../SmartImage';
 import { api } from '../../api/client';
 import { formatCurrency, normalizeProduct } from '../../data/catalog';
+import { invalidateCatalog } from '../../data/useCatalog';
 import { optimizeCloudinaryImage } from '../../utils/cloudinary-image';
 import AdminSectionState from './AdminSectionState';
 
@@ -109,6 +110,7 @@ export default function ProductManager({
     markWorking(id, true);
     try {
       await api.updateAdminProduct(id, { active: nextActive });
+      invalidateCatalog();
       notify(nextActive ? 'Product published to the storefront.' : 'Product moved to draft.');
       await onRefresh();
     } catch (requestError) { notify(requestError.message, 'error'); }
@@ -121,6 +123,7 @@ export default function ProductManager({
     markWorking(id, true);
     try {
       await api.updateAdminProduct(id, { active: true });
+      invalidateCatalog();
       notify('Product restored and published to the storefront.');
       await onRefresh();
     } catch (requestError) { notify(requestError.message, 'error'); }
@@ -133,6 +136,7 @@ export default function ProductManager({
     markWorking(id, true);
     try {
       await api.archiveAdminProduct(id);
+      invalidateCatalog();
       notify('Product archived and removed from the live catalogue.');
       setArchiveCandidate(null);
       await onRefresh();

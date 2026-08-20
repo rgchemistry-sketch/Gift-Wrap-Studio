@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { env } from "./env.js";
+import { databaseUnavailable } from "../lib/errors.js";
 import { removeLegacyUploadGrantTtlIndexes } from "../models/UploadGrant.js";
 import { removeLegacyUserIdentityIndexes } from "../models/User.js";
 
@@ -32,6 +33,14 @@ const createDeclaredIndexes = async () => {
   await Promise.all(models.map((model) => model.createIndexes()));
 };
 
+export const synchronizeDatabaseIndexes = async () => {
+  // Keep schema migration work out of ordinary serverless cold starts. Run this explicitly
+  // during deployment, or opt in with DATABASE_SYNC_INDEXES for a controlled rollout.
+  await removeLegacyUploadGrantTtlIndexes();
+  await removeLegacyUserIdentityIndexes();
+  await createDeclaredIndexes();
+};
+
 export const databaseStatus = () => ({
   mode:
     status === "connected"
@@ -40,13 +49,19 @@ export const databaseStatus = () => ({
         ? "connecting"
         : status === "idle"
           ? "pending"
-          : "memory",
+          : status === "fallback" && env.isProduction && !env.allowMemoryWrites
+            ? "unavailable"
+            : "memory",
   configured: Boolean(env.mongodbUri),
-  fallbackReason: lastError ? "MongoDB was unavailable; using the in-memory demo store" : undefined,
+  fallbackReason: lastError
+    ? env.isProduction && !env.allowMemoryWrites
+      ? "MongoDB is unavailable; production reads and writes are paused"
+      : "MongoDB was unavailable; using the in-memory demo store"
+    : undefined,
   retryAt: retryAfter ? new Date(retryAfter).toISOString() : undefined,
 });
 
-export const connectDatabase = async () => {
+const connectDatabaseMode = async () => {
   if (!env.mongodbUri) return "memory";
   if (status === "connected" && mongoose.connection.readyState === 1) return "mongodb";
   if (connectionPromise) return connectionPromise;
@@ -63,14 +78,7 @@ export const connectDatabase = async () => {
       autoIndex: false,
     })
     .then(async () => {
-      // Older releases declared UploadGrant.expiresAt as a TTL index. Remove that index before
-      // creating the current normal lookup index so MongoDB never drops asset provenance before
-      // the Cloudinary cleanup worker has confirmed deletion.
-      await removeLegacyUploadGrantTtlIndexes();
-      // Google-only releases required this field and created a non-sparse unique index. Social and
-      // email accounts can legitimately omit googleSub, so replace only that exact legacy index.
-      await removeLegacyUserIdentityIndexes();
-      await createDeclaredIndexes();
+      if (env.syncDatabaseIndexes) await synchronizeDatabaseIndexes();
       status = "connected";
       lastError = undefined;
       failureCount = 0;
@@ -91,7 +99,7 @@ export const connectDatabase = async () => {
       }
       if (!env.isTest) {
         console.warn(
-          `[database] MongoDB unavailable (${safeErrorSummary(error)}); using demo data and retrying later.`,
+          `[database] MongoDB unavailable (${safeErrorSummary(error)}); ${env.isProduction && !env.allowMemoryWrites ? "production traffic is paused" : "using demo data"} and retrying later.`,
         );
       }
       return "memory";
@@ -101,6 +109,19 @@ export const connectDatabase = async () => {
     });
 
   return connectionPromise;
+};
+
+export const connectDatabase = async ({ allowFallback = false } = {}) => {
+  const mode = await connectDatabaseMode();
+  if (
+    mode === "memory" &&
+    env.isProduction &&
+    !env.allowMemoryWrites &&
+    !allowFallback
+  ) {
+    throw databaseUnavailable();
+  }
+  return mode;
 };
 
 export const disconnectDatabase = async () => {

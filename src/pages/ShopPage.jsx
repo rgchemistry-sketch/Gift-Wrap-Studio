@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
 import Col from 'react-bootstrap/Col';
@@ -19,7 +19,7 @@ const priceOptions = [
   ['over-2500', 'Over ₹2,500'],
 ];
 
-function FilterPanel({ filters, setFilter, products, onDone }) {
+function FilterPanel({ filters, setFilter, products, onDone, idPrefix }) {
   const productCategories = [...new Set(products.map((product) => product.category).filter(Boolean))].sort();
   const productOccasions = [...new Set(products.map((product) => product.occasion).filter(Boolean))].sort();
 
@@ -27,29 +27,45 @@ function FilterPanel({ filters, setFilter, products, onDone }) {
     <div className="filter-panel">
       <div className="filter-group">
         <h3>Collection</h3>
+        <Form.Check
+          type="radio"
+          name={`${idPrefix}-category`}
+          id={`${idPrefix}-category-all`}
+          label="All collections"
+          checked={!filters.category}
+          onChange={() => setFilter('category', '')}
+        />
         {productCategories.map((category) => (
           <Form.Check
             type="radio"
-            name="category"
-            id={`category-${category.replace(/\W/g, '')}`}
+            name={`${idPrefix}-category`}
+            id={`${idPrefix}-category-${category.replace(/\W/g, '')}`}
             key={category}
             label={category}
             checked={filters.category === category}
-            onChange={() => setFilter('category', filters.category === category ? '' : category)}
+            onChange={() => setFilter('category', category)}
           />
         ))}
       </div>
       <div className="filter-group">
         <h3>Occasion</h3>
+        <Form.Check
+          type="radio"
+          name={`${idPrefix}-occasion`}
+          id={`${idPrefix}-occasion-all`}
+          label="All occasions"
+          checked={!filters.occasion}
+          onChange={() => setFilter('occasion', '')}
+        />
         {productOccasions.map((occasion) => (
           <Form.Check
             type="radio"
-            name="occasion"
-            id={`occasion-${occasion.replace(/\W/g, '')}`}
+            name={`${idPrefix}-occasion`}
+            id={`${idPrefix}-occasion-${occasion.replace(/\W/g, '')}`}
             key={occasion}
             label={occasion}
             checked={filters.occasion === occasion}
-            onChange={() => setFilter('occasion', filters.occasion === occasion ? '' : occasion)}
+            onChange={() => setFilter('occasion', occasion)}
           />
         ))}
       </div>
@@ -58,8 +74,8 @@ function FilterPanel({ filters, setFilter, products, onDone }) {
         {priceOptions.map(([value, label]) => (
           <Form.Check
             type="radio"
-            name="price"
-            id={`price-${value || 'all'}`}
+            name={`${idPrefix}-price`}
+            id={`${idPrefix}-price-${value || 'all'}`}
             key={value}
             label={label}
             checked={filters.price === value}
@@ -70,14 +86,14 @@ function FilterPanel({ filters, setFilter, products, onDone }) {
       <div className="filter-group filter-group--toggle">
         <Form.Check
           type="switch"
-          id="customizable-only"
+          id={`${idPrefix}-customizable-only`}
           label="Customizable pieces only"
           checked={filters.customizable === 'true'}
           onChange={(event) => setFilter('customizable', event.target.checked ? 'true' : '')}
         />
         <Form.Check
           type="switch"
-          id="available-only"
+          id={`${idPrefix}-available-only`}
           label="Available now"
           checked={filters.available === 'true'}
           onChange={(event) => setFilter('available', event.target.checked ? 'true' : '')}
@@ -90,7 +106,7 @@ function FilterPanel({ filters, setFilter, products, onDone }) {
 
 export default function ShopPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { products, loading, error, refresh } = useCatalog();
+  const { products, loading, error, truncated, refresh } = useCatalog();
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const filters = {
@@ -136,7 +152,8 @@ export default function ShopPage() {
       if (filters.sort === 'price-low') return a.price - b.price;
       if (filters.sort === 'price-high') return b.price - a.price;
       if (filters.sort === 'name') return a.title.localeCompare(b.title);
-      return Number(b.inStock) - Number(a.inStock);
+      return Number(b.featured) - Number(a.featured)
+        || Number(b.inStock) - Number(a.inStock);
     });
   }, [products, filters.q, filters.category, filters.occasion, filters.customizable, filters.available, filters.price, filters.sort]);
 
@@ -163,6 +180,7 @@ export default function ShopPage() {
       <section className="catalog-section page-section">
         <Container fluid="xl">
           {error && <Alert variant="warning" className="soft-alert catalog-alert">{error} <button type="button" className="plain-link" onClick={loadProducts}>Retry</button></Alert>}
+          {truncated && <Alert variant="info" className="soft-alert catalog-alert">The studio has more pieces than this view could load. Refine the collection or try again shortly.</Alert>}
           <div className="catalog-toolbar">
             <div>
               <Button variant="outline-dark" className="filter-trigger d-lg-none" onClick={() => setFiltersOpen(true)}><Icon name="spark" size={17} /> Filters {activeFilters.length > 0 && <span>{activeFilters.length}</span>}</Button>
@@ -192,7 +210,7 @@ export default function ShopPage() {
             <Col lg={3} className="d-none d-lg-block">
               <aside className="catalog-sidebar" aria-label="Product filters">
                 <div className="catalog-sidebar__head"><h2>Refine</h2>{activeFilters.length > 0 && <button type="button" className="plain-link" onClick={clearFilters}>Clear</button>}</div>
-                <FilterPanel filters={filters} setFilter={setFilter} products={products} />
+                <FilterPanel idPrefix="desktop" filters={filters} setFilter={setFilter} products={products} />
               </aside>
             </Col>
             <Col lg={9}>
@@ -207,7 +225,7 @@ export default function ShopPage() {
                   <span><Icon name="spark" size={30} /></span>
                   <h2>No exact match—yet.</h2>
                   <p>Try removing a filter, or tell us what you imagined and we can create it especially for you.</p>
-                  <div><Button className="button-burgundy" onClick={clearFilters}>See all pieces</Button> <Button href="/custom-order" variant="link" className="text-link">Request a new design <Icon name="arrow" /></Button></div>
+                  <div><Button className="button-burgundy" onClick={clearFilters}>See all pieces</Button> <Button as={Link} to="/custom-order" variant="link" className="text-link">Request a new design <Icon name="arrow" /></Button></div>
                 </div>
               )}
             </Col>
@@ -220,7 +238,7 @@ export default function ShopPage() {
           <div><p className="eyebrow">Find your piece</p><Offcanvas.Title>Filter the collection</Offcanvas.Title></div>
           <button type="button" className="icon-button" onClick={() => setFiltersOpen(false)} aria-label="Close filters"><Icon name="close" /></button>
         </Offcanvas.Header>
-        <Offcanvas.Body><FilterPanel filters={filters} setFilter={setFilter} products={products} onDone={() => setFiltersOpen(false)} /></Offcanvas.Body>
+        <Offcanvas.Body><FilterPanel idPrefix="mobile" filters={filters} setFilter={setFilter} products={products} onDone={() => setFiltersOpen(false)} /></Offcanvas.Body>
       </Offcanvas>
     </>
   );

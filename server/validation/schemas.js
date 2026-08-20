@@ -23,23 +23,6 @@ const phone = z
   .max(24, INDIAN_MOBILE_MESSAGE)
   .refine((value) => normalizeIndianMobile(value) !== null, INDIAN_MOBILE_MESSAGE)
   .transform((value) => normalizeIndianMobile(value));
-const relativeOrAbsoluteUrl = z
-  .string()
-  .trim()
-  .max(1_000)
-  .refine(
-    (value) => {
-      if (value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\")) {
-        return true;
-      }
-      try {
-        return ["http:", "https:"].includes(new URL(value).protocol);
-      } catch {
-        return false;
-      }
-    },
-    "Enter an HTTP(S) URL or a site-relative path",
-  );
 const relativeOrHttpsUrl = z
   .string()
   .trim()
@@ -57,6 +40,23 @@ const relativeOrHttpsUrl = z
     },
     "Enter an HTTPS URL or a site-relative path",
   );
+const inspirationReferenceUrl = z
+  .string()
+  .trim()
+  .max(1_000)
+  .refine(
+    (value) => {
+      if (value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\")) {
+        return true;
+      }
+      try {
+        return ["http:", "https:"].includes(new URL(value).protocol);
+      } catch {
+        return false;
+      }
+    },
+    "Enter an HTTP(S) URL or a site-relative path",
+  );
 const productImageUrl = relativeOrHttpsUrl.refine(
   (value) => {
     if (value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\")) {
@@ -69,6 +69,17 @@ const productImageUrl = relativeOrHttpsUrl.refine(
     }
   },
   "Use a Cloudinary HTTPS URL or a site-relative path",
+);
+const uploadedReferenceImageUrl = relativeOrHttpsUrl.refine(
+  (value) => {
+    if (value.startsWith("/")) return false;
+    try {
+      return new URL(value).hostname.toLowerCase() === "res.cloudinary.com";
+    } catch {
+      return false;
+    }
+  },
+  "Use the secure Cloudinary URL returned by the upload service",
 );
 const optionalBlank = (schema) => z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
 
@@ -387,8 +398,8 @@ export const customInquirySchema = z
     neededBy: z
       .preprocess((value) => (value === "" || value == null ? undefined : value), z.coerce.date().optional()),
     contactPreference: z.string().trim().max(50).default(""),
-    referenceUrl: optionalBlank(relativeOrAbsoluteUrl),
-    referenceImages: z.array(relativeOrAbsoluteUrl).max(5).default([]),
+    referenceUrl: optionalBlank(inspirationReferenceUrl),
+    referenceImages: z.array(uploadedReferenceImageUrl).max(5).default([]),
   })
   .strict()
   .refine((value) => Boolean(value.idea || value.description), {
@@ -408,7 +419,8 @@ export const customInquirySchema = z
     budget: value.budget,
     neededBy: value.neededBy,
     contactPreference: value.contactPreference,
-    referenceImages: [...new Set([...value.referenceImages, value.referenceUrl].filter(Boolean))],
+    referenceUrl: value.referenceUrl || "",
+    referenceImages: [...new Set(value.referenceImages)],
   }));
 
 export const contactSchema = z
@@ -445,7 +457,7 @@ export const contactStatusSchema = z
 
 export const uploadSignatureSchema = z
   .object({
-    purpose: z.enum(["custom-inquiries", "orders", "profiles", "products"]).default("custom-inquiries"),
+    purpose: z.enum(["custom-inquiries", "orders", "products"]).default("custom-inquiries"),
   })
   .strict();
 
@@ -456,7 +468,7 @@ export const uploadAssetDeleteSchema = z
       .trim()
       .max(300)
       .regex(
-        /^gift-n-wrap\/(?:custom-inquiries|orders|profiles|products)\/[A-Za-z0-9_-]+\/[0-9a-fA-F-]{36}$/,
+        /^gift-n-wrap\/(?:custom-inquiries|orders|products)\/[A-Za-z0-9_-]+\/[0-9a-fA-F-]{36}$/,
         "Enter a valid reserved upload public ID",
       ),
   })

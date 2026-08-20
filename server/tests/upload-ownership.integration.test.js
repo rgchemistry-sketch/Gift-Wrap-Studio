@@ -106,6 +106,62 @@ const orderPayload = (media, slug = "pressed-flower-name-plaque") => ({
   },
 });
 
+test("custom inquiry reference images consume their owner-scoped upload grants", async () => {
+  const { agent: buyer } = await login("buyer");
+  const signature = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(200);
+  const publicId = signature.body.data.fullPublicId;
+
+  await buyer
+    .post("/api/custom-inquiries")
+    .send({
+      name: "Mira Shah",
+      email: "mira@example.test",
+      phone: "+91 98765 43210",
+      description: "Preserve flowers from our wedding garland in a keepsake.",
+      referenceImages: [deliveryUrl(publicId)],
+    })
+    .expect(201);
+
+  const grant = memoryStore.get("uploadGrants", publicId);
+  assert.ok(grant.consumedAt);
+  assert.ok(grant.inquiryId);
+  assert.equal(grant.expiresAt, undefined);
+});
+
+test("custom inquiries reject unowned Cloudinary images but preserve ordinary inspiration links", async () => {
+  const { agent: buyer } = await login("buyer");
+  const baseInquiry = {
+    name: "Mira Shah",
+    email: "mira@example.test",
+    phone: "+91 98765 43210",
+    description: "Preserve flowers from our wedding garland in a keepsake.",
+  };
+
+  await buyer
+    .post("/api/custom-inquiries")
+    .send({
+      ...baseInquiry,
+      referenceImages: [
+        "https://res.cloudinary.com/attacker-cloud/image/upload/v1/tracker.jpg",
+      ],
+    })
+    .expect(409);
+  assert.equal(memoryStore.count("customInquiries"), 0);
+
+  const inspirationLink = "https://www.pinterest.com/pin/123456789/";
+  await buyer
+    .post("/api/custom-inquiries")
+    .send({ ...baseInquiry, referenceUrl: inspirationLink })
+    .expect(201);
+
+  const inquiry = memoryStore.findOne("customInquiries", () => true);
+  assert.equal(inquiry.referenceUrl, inspirationLink);
+  assert.deepEqual(inquiry.referenceImages, []);
+});
+
 test("upload signatures expose a seven-day cart lifetime and a two-hour admin lifetime", async () => {
   const { agent: admin } = await login("admin");
   const { agent: buyer } = await login("buyer");

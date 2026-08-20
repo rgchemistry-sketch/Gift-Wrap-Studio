@@ -8,12 +8,14 @@ import { connectDatabase, databaseStatus } from "./config/database.js";
 import { env } from "./config/env.js";
 import { asyncHandler } from "./lib/async-handler.js";
 import { errorHandler, notFoundHandler, requestId } from "./middleware/errors.js";
+import { DurableRateLimitStore } from "./middleware/durable-rate-limit.js";
 import { isOriginAllowed, requireTrustedOrigin } from "./middleware/origin.js";
 import { rateLimitHandler } from "./middleware/rate-limit.js";
 import { adminRouter } from "./routes/admin.js";
 import { authRouter } from "./routes/auth.js";
 import { contactRouter } from "./routes/contact.js";
 import { inquiriesRouter } from "./routes/inquiries.js";
+import { maintenanceRouter } from "./routes/maintenance.js";
 import { offersRouter } from "./routes/offers.js";
 import { ordersRouter } from "./routes/orders.js";
 import { productsRouter } from "./routes/products.js";
@@ -75,9 +77,6 @@ app.use(
 );
 app.use(compression());
 app.use(requireTrustedOrigin);
-app.use(express.json({ limit: "1mb", strict: true }));
-app.use(express.urlencoded({ extended: false, limit: "100kb" }));
-app.use(cookieParser());
 app.use(
   "/api",
   rateLimit({
@@ -85,10 +84,15 @@ app.use(
     limit: 300,
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    skip: () => env.isTest,
+    skip: (request) => env.isTest || request.path === "/health",
+    store: new DurableRateLimitStore("api"),
+    passOnStoreError: !env.isProduction,
     handler: rateLimitHandler("Too many requests. Please try again shortly"),
   }),
 );
+app.use(express.json({ limit: "1mb", strict: true }));
+app.use(express.urlencoded({ extended: false, limit: "100kb" }));
+app.use(cookieParser());
 
 app.get("/api", (_request, response) => {
   response.json({
@@ -103,10 +107,12 @@ app.get("/api", (_request, response) => {
 app.get(
   "/api/health",
   asyncHandler(async (_request, response) => {
-    await connectDatabase();
+    await connectDatabase({ allowFallback: true });
     const persistence = databaseStatus();
     const degraded =
-      env.isProduction && persistence.mode === "memory" && !env.allowMemoryWrites;
+      env.isProduction &&
+      ["memory", "unavailable"].includes(persistence.mode) &&
+      !env.allowMemoryWrites;
     response.setHeader("Cache-Control", "no-store");
     response.status(degraded ? 503 : 200).json({
       data: {
@@ -127,6 +133,7 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/custom-inquiries", inquiriesRouter);
 app.use("/api/contact", contactRouter);
 app.use("/api/uploads", uploadsRouter);
+app.use("/api/maintenance", maintenanceRouter);
 app.use("/api/admin", adminRouter);
 
 app.use(notFoundHandler);

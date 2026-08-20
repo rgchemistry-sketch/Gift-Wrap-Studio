@@ -1,5 +1,5 @@
 import { env } from "../config/env.js";
-import { accountLinkRequired, badRequest, conflict, unauthorized } from "../lib/errors.js";
+import { accountLinkRequired, badRequest, conflict } from "../lib/errors.js";
 import {
   createUserWithAuthIdentity,
   getLegacyGoogleUserBySubject,
@@ -35,9 +35,6 @@ export const authenticateSocialIdentity = async (rawProfile, intent) => {
   const profile = normalizeProfile(rawProfile);
   const existing = await getUserByAuthIdentity(profile.provider, profile.subject);
   if (existing) {
-    if (intent === "signup") {
-      throw conflict("This account already exists. Choose log in instead");
-    }
     return touch(existing, profile);
   }
 
@@ -46,9 +43,6 @@ export const authenticateSocialIdentity = async (rawProfile, intent) => {
   if (profile.provider === "google") {
     const legacy = await getLegacyGoogleUserBySubject(profile.subject);
     if (legacy) {
-      if (intent === "signup") {
-        throw conflict("This account already exists. Choose log in instead");
-      }
       await linkAuthIdentity({
         userId: legacy.id,
         provider: profile.provider,
@@ -60,9 +54,6 @@ export const authenticateSocialIdentity = async (rawProfile, intent) => {
     }
   }
 
-  if (intent === "login") {
-    throw unauthorized("No account is connected to that sign-in. Create an account first");
-  }
   if (!profile.email || !profile.emailVerified) {
     throw conflict("Verify an email address before creating this account");
   }
@@ -87,17 +78,14 @@ export const authenticateSocialIdentity = async (rawProfile, intent) => {
   return createUserWithAuthIdentity(profile);
 };
 
-export const authenticateEmailIdentity = async ({ email, name, intent }) => {
+export const authenticateEmailIdentity = async ({ email, name }, { onResolved } = {}) => {
   const normalizedEmail = email.trim().toLowerCase();
   const identity = await getUserByAuthIdentity("email", normalizedEmail);
   const emailOwner = identity || (await getUserByEmail(normalizedEmail));
-
-  if (intent === "signup" && emailOwner) {
-    throw conflict("This account already exists. Choose log in instead");
-  }
-  if (intent === "login" && !emailOwner) {
-    throw unauthorized("No account uses this email. Create an account first");
-  }
+  // Verification proves control of the mailbox. Resolve the account before the
+  // caller consumes the one-time challenge, then complete the sensible action:
+  // sign into an existing account or create one when none exists.
+  await onResolved?.();
 
   if (!emailOwner) {
     return createUserWithAuthIdentity({

@@ -1,4 +1,8 @@
 User-agent: *
 Allow: /
+Disallow: /cart
+Disallow: /checkout
+Disallow: /account
+Disallow: /admin
 
 Sitemap: https://www.giftnwrapstudio.com/sitemap.xml

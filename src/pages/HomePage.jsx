@@ -10,6 +10,8 @@ import SmartImage from '../components/SmartImage';
 import { ProductCardSkeleton } from '../components/Feedback';
 import { categories } from '../data/catalog';
 import { useCatalog } from '../data/useCatalog';
+import { useShop } from '../context/ShopContext';
+import { resolveStudioContact } from '../utils/studio-contact';
 
 const trustPoints = [
   ['spark', '100% handmade', 'Individually composed, never mass-produced'],
@@ -35,6 +37,8 @@ const faqs = [
 
 export default function HomePage() {
   const { products, loading: catalogLoading } = useCatalog();
+  const { studioSettings } = useShop();
+  const contact = resolveStudioContact(studioSettings);
   // Curated first, then whatever is in stock, so the shelf is never padded with placeholders.
   const bestsellers = [...products]
     .sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.inStock) - Number(a.inStock))
@@ -63,7 +67,7 @@ export default function HomePage() {
             </Col>
             <Col lg={6} className="home-hero__visual">
               <div className="hero-image hero-image--main">
-                <SmartImage src="/assets/hero-resin-studio.webp" alt="Handmade resin art arranged in the Gift N Wrap Studio" fallbackLabel="The Resin Atelier" />
+                <SmartImage src="/assets/hero-resin-studio.webp" alt="Handmade resin art arranged in the Gift N Wrap Studio" fallbackLabel="The Resin Atelier" loading="eager" fetchPriority="high" />
               </div>
               <div className="hero-image hero-image--detail">
                 <SmartImage src="/assets/personalized-plaque.webp" alt="Close detail of a personalized resin plaque" fallbackLabel="Made for you" />
@@ -258,7 +262,7 @@ export default function HomePage() {
             <div><p className="eyebrow light-eyebrow">Have something in mind?</p><h2>Let’s make a memory<br />you can hold.</h2></div>
             <div className="contact-banner__actions">
               <Button as={Link} to="/custom-order" className="button-gold">Start a custom order <Icon name="arrow" /></Button>
-              <a href="tel:+919588281126">or call +91 95882 81126</a>
+              {contact.phoneHref && <a href={contact.phoneHref}>or call {contact.phoneLabel}</a>}
             </div>
           </div>
         </Container>

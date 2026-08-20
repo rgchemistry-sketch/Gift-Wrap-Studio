@@ -12,6 +12,7 @@ import SmartImage from '../components/SmartImage';
 import { RouteLoader } from '../components/Feedback';
 import { api } from '../api/client';
 import { formatCurrency } from '../data/catalog';
+import { useCatalog } from '../data/useCatalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 import {
@@ -27,6 +28,11 @@ import {
 
 const DRAFT_KEY = 'gnw-checkout-draft';
 const IDEMPOTENCY_KEY = 'gnw-checkout-idempotency';
+const COUPON_ERROR_CODES = new Set([
+  'WELCOME_OFFER_INVALID',
+  'WELCOME_OFFER_EXCLUDED',
+  'WELCOME_OFFER_INELIGIBLE',
+]);
 const checkoutFieldIds = {
   'shippingAddress.recipientName': 'checkout-name',
   'shippingAddress.phone': 'checkout-phone',
@@ -38,11 +44,36 @@ const checkoutFieldIds = {
   note: 'checkout-notes',
 };
 
+function createCheckoutKey() {
+  return window.crypto?.randomUUID?.() || `gnw-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function storeCheckoutKey(key) {
+  try {
+    window.sessionStorage.setItem(IDEMPOTENCY_KEY, key);
+  } catch {
+    // The in-memory key still protects this mounted checkout when storage is blocked.
+  }
+}
+
+function removeCheckoutKey() {
+  try {
+    window.sessionStorage.removeItem(IDEMPOTENCY_KEY);
+  } catch {
+    // There may be no persisted key when storage is blocked.
+  }
+}
+
 function getCheckoutKey() {
-  const existing = window.sessionStorage.getItem(IDEMPOTENCY_KEY);
+  let existing = '';
+  try {
+    existing = window.sessionStorage.getItem(IDEMPOTENCY_KEY) || '';
+  } catch {
+    // Generate an in-memory key below.
+  }
   if (existing) return existing;
-  const generated = window.crypto?.randomUUID?.() || `gnw-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  window.sessionStorage.setItem(IDEMPOTENCY_KEY, generated);
+  const generated = createCheckoutKey();
+  storeCheckoutKey(generated);
   return generated;
 }
 
@@ -61,7 +92,25 @@ const emptyForm = {
 };
 
 export default function CheckoutPage() {
-  const { cart, subtotal, clearCart, claimedOfferCode, welcomeOffer, studioSettings, notify } = useShop();
+  const {
+    cart,
+    subtotal,
+    clearCart,
+    removeFromCart,
+    claimedOfferCode,
+    welcomeOffer,
+    studioSettings,
+    notify,
+    removeWelcomeOffer,
+    revalidateCart,
+    markCartItemUnavailable,
+  } = useShop();
+  const {
+    products: catalog,
+    loading: catalogLoading,
+    error: catalogError,
+    refresh: refreshCatalog,
+  } = useCatalog();
   const { user, sessionOwnerId, loading: authLoading, requireAuth, refreshSession } = useAuth();
   const draftUserId = String(sessionOwnerId || user?.id || '');
   const draftOwner = scopedDraftOwner(draftUserId);
@@ -71,11 +120,24 @@ export default function CheckoutPage() {
   const [phoneError, setPhoneError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [couponRecovery, setCouponRecovery] = useState(false);
+  const [idempotencyConflict, setIdempotencyConflict] = useState(false);
+  const [liveCatalogReady, setLiveCatalogReady] = useState(false);
   const [order, setOrder] = useState(null);
-  const [idempotencyKey] = useState(getCheckoutKey);
+  const [idempotencyKey, setIdempotencyKey] = useState(getCheckoutKey);
   const formRef = useRef(null);
   const promptedForAuthRef = useRef(false);
+  const skipOfferRef = useRef(false);
   const [hydratedDraftOwner, setHydratedDraftOwner] = useState('pending');
+
+  const refreshLiveCart = async () => {
+    setLiveCatalogReady(false);
+    const liveProducts = await refreshCatalog({ force: true });
+    if (!Array.isArray(liveProducts)) return false;
+    revalidateCart(liveProducts);
+    setLiveCatalogReady(true);
+    return true;
+  };
 
   useEffect(() => {
     if (authLoading) return;
@@ -91,6 +153,8 @@ export default function CheckoutPage() {
     setValidated(false);
     setPhoneError('');
     setError('');
+    setCouponRecovery(false);
+    setIdempotencyConflict(false);
     setOrder(null);
     setHydratedDraftOwner(draftOwner);
     setDraftReady(true);
@@ -119,16 +183,49 @@ export default function CheckoutPage() {
     saveScopedDraft(DRAFT_KEY, draftUserId, form);
   }, [draftOwner, draftReady, draftUserId, form, hydratedDraftOwner]);
 
+  useEffect(() => {
+    let active = true;
+    setLiveCatalogReady(false);
+    refreshCatalog({ force: true }).then((liveProducts) => {
+      if (!active || !Array.isArray(liveProducts)) return;
+      revalidateCart(liveProducts);
+      setLiveCatalogReady(true);
+    });
+    return () => { active = false; };
+  }, [refreshCatalog, revalidateCart]);
+
+  useEffect(() => {
+    if (liveCatalogReady && !catalogLoading && !catalogError) revalidateCart(catalog);
+  }, [cart, catalog, catalogError, catalogLoading, liveCatalogReady, revalidateCart]);
+
   const update = (key, value) => {
     setForm((current) => ({ ...current, [key]: value }));
     if (key === 'phone' && phoneError) setPhoneError('');
   };
-  const offerCode = claimedOfferCode || (window.sessionStorage.getItem('gnw-first-offer-claimed') === 'true' ? welcomeOffer?.code || 'FIRST10' : '');
+  const offerCode = claimedOfferCode;
   const bulkThreshold = Number(welcomeOffer?.bulkOrderThreshold || studioSettings?.shipping?.bulkThreshold || 10);
-  const offerClaimed = Boolean(offerCode && (welcomeOffer?.enabled ?? true));
-  const itemOfferEligible = !cart.some((line) =>
-    String(line.product.category || '').toLowerCase().includes('corporate') || line.quantity >= bulkThreshold,
-  );
+  const quantityByProduct = cart.reduce((totals, line) => {
+    const productKey = String(line.product.id || line.product.slug || line.lineId);
+    totals.set(productKey, (totals.get(productKey) || 0) + Number(line.quantity || 0));
+    return totals;
+  }, new Map());
+  const itemOfferEligible = !cart.some((line) => (
+    String(line.product.category || '').toLowerCase().includes('corporate')
+  )) && ![...quantityByProduct.values()].some((quantity) => quantity >= bulkThreshold);
+  const offerClaimed = Boolean(offerCode);
+  const offerEligible = welcomeOffer?.eligible === true
+    && welcomeOffer?.enabled === true
+    && itemOfferEligible;
+  const unavailableItems = cart.filter((line) => line.unavailable);
+  const offerStatus = !offerClaimed
+    ? '—'
+    : !itemOfferEligible
+      ? 'Not available on bulk/corporate pieces'
+      : welcomeOffer?.eligible === false
+        ? 'Not available for this account'
+        : offerEligible
+          ? `${offerCode} · eligibility confirmed`
+          : 'Eligibility could not be confirmed; the offer will not be sent';
 
   const submit = async (event) => {
     event.preventDefault();
@@ -143,6 +240,22 @@ export default function CheckoutPage() {
           notify(message, 'warning');
         },
       });
+      return;
+    }
+    setCouponRecovery(false);
+    setIdempotencyConflict(false);
+    if (!liveCatalogReady || catalogLoading || catalogError) {
+      const message = catalogError
+        ? 'We couldn’t verify live bag details. Try the catalogue check again before sending this request.'
+        : 'We’re still checking your bag against the live catalogue. Please wait a moment.';
+      setError(message);
+      notify(message, 'info');
+      return;
+    }
+    if (unavailableItems.length) {
+      const message = 'Remove unavailable pieces from your bag before sending this request.';
+      setError(message);
+      notify(message, 'warning');
       return;
     }
     setValidated(true);
@@ -181,9 +294,12 @@ export default function CheckoutPage() {
     }
     setSubmitting(true);
     try {
+      const applyOffer = !skipOfferRef.current && offerClaimed && offerEligible;
+      skipOfferRef.current = false;
       const payload = {
         items: cart.map((line) => ({
-          ...(/^[a-f\d]{24}$/i.test(line.product.id) ? { productId: line.product.id } : { slug: line.product.slug }),
+          productId: String(line.product.id || line.product.slug),
+          slug: line.product.slug,
           quantity: line.quantity,
           customization: line.customization && Object.keys(line.customization).length
             ? JSON.stringify(line.customization)
@@ -204,7 +320,7 @@ export default function CheckoutPage() {
           `Preferred contact: ${form.contactPreference}`,
           form.notes,
         ].filter(Boolean).join('\n'),
-        couponCode: offerClaimed && itemOfferEligible ? offerCode : undefined,
+        couponCode: applyOffer ? offerCode : undefined,
         paymentMethod: 'manual_confirmation',
       };
       const result = await api.submitOrderRequest(payload, idempotencyKey, user.id);
@@ -212,7 +328,7 @@ export default function CheckoutPage() {
       setOrder(createdOrder);
       clearCart();
       removeScopedDraft(DRAFT_KEY, draftUserId);
-      window.sessionStorage.removeItem(IDEMPOTENCY_KEY);
+      removeCheckoutKey();
       notify(`Order request${createdOrder.orderNumber ? ` ${createdOrder.orderNumber}` : ''} was sent securely.`);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (requestError) {
@@ -232,8 +348,33 @@ export default function CheckoutPage() {
             notify(message, 'error');
           },
         });
+      } else if (COUPON_ERROR_CODES.has(requestError.code)) {
+        const message = `${requestError.message} Nothing was charged. You can continue without this offer.`;
+        setCouponRecovery(true);
+        setError(message);
+        notify(message, 'warning');
+      } else if (
+        requestError.code === 'IDEMPOTENCY_KEY_REUSED'
+        || (requestError.status === 409 && /Idempotency-Key/i.test(requestError.message))
+      ) {
+        const replacementKey = createCheckoutKey();
+        storeCheckoutKey(replacementKey);
+        setIdempotencyKey(replacementKey);
+        const message = 'An earlier attempt may already have gone through. Check Orders & requests before trying again; a fresh retry key is ready.';
+        setIdempotencyConflict(true);
+        setError(message);
+        notify(message, 'warning');
       } else {
         const firstIssue = Array.isArray(requestError.details) ? requestError.details[0] : null;
+        if (requestError.code === 'NOT_FOUND' && firstIssue?.field === 'items') {
+          markCartItemUnavailable({
+            productId: firstIssue.productId,
+            slug: firstIssue.slug,
+          });
+        }
+        if (firstIssue?.field === 'items') {
+          void refreshLiveCart();
+        }
         if (firstIssue?.field === 'shippingAddress.phone') {
           setPhoneError(firstIssue.message || INDIAN_MOBILE_MESSAGE);
         }
@@ -246,6 +387,14 @@ export default function CheckoutPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const continueWithoutOffer = () => {
+    skipOfferRef.current = true;
+    removeWelcomeOffer();
+    setCouponRecovery(false);
+    setError('');
+    formRef.current?.requestSubmit();
   };
 
   if (!draftReady || hydratedDraftOwner !== draftOwner) return <RouteLoader />;
@@ -277,7 +426,9 @@ export default function CheckoutPage() {
         <Row className="g-5">
           <Col lg={7}>
             <div className="checkout-heading"><p className="eyebrow">Order request</p><h1>Where should we send the beautiful thing?</h1><p>Share your delivery and occasion details. You’ll review the final design, total and payment instructions with the studio before production.</p></div>
-            {error && <Alert variant="danger" className="soft-alert" role="alert">{error}</Alert>}
+            {catalogError && <Alert variant="warning" className="soft-alert">We couldn’t refresh live bag details. <button type="button" className="plain-link" onClick={refreshLiveCart}>Try again</button></Alert>}
+            {unavailableItems.length > 0 && <Alert variant="warning" className="soft-alert"><strong>{unavailableItems.length === 1 ? 'A piece in your bag is unavailable.' : 'Some pieces in your bag are unavailable.'}</strong> {unavailableItems.map((line) => <button type="button" className="plain-link" key={line.lineId} onClick={() => removeFromCart(line.lineId)}>Remove {line.product.title}</button>)}</Alert>}
+            {error && <Alert variant="danger" className="soft-alert" role="alert">{error}{couponRecovery && <div><Button type="button" size="sm" variant="outline-dark" onClick={continueWithoutOffer}>Continue without offer</Button></div>}{idempotencyConflict && <div><Button as={Link} to="/account?tab=orders" size="sm" variant="outline-dark">Check Orders & requests</Button></div>}</Alert>}
             <Form ref={formRef} noValidate validated={validated} onSubmit={submit} className="checkout-form">
               <fieldset>
                 <legend><span>01</span> Contact details</legend>
@@ -306,7 +457,7 @@ export default function CheckoutPage() {
                 </Row>
               </fieldset>
               {!user && <Alert variant="info" className="soft-alert sign-in-reminder"><Icon name="lock" /> You’ll be asked to log in with a secure email code or an approved provider when you send this request. Your form is saved on this device.</Alert>}
-              <Button type="submit" className="button-burgundy checkout-submit" disabled={submitting}>{submitting ? <><Spinner size="sm" /> Sending securely…</> : <>Send order request <Icon name="arrow" /></>}</Button>
+              <Button type="submit" className="button-burgundy checkout-submit" disabled={submitting || !liveCatalogReady || catalogLoading || Boolean(catalogError) || unavailableItems.length > 0}>{submitting ? <><Spinner size="sm" /> Sending securely…</> : !liveCatalogReady || catalogLoading || catalogError ? 'Checking your bag…' : <>Send order request <Icon name="arrow" /></>}</Button>
               <p className="checkout-submit-note">By sending, you are requesting a studio review—not completing a purchase or payment.</p>
             </Form>
           </Col>
@@ -314,9 +465,9 @@ export default function CheckoutPage() {
             <aside className="checkout-summary">
               <div className="checkout-summary__head"><p className="eyebrow">Your pieces</p><Link to="/cart">Edit bag</Link></div>
               {cart.map((line) => (
-                <div className="checkout-mini-line" key={line.lineId}><div><SmartImage src={line.product.image} alt="" fallbackLabel={line.product.category} /><span>{line.quantity}</span></div><p><strong>{line.product.title}</strong><small>{line.customization?.name ? `For ${line.customization.name}` : line.product.category}</small></p><b>{formatCurrency(line.product.price * line.quantity)}</b></div>
+                <div className="checkout-mini-line" key={line.lineId}><div><SmartImage src={line.product.image} alt="" fallbackLabel={line.product.category} /><span>{line.quantity}</span></div><p><strong>{line.product.title}</strong><small>{line.unavailable ? (line.unavailableReason || 'Unavailable') : line.customization?.name ? `For ${line.customization.name}` : line.product.category}{line.priceUpdatedFrom != null && Number(line.priceUpdatedFrom) !== Number(line.product.price) ? ` · Price updated from ${formatCurrency(line.priceUpdatedFrom)}` : ''}</small></p><b>{line.unavailable ? 'Unavailable' : formatCurrency(line.product.price * line.quantity)}</b></div>
               ))}
-              <dl><div><dt>Item total</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed after address review</dd></div><div><dt>Offer</dt><dd>{offerClaimed ? (itemOfferEligible ? `${offerCode} · first-order check pending` : 'Not available on bulk/corporate pieces') : '—'}</dd></div><div className="summary-total"><dt>Current estimate</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
+              <dl><div><dt>Item total</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed after address review</dd></div><div><dt>Offer</dt><dd>{offerStatus}{offerClaimed && <><br /><button type="button" className="plain-link" onClick={removeWelcomeOffer}>Remove offer</button></>}</dd></div><div className="summary-total"><dt>Current estimate</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
               <div className="checkout-summary__note"><Icon name="spark" /><p><strong>What happens next?</strong><small>The studio reviews your design notes, confirms the final total and shares payment instructions personally.</small></p></div>
             </aside>
           </Col>

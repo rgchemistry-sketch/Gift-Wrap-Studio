@@ -35,6 +35,7 @@ export const env = Object.freeze({
     min: 500,
     max: 30_000,
   }),
+  syncDatabaseIndexes: asBoolean(process.env.DATABASE_SYNC_INDEXES, !isProduction),
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN?.trim() || "7d",
   jwtIssuer: process.env.JWT_ISSUER?.trim() || "gift-n-wrap-api",
@@ -72,6 +73,10 @@ export const env = Object.freeze({
   cloudinaryApiKey: process.env.CLOUDINARY_API_KEY?.trim() || "",
   cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET?.trim() || "",
   cloudinaryUploadPreset: process.env.CLOUDINARY_UPLOAD_PRESET?.trim() || "",
+  appUrl:
+    (process.env.APP_URL || process.env.VITE_APP_URL || configuredOrigins[0] || "")
+      .trim()
+      .replace(/\/$/, ""),
   clientOrigins:
     configuredOrigins.length > 0
       ? configuredOrigins
@@ -98,6 +103,19 @@ export const env = Object.freeze({
     min: 1,
     max: 200,
   }),
+  uploadMaxBytes: asInteger(process.env.UPLOAD_MAX_BYTES, 8 * 1_024 * 1_024, {
+    min: 100 * 1_024,
+    max: 25 * 1_024 * 1_024,
+  }),
+  verifyCloudinaryUploadPreset: asBoolean(
+    process.env.VERIFY_CLOUDINARY_UPLOAD_PRESET,
+    isProduction,
+  ),
+  uploadCleanupBatchSize: asInteger(process.env.UPLOAD_CLEANUP_BATCH_SIZE, 20, {
+    min: 1,
+    max: 50,
+  }),
+  cronSecret: process.env.CRON_SECRET?.trim() || "",
 });
 
 export const emailAuthStatus = () => {
