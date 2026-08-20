@@ -7,11 +7,19 @@ const counterId = (prefix, key) =>
   `${prefix}:${createHash("sha256").update(String(key)).digest("base64url")}`;
 
 export class DurableRateLimitStore {
-  constructor(prefix) {
+  constructor(
+    prefix,
+    {
+      connect = connectDatabase,
+      counterModel = RateLimitCounter,
+    } = {},
+  ) {
     this.prefix = `gnw:${prefix}`;
     this.localKeys = false;
     this.memory = new MemoryStore();
     this.windowMs = 60_000;
+    this.connect = connect;
+    this.counterModel = counterModel;
   }
 
   init(options) {
@@ -20,11 +28,11 @@ export class DurableRateLimitStore {
   }
 
   async increment(key) {
-    const mode = await connectDatabase({ allowFallback: true });
+    const mode = await this.connect({ allowFallback: true });
     if (mode !== "mongodb") return this.memory.increment(key);
     const now = new Date();
     const nextReset = new Date(now.getTime() + this.windowMs);
-    const record = await RateLimitCounter.findOneAndUpdate(
+    const record = await this.counterModel.findOneAndUpdate(
       { _id: counterId(this.prefix, key) },
       [
         {
@@ -42,32 +50,32 @@ export class DurableRateLimitStore {
           },
         },
       ],
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: "after", updatePipeline: true },
     ).lean();
     return { totalHits: record.totalHits, resetTime: record.resetTime };
   }
 
   async get(key) {
-    const mode = await connectDatabase({ allowFallback: true });
+    const mode = await this.connect({ allowFallback: true });
     if (mode !== "mongodb") return this.memory.get(key);
-    const record = await RateLimitCounter.findById(counterId(this.prefix, key)).lean();
+    const record = await this.counterModel.findById(counterId(this.prefix, key)).lean();
     if (!record || record.resetTime <= new Date()) return undefined;
     return { totalHits: record.totalHits, resetTime: record.resetTime };
   }
 
   async decrement(key) {
-    const mode = await connectDatabase({ allowFallback: true });
+    const mode = await this.connect({ allowFallback: true });
     if (mode !== "mongodb") return this.memory.decrement(key);
-    await RateLimitCounter.updateOne(
+    await this.counterModel.updateOne(
       { _id: counterId(this.prefix, key), totalHits: { $gt: 0 } },
       { $inc: { totalHits: -1 } },
     );
   }
 
   async resetKey(key) {
-    const mode = await connectDatabase({ allowFallback: true });
+    const mode = await this.connect({ allowFallback: true });
     if (mode !== "mongodb") return this.memory.resetKey(key);
-    await RateLimitCounter.deleteOne({ _id: counterId(this.prefix, key) });
+    await this.counterModel.deleteOne({ _id: counterId(this.prefix, key) });
   }
 
   shutdown() {
