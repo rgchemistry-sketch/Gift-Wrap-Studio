@@ -141,6 +141,7 @@ test("admins can create, edit, publish and archive complete products", async () 
   assert.equal(created.body.data.sku, "GNW-BOX-01");
   assert.equal(created.body.data.variants[0].price, 2299);
   assert.equal(created.body.data.active, false);
+  assert.equal(created.body.data.customizationAvailable, true);
 
   const emptyGalleryUpdate = await admin
     .patch(`/api/admin/products/${created.body.data.id}`)
@@ -156,12 +157,22 @@ test("admins can create, edit, publish and archive complete products", async () 
 
   const updated = await admin
     .patch(`/api/admin/products/${created.body.data.id}`)
-    .send({ active: true, featured: true, price: 1899, compareAtPrice: 2199 })
+    .send({
+      active: true,
+      featured: true,
+      price: 1899,
+      compareAtPrice: 2199,
+      customizationAvailable: false,
+    })
     .expect(200);
   assert.equal(updated.body.data.active, true);
   assert.equal(updated.body.data.featured, true);
+  assert.equal(updated.body.data.customizationAvailable, false);
 
-  await request(app).get("/api/products/forest-keepsake-box").expect(200);
+  const publicProduct = await request(app)
+    .get("/api/products/forest-keepsake-box")
+    .expect(200);
+  assert.equal(publicProduct.body.data.customizationAvailable, false);
   const archived = await admin.delete(`/api/admin/products/${created.body.data.id}`).expect(200);
   assert.ok(archived.body.data.archivedAt);
   await request(app).get("/api/products/forest-keepsake-box").expect(404);

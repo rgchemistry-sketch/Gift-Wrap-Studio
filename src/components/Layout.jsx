@@ -10,9 +10,11 @@ import Offcanvas from 'react-bootstrap/Offcanvas';
 import Dropdown from 'react-bootstrap/Dropdown';
 import Icon from './Icon';
 import OfferPopup from './OfferPopup';
+import { FloatingWhatsAppButton } from './StorefrontInquiry';
 import { ToastStack } from './Feedback';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
+import { routeScrollIntent } from '../utils/route-scroll';
 import { resolveStudioContact } from '../utils/studio-contact';
 import '../details.css';
 
@@ -75,6 +77,8 @@ export default function Layout() {
   const mainContentRef = useRef(null);
   const location = useLocation();
   const previousPathRef = useRef(location.pathname);
+  const previousScrollLocationRef = useRef(null);
+  const pendingHashScrollRef = useRef('');
   const navigate = useNavigate();
   const navigationType = useNavigationType();
   const { cartCount, notify, studioSettings } = useShop();
@@ -125,21 +129,94 @@ export default function Layout() {
   useEffect(() => {
     let hashFrame;
     let hashTimer;
-    if (location.hash) {
+    let hashPollTimer;
+    let hashSettleTimer;
+    let hashObserver;
+    let hashObserverDeadline;
+    const previous = previousScrollLocationRef.current;
+    const hashScrollKey = JSON.stringify([location.pathname, location.hash]);
+    let intent = routeScrollIntent({
+      previous,
+      pathname: location.pathname,
+      hash: location.hash,
+      navigationType,
+    });
+    if (location.hash && pendingHashScrollRef.current === hashScrollKey) {
+      intent = { type: 'hash', hash: location.hash.slice(1) };
+    }
+    const currentScrollLocation = {
+      pathname: location.pathname,
+      hash: location.hash,
+    };
+    previousScrollLocationRef.current = currentScrollLocation;
+
+    if (intent.type === 'hash') {
+      pendingHashScrollRef.current = hashScrollKey;
+      let targetId = intent.hash;
+      try { targetId = decodeURIComponent(targetId); } catch { /* use the literal hash */ }
+      const finishHashScroll = () => {
+        if (pendingHashScrollRef.current === hashScrollKey) {
+          pendingHashScrollRef.current = '';
+        }
+        hashObserver?.disconnect();
+        if (hashFrame) window.cancelAnimationFrame(hashFrame);
+        if (hashTimer) window.clearTimeout(hashTimer);
+        if (hashPollTimer) window.clearTimeout(hashPollTimer);
+        if (hashSettleTimer) window.clearTimeout(hashSettleTimer);
+        if (hashObserverDeadline) window.clearTimeout(hashObserverDeadline);
+      };
       const scrollToHash = () => {
-        let targetId = location.hash.slice(1);
-        try { targetId = decodeURIComponent(targetId); } catch { /* use the literal hash */ }
-        document.getElementById(targetId)?.scrollIntoView({ block: 'start' });
+        const target = document.getElementById(targetId);
+        if (!target) return false;
+        target.scrollIntoView({ block: 'start', behavior: 'instant' });
+        if (hashFrame) window.cancelAnimationFrame(hashFrame);
+        if (hashTimer) window.clearTimeout(hashTimer);
+        if (hashPollTimer) window.clearTimeout(hashPollTimer);
+        if (hashSettleTimer) window.clearTimeout(hashSettleTimer);
+        hashSettleTimer = window.setTimeout(() => {
+          document.getElementById(targetId)?.scrollIntoView({
+            block: 'start',
+            behavior: 'instant',
+          });
+          finishHashScroll();
+        }, 300);
+        return true;
+      };
+      const pollForHash = () => {
+        if (!scrollToHash()) {
+          hashPollTimer = window.setTimeout(pollForHash, 100);
+        }
       };
       hashFrame = window.requestAnimationFrame(scrollToHash);
-      hashTimer = window.setTimeout(scrollToHash, 160);
-    } else if (navigationType !== 'POP') {
-      window.scrollTo({ top: 0, behavior: 'instant' });
+      hashTimer = window.setTimeout(pollForHash, 160);
+      if (typeof MutationObserver !== 'undefined') {
+        hashObserver = new MutationObserver(scrollToHash);
+        hashObserver.observe(mainContentRef.current || document.body, {
+          childList: true,
+          subtree: true,
+        });
+      }
+      hashObserverDeadline = window.setTimeout(() => {
+        document.getElementById(targetId)?.scrollIntoView({
+          block: 'start',
+          behavior: 'instant',
+        });
+        finishHashScroll();
+      }, 4_000);
+    } else {
+      if (pendingHashScrollRef.current !== hashScrollKey) {
+        pendingHashScrollRef.current = '';
+      }
+      if (intent.type === 'top') window.scrollTo({ top: 0, behavior: 'instant' });
     }
 
     return () => {
       if (hashFrame) window.cancelAnimationFrame(hashFrame);
       if (hashTimer) window.clearTimeout(hashTimer);
+      if (hashPollTimer) window.clearTimeout(hashPollTimer);
+      if (hashSettleTimer) window.clearTimeout(hashSettleTimer);
+      hashObserver?.disconnect();
+      if (hashObserverDeadline) window.clearTimeout(hashObserverDeadline);
     };
   }, [location.hash, location.pathname, navigationType]);
 
@@ -302,6 +379,8 @@ export default function Layout() {
       <main ref={mainContentRef} id="main-content" tabIndex="-1">
         <Outlet />
       </main>
+
+      {location.pathname === '/' && <FloatingWhatsAppButton phone={contact.phone} />}
 
       <Footer settings={studioSettings} />
       {authModalOpen && <Suspense fallback={null}><AuthModal /></Suspense>}

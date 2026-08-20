@@ -16,13 +16,22 @@ process.env.CLOUDINARY_UPLOAD_PRESET = "test-locked-preset";
 process.env.UPLOAD_SIGNATURES_PER_HOUR = "20";
 delete process.env.MONGODB_URI;
 
-const [{ default: app }, { memoryStore, resetMemoryStore }, { createWebApp }] = await Promise.all([
+const [
+  { default: app },
+  { memoryStore, resetMemoryStore },
+  { createWebApp },
+  store,
+] = await Promise.all([
   import("../app.js"),
   import("../lib/memory-store.js"),
   import("../web-app.js"),
+  import("../services/store.js"),
 ]);
 
-beforeEach(() => resetMemoryStore());
+beforeEach(() => {
+  resetMemoryStore();
+  store.resetOrderReservationHookForTests();
+});
 
 const authenticatedBuyer = async () => {
   const buyer = request.agent(app);
@@ -221,6 +230,114 @@ test("checkout resolves a cart item by its stable product ID after its slug chan
   assert.equal(order.body.data.items[0].productId, product.id);
   assert.equal(order.body.data.items[0].slug, renamedSlug);
   assert.equal(order.body.data.items[0].unitPrice, product.price);
+});
+
+test("checkout rejects personalization when a product has customization disabled", async () => {
+  const { buyer } = await authenticatedBuyer();
+  const product = await request(app)
+    .get("/api/products/malachite-serving-tray")
+    .expect(200);
+  assert.equal(product.body.data.customizationAvailable, false);
+
+  const shippingAddress = {
+    recipientName: "Aarav Sharma",
+    phone: "+91 98765 43210",
+    line1: "12 Garden Road",
+    city: "Jaipur",
+    state: "Rajasthan",
+    postalCode: "302001",
+  };
+  const rejected = await buyer
+    .post("/api/orders")
+    .send({
+      items: [
+        {
+          slug: "malachite-serving-tray",
+          quantity: 1,
+          customization: "Please engrave Mira",
+        },
+      ],
+      shippingAddress,
+    })
+    .expect(409);
+  assert.equal(rejected.body.error.code, "CONFLICT");
+  assert.equal(rejected.body.error.details[0].field, "items");
+  assert.equal(rejected.body.error.details[0].productId, product.body.data.id);
+  assert.equal(rejected.body.error.details[0].customizationAvailable, false);
+  assert.equal(
+    Number.isFinite(Date.parse(rejected.body.error.details[0].productUpdatedAt)),
+    true,
+  );
+
+  const accepted = await buyer
+    .post("/api/orders")
+    .send({
+      items: [{ slug: "malachite-serving-tray", quantity: 1 }],
+      shippingAddress,
+    })
+    .expect(201);
+  assert.equal(accepted.body.data.items[0].customization, "");
+});
+
+test("checkout rechecks customization availability at the final reservation boundary", async () => {
+  const { buyer } = await authenticatedBuyer();
+  await request(app).get("/api/products/malachite-serving-tray").expect(200);
+  memoryStore.update("products", "p4", { customizationAvailable: true });
+  const inventoryBefore = memoryStore.get("products", "p4").inventory;
+  let reservationChecks = 0;
+  store.setOrderReservationHookForTests(() => {
+    reservationChecks += 1;
+    memoryStore.update("products", "p4", { customizationAvailable: false });
+  });
+
+  const rejected = await buyer
+    .post("/api/orders")
+    .send({
+      items: [
+        {
+          slug: "malachite-serving-tray",
+          quantity: 1,
+          customization: "Please engrave Mira",
+        },
+      ],
+      shippingAddress: {
+        recipientName: "Aarav Sharma",
+        phone: "+91 98765 43210",
+        line1: "12 Garden Road",
+        city: "Jaipur",
+        state: "Rajasthan",
+        postalCode: "302001",
+      },
+    })
+    .expect(409);
+
+  assert.equal(reservationChecks, 1);
+  assert.equal(rejected.body.error.code, "CONFLICT");
+  assert.equal(rejected.body.error.details[0].field, "items");
+  assert.equal(rejected.body.error.details[0].customizationAvailable, false);
+  assert.equal(
+    Number.isFinite(Date.parse(rejected.body.error.details[0].productUpdatedAt)),
+    true,
+  );
+  assert.equal(memoryStore.count("orders"), 0);
+  assert.equal(memoryStore.get("products", "p4").inventory, inventoryBefore);
+  assert.equal(memoryStore.get("products", "p4").customizationAvailable, false);
+});
+
+test("legacy products derive customization availability from their existing fields", async () => {
+  await request(app).get("/api/products?limit=1").expect(200);
+  memoryStore.update("products", "p1", { customizationAvailable: undefined });
+  memoryStore.update("products", "p4", { customizationAvailable: undefined });
+
+  const customizable = await request(app)
+    .get("/api/products/pressed-flower-name-plaque")
+    .expect(200);
+  const readyMade = await request(app)
+    .get("/api/products/malachite-serving-tray")
+    .expect(200);
+
+  assert.equal(customizable.body.data.customizationAvailable, true);
+  assert.equal(readyMade.body.data.customizationAvailable, false);
 });
 
 test("demo buyer auth, server-priced first order, and one-time offer work together", async () => {

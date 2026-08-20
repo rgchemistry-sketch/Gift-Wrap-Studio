@@ -792,6 +792,7 @@ test("order and inventory writes roll back when customization grant consumption 
   const image = await requestOrderGrant(buyer);
   const payload = orderPayload(image, "malachite-serving-tray");
   await request(app).get("/api/products/malachite-serving-tray").expect(200);
+  memoryStore.update("products", "p4", { customizationAvailable: true });
   const productBefore = memoryStore.findOne(
     "products",
     (product) => product.slug === "malachite-serving-tray",

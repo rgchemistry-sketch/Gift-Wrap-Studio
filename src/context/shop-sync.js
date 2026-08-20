@@ -1,3 +1,5 @@
+import { recoverCartLineWithoutCustomization } from './cart-validation.js';
+
 export const SHOP_SYNC_VERSION = 1;
 export const SHOP_SYNC_CHANNEL = 'gift-n-wrap-shop';
 export const SHOP_MUTATION_KEY_PREFIX = 'gnw-shop-mutation';
@@ -7,6 +9,7 @@ const ACTIONS = new Set([
   'cart/add',
   'cart/clear',
   'cart/patch',
+  'cart/recover-standard',
   'cart/remove',
   'cart/set-quantity',
   'wishlist/set',
@@ -71,7 +74,12 @@ export function normalizeShopMutation(value) {
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) return null;
     mutation.line = value.line;
     mutation.quantity = quantity;
-  } else if (action === 'cart/remove' || action === 'cart/set-quantity' || action === 'cart/patch') {
+  } else if (
+    action === 'cart/remove'
+    || action === 'cart/recover-standard'
+    || action === 'cart/set-quantity'
+    || action === 'cart/patch'
+  ) {
     mutation.lineId = id(value.lineId);
     if (!mutation.lineId) return null;
     if (action === 'cart/set-quantity') {
@@ -150,6 +158,9 @@ export function reduceCartMutations(base = [], values = [], ownerId = '') {
       }
     } else if (mutation.action === 'cart/remove') {
       if (index >= 0) cart.splice(index, 1);
+    } else if (mutation.action === 'cart/recover-standard' && index >= 0) {
+      const recovered = recoverCartLineWithoutCustomization(cart, mutation.lineId);
+      cart.splice(0, cart.length, ...recovered.cart);
     } else if (mutation.action === 'cart/set-quantity') {
       if (index >= 0) cart[index] = { ...cart[index], quantity: Math.min(10, mutation.quantity) };
     } else if (mutation.action === 'cart/patch' && index >= 0) {

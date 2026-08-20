@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import Accordion from 'react-bootstrap/Accordion';
 import Button from 'react-bootstrap/Button';
 import Col from 'react-bootstrap/Col';
@@ -9,6 +9,7 @@ import Row from 'react-bootstrap/Row';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../components/Icon';
 import ProductCard from '../components/ProductCard';
+import { ProductInquiryPanel } from '../components/StorefrontInquiry';
 import SmartImage from '../components/SmartImage';
 import { RouteLoader } from '../components/Feedback';
 import { api } from '../api/client';
@@ -16,6 +17,7 @@ import { formatCurrency } from '../data/catalog';
 import { useCatalog } from '../data/useCatalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
+import { resolveStudioContact } from '../utils/studio-contact';
 
 const emptyCustomization = () => ({
   name: '',
@@ -268,6 +270,7 @@ const MediaUpload = forwardRef(function MediaUpload({ onChange, onBusyChange }, 
 
 export default function ProductPage() {
   const { slug } = useParams();
+  const location = useLocation();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -280,11 +283,12 @@ export default function ProductPage() {
   const [mediaSubmitError, setMediaSubmitError] = useState('');
   const mediaUploadRef = useRef(null);
   const purchaseFormRef = useRef(null);
-  const { addToCart, wishlist, toggleWishlist } = useShop();
+  const { addToCart, wishlist, toggleWishlist, studioSettings } = useShop();
   const { user, sessionOwnerId, requireAuth } = useAuth();
   const currentFormOwner = String(sessionOwnerId || user?.id || '') || 'guest';
   const [formOwner, setFormOwner] = useState('guest');
   const { products: catalog } = useCatalog();
+  const contact = resolveStudioContact(studioSettings);
 
   useEffect(() => {
     if (formOwner === currentFormOwner) return;
@@ -357,6 +361,7 @@ export default function ProductPage() {
 
   const gallery = product.gallery?.length ? product.gallery : [product.image];
   const activeImageIndex = Math.min(selectedImage, gallery.length - 1);
+  const productUrl = new URL(location.pathname, window.location.origin).href;
   const updateCustomization = (key, value) => {
     if (key === 'media') setMediaSubmitError('');
     setCustomization((current) => ({ ...current, [key]: value }));
@@ -499,6 +504,8 @@ export default function ProductPage() {
                   </div>
                   {product.customizable && <p className="included-note"><Icon name="check" size={14} /> Standard personalization is included in the displayed price.</p>}
                 </Form>
+
+                <ProductInquiryPanel product={product} productUrl={productUrl} contact={contact} />
 
                 <Accordion flush className="studio-accordion product-accordion">
                   <Accordion.Item eventKey="0"><Accordion.Header>What arrives with it</Accordion.Header><Accordion.Body><ul><li>Premium gift packaging</li><li>Protective bubble wrap and corrugated box</li><li>Care instructions and thank-you card</li></ul></Accordion.Body></Accordion.Item>

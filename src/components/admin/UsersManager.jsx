@@ -130,7 +130,7 @@ export default function UsersManager({ dashboardMetrics = {} }) {
     setDetailError('');
     if (restoreFocus) {
       window.requestAnimationFrame(() => {
-        if (detailTriggerRef.current?.isConnected) detailTriggerRef.current.focus();
+        if (detailTriggerRef.current?.isConnected) detailTriggerRef.current.focus({ preventScroll: true });
       });
     }
   };

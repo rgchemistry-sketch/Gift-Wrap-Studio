@@ -97,6 +97,7 @@ export default function CheckoutPage() {
     subtotal,
     clearCart,
     removeFromCart,
+    removeCartCustomization,
     claimedOfferCode,
     welcomeOffer,
     studioSettings,
@@ -104,6 +105,7 @@ export default function CheckoutPage() {
     removeWelcomeOffer,
     revalidateCart,
     markCartItemUnavailable,
+    markCartCustomizationUnavailable,
   } = useShop();
   const {
     products: catalog,
@@ -217,12 +219,16 @@ export default function CheckoutPage() {
     && welcomeOffer?.enabled === true
     && itemOfferEligible;
   const unavailableItems = cart.filter((line) => line.unavailable);
+  const customizationUnavailableItems = cart.filter((line) => line.customizationUnavailable);
+  const bagNeedsAttention = unavailableItems.length > 0 || customizationUnavailableItems.length > 0;
   const bagCheckPending = !liveCatalogReady || catalogLoading;
   const submitLabel = catalogError
     ? 'Retry the bag check to continue'
     : bagCheckPending
       ? 'Checking your bag…'
-      : 'Send order request';
+      : bagNeedsAttention
+        ? 'Resolve bag updates to continue'
+        : 'Send order request';
   const offerStatus = !offerClaimed
     ? '—'
     : !itemOfferEligible
@@ -256,6 +262,12 @@ export default function CheckoutPage() {
         : 'We’re still checking your bag against the live catalogue. Please wait a moment.';
       setError(message);
       notify(message, 'info');
+      return;
+    }
+    if (customizationUnavailableItems.length) {
+      const message = 'Choose whether to keep each affected piece without personalization or remove it before sending this request.';
+      setError(message);
+      notify(message, 'warning');
       return;
     }
     if (unavailableItems.length) {
@@ -338,6 +350,7 @@ export default function CheckoutPage() {
       notify(`Order request${createdOrder.orderNumber ? ` ${createdOrder.orderNumber}` : ''} was sent securely.`);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (requestError) {
+      const firstIssue = Array.isArray(requestError.details) ? requestError.details[0] : null;
       if (requestError.code === 'SESSION_IDENTITY_CHANGED') {
         await refreshSession();
         const message = 'Your signed-in account changed, so this order was not sent. Please review the current account’s bag and delivery details.';
@@ -370,8 +383,20 @@ export default function CheckoutPage() {
         setIdempotencyConflict(true);
         setError(message);
         notify(message, 'warning');
+      } else if (
+        firstIssue?.field === 'items'
+        && firstIssue.customizationAvailable === false
+      ) {
+        markCartCustomizationUnavailable({
+          productId: firstIssue.productId,
+          slug: firstIssue.slug,
+          productVersion: firstIssue.productUpdatedAt,
+        });
+        void refreshLiveCart();
+        const message = 'Personalization is no longer available for an item in your bag. Your saved details are still here—keep the piece without personalization or remove it before continuing.';
+        setError(message);
+        notify(message, 'warning');
       } else {
-        const firstIssue = Array.isArray(requestError.details) ? requestError.details[0] : null;
         if (requestError.code === 'NOT_FOUND' && firstIssue?.field === 'items') {
           markCartItemUnavailable({
             productId: firstIssue.productId,
@@ -401,6 +426,16 @@ export default function CheckoutPage() {
     setCouponRecovery(false);
     setError('');
     formRef.current?.requestSubmit();
+  };
+
+  const keepWithoutCustomization = (lineId) => {
+    if (!removeCartCustomization(lineId)) return;
+    setError('');
+  };
+
+  const removeAffectedLine = (lineId) => {
+    removeFromCart(lineId);
+    setError('');
   };
 
   if (!draftReady || hydratedDraftOwner !== draftOwner) return <RouteLoader />;
@@ -433,7 +468,20 @@ export default function CheckoutPage() {
           <Col lg={7}>
             <div className="checkout-heading"><p className="eyebrow">Order request</p><h1>Where should we send the beautiful thing?</h1><p>Share your delivery and occasion details. You’ll review the final design, total and payment instructions with the studio before production.</p></div>
             {catalogError && <Alert variant="warning" className="soft-alert">We couldn’t refresh live bag details. <button type="button" className="plain-link" onClick={refreshLiveCart}>Try again</button></Alert>}
-            {unavailableItems.length > 0 && <Alert variant="warning" className="soft-alert"><strong>{unavailableItems.length === 1 ? 'A piece in your bag is unavailable.' : 'Some pieces in your bag are unavailable.'}</strong> {unavailableItems.map((line) => <button type="button" className="plain-link" key={line.lineId} onClick={() => removeFromCart(line.lineId)}>Remove {line.product.title}</button>)}</Alert>}
+            {unavailableItems.length > 0 && <Alert variant="warning" className="soft-alert"><strong>{unavailableItems.length === 1 ? 'A piece in your bag is unavailable.' : 'Some pieces in your bag are unavailable.'}</strong> {unavailableItems.map((line) => <button type="button" className="plain-link" key={line.lineId} onClick={() => removeAffectedLine(line.lineId)}>Remove {line.product.title}</button>)}</Alert>}
+            {customizationUnavailableItems.length > 0 && (
+              <Alert variant="warning" className="soft-alert">
+                <strong>{customizationUnavailableItems.length === 1 ? 'A personalized piece needs your attention.' : 'Some personalized pieces need your attention.'}</strong>{' '}
+                The studio no longer offers personalization for {customizationUnavailableItems.length === 1 ? 'this piece' : 'these pieces'}, and none of your saved details have been removed.
+                {customizationUnavailableItems.map((line) => (
+                  <div key={line.lineId}>
+                    <strong>{line.product.title}:</strong>{' '}
+                    <button type="button" className="plain-link" onClick={() => keepWithoutCustomization(line.lineId)}>Keep without personalization</button>{' '}
+                    <button type="button" className="plain-link" onClick={() => removeAffectedLine(line.lineId)}>Remove piece</button>
+                  </div>
+                ))}
+              </Alert>
+            )}
             {error && <Alert variant="danger" className="soft-alert" role="alert">{error}{couponRecovery && <div><Button type="button" size="sm" variant="outline-dark" onClick={continueWithoutOffer}>Continue without offer</Button></div>}{idempotencyConflict && <div><Button as={Link} to="/account?tab=orders" size="sm" variant="outline-dark">Check Orders & requests</Button></div>}</Alert>}
             <Form ref={formRef} noValidate validated={validated} onSubmit={submit} className="checkout-form" aria-busy={submitting}>
               <fieldset>
@@ -463,7 +511,7 @@ export default function CheckoutPage() {
                 </Row>
               </fieldset>
               {!user && <Alert variant="info" className="soft-alert sign-in-reminder"><Icon name="lock" /> You’ll be asked to log in with a secure email code or an approved provider when you send this request. Your form is saved on this device.</Alert>}
-              <Button type="submit" className="button-burgundy checkout-submit" disabled={submitting || bagCheckPending || Boolean(catalogError) || unavailableItems.length > 0} aria-describedby="checkout-submit-note">{submitting ? <><Spinner size="sm" /> Sending securely…</> : <>{submitLabel}{!bagCheckPending && !catalogError && <Icon name="arrow" />}</>}</Button>
+              <Button type="submit" className="button-burgundy checkout-submit" disabled={submitting || bagCheckPending || Boolean(catalogError) || bagNeedsAttention} aria-describedby="checkout-submit-note">{submitting ? <><Spinner size="sm" /> Sending securely…</> : <>{submitLabel}{!bagCheckPending && !catalogError && !bagNeedsAttention && <Icon name="arrow" />}</>}</Button>
               <p className="checkout-submit-note" id="checkout-submit-note">By sending, you are requesting a studio review—not completing a purchase or payment.</p>
             </Form>
           </Col>
@@ -471,7 +519,7 @@ export default function CheckoutPage() {
             <aside className="checkout-summary" aria-labelledby="checkout-summary-title">
               <div className="checkout-summary__head"><p className="eyebrow" id="checkout-summary-title">Your pieces</p><Link to="/cart">Edit bag</Link></div>
               {cart.map((line) => (
-                <div className="checkout-mini-line" key={line.lineId}><div><SmartImage src={line.product.image} alt="" fallbackLabel={line.product.category} /><span>{line.quantity}</span></div><p><strong>{line.product.title}</strong><small>{line.unavailable ? (line.unavailableReason || 'Unavailable') : line.customization?.name ? `For ${line.customization.name}` : line.product.category}{line.priceUpdatedFrom != null && Number(line.priceUpdatedFrom) !== Number(line.product.price) ? ` · Price updated from ${formatCurrency(line.priceUpdatedFrom)}` : ''}</small></p><b>{line.unavailable ? 'Unavailable' : formatCurrency(line.product.price * line.quantity)}</b></div>
+                <div className="checkout-mini-line" key={line.lineId}><div><SmartImage src={line.product.image} alt="" fallbackLabel={line.product.category} /><span>{line.quantity}</span></div><p><strong>{line.product.title}</strong><small>{line.unavailable ? (line.unavailableReason || 'Unavailable') : line.customizationUnavailable ? (line.customizationUnavailableReason || 'Personalization needs attention') : line.customization?.name ? `For ${line.customization.name}` : line.product.category}{line.priceUpdatedFrom != null && Number(line.priceUpdatedFrom) !== Number(line.product.price) ? ` · Price updated from ${formatCurrency(line.priceUpdatedFrom)}` : ''}</small></p><b>{line.unavailable ? 'Unavailable' : line.customizationUnavailable ? 'Needs attention' : formatCurrency(line.product.price * line.quantity)}</b></div>
               ))}
               <dl><div><dt>Item total</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed after address review</dd></div><div><dt>Offer</dt><dd>{offerStatus}{offerClaimed && <><br /><button type="button" className="plain-link" onClick={removeWelcomeOffer}>Remove offer</button></>}</dd></div><div className="summary-total"><dt>Current estimate</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
               <div className="checkout-summary__note"><Icon name="spark" /><p><strong>What happens next?</strong><small>The studio reviews your design notes, confirms the final total and shares payment instructions personally.</small></p></div>

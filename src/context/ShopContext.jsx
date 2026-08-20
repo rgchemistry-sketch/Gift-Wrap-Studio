@@ -13,6 +13,11 @@ import {
   reduceWishlistMutations,
   uniqueSortedMutations,
 } from './shop-sync';
+import {
+  markCartCustomizationUnavailable as markCartCustomizationUnavailableLines,
+  hasCartCustomization,
+  revalidateCartLines,
+} from './cart-validation';
 
 const ShopContext = createContext(null);
 const CART_KEY = 'gnw-cart';
@@ -729,73 +734,17 @@ export function ShopProvider({ children }) {
 
   const revalidateCart = useCallback((catalog = []) => {
     if (!Array.isArray(catalog)) return;
-    const byId = new Map(catalog.map((product) => [String(product.id || ''), product]));
-    const bySlug = new Map(catalog.map((product) => [String(product.slug || ''), product]));
-    let changed = false;
-    let priceChanges = 0;
-    let newlyUnavailable = 0;
-    const next = cartRef.current.map((line) => {
-      const liveProduct = byId.get(String(line.product.id || ''))
-        || bySlug.get(String(line.product.slug || ''));
-      if (!liveProduct) {
-        if (line.unavailable && line.unavailableReason === 'This piece is no longer available.') {
-          return line;
-        }
-        changed = true;
-        if (!line.unavailable) newlyUnavailable += 1;
-        return {
-          ...line,
-          unavailable: true,
-          unavailableReason: 'This piece is no longer available.',
-        };
-      }
-
-      const previousPrice = Number(line.product.price);
-      const currentPrice = Number(liveProduct.price);
-      const priceChanged = previousPrice !== currentPrice;
-      const hasFiniteInventory = liveProduct.inventory != null
-        && Number.isFinite(Number(liveProduct.inventory));
-      const availableInventory = hasFiniteInventory ? Number(liveProduct.inventory) : null;
-      const insufficientStock = availableInventory != null
-        && availableInventory < Number(line.quantity || 0);
-      const unavailable = liveProduct.inStock === false || insufficientStock;
-      const unavailableReason = insufficientStock && availableInventory > 0
-        ? `Only ${availableInventory} available. Reduce the quantity or remove this piece.`
-        : unavailable
-          ? 'This piece is currently unavailable.'
-          : '';
-      if (priceChanged) priceChanges += 1;
-      if (unavailable && !line.unavailable) newlyUnavailable += 1;
-      if (
-        line.product !== liveProduct
-        || priceChanged
-        || Boolean(line.unavailable) !== unavailable
-        || String(line.unavailableReason || '') !== unavailableReason
-      ) {
-        changed = true;
-        const refreshed = {
-          ...line,
-          product: liveProduct,
-          ...(priceChanged ? { priceUpdatedFrom: previousPrice } : {}),
-        };
-        if (unavailable) {
-          refreshed.unavailable = true;
-          refreshed.unavailableReason = unavailableReason;
-        } else {
-          delete refreshed.unavailable;
-          delete refreshed.unavailableReason;
-        }
-        return refreshed;
-      }
-      return line;
-    });
-    if (!changed) return;
-    persistCart(next);
-    if (priceChanges) {
-      notify(`${priceChanges === 1 ? 'A price was' : `${priceChanges} prices were`} updated to match the live catalogue.`, 'info');
+    const result = revalidateCartLines(cartRef.current, catalog);
+    if (!result.changed) return;
+    persistCart(result.cart);
+    if (result.priceChanges) {
+      notify(`${result.priceChanges === 1 ? 'A price was' : `${result.priceChanges} prices were`} updated to match the live catalogue.`, 'info');
     }
-    if (newlyUnavailable) {
-      notify(`${newlyUnavailable === 1 ? 'A bag item is' : `${newlyUnavailable} bag items are`} no longer available. Remove ${newlyUnavailable === 1 ? 'it' : 'them'} before continuing.`, 'warning');
+    if (result.newlyUnavailable) {
+      notify(`${result.newlyUnavailable === 1 ? 'A bag item is' : `${result.newlyUnavailable} bag items are`} no longer available. Remove ${result.newlyUnavailable === 1 ? 'it' : 'them'} before continuing.`, 'warning');
+    }
+    if (result.newlyCustomizationUnavailable) {
+      notify(`${result.newlyCustomizationUnavailable === 1 ? 'A personalized bag item needs' : `${result.newlyCustomizationUnavailable} personalized bag items need`} your attention before checkout.`, 'warning');
     }
   }, [notify, persistCart]);
 
@@ -816,18 +765,44 @@ export function ShopProvider({ children }) {
     return matched;
   }, [persistCart]);
 
-  const releaseCartAttachment = useCallback((item) => {
+  const markCartCustomizationUnavailable = useCallback(({
+    productId = '',
+    slug = '',
+    productVersion = '',
+  } = {}) => {
+    const result = markCartCustomizationUnavailableLines(
+      cartRef.current,
+      { productId, slug, productVersion },
+    );
+    if (result.changed) persistCart(result.cart);
+    return result.matched;
+  }, [persistCart]);
+
+  const releaseCartAttachment = useCallback((item, failureMessage = 'The item was removed, but its photo could not be released right now.') => {
     const publicId = String(item?.customization?.media?.publicId || '').trim();
     if (!publicId || releasingUploadIdsRef.current.has(publicId)) return;
     releasingUploadIdsRef.current.add(publicId);
     void api.deleteUploadedAsset(publicId)
       .catch(() => {
-        notify('The item was removed, but its photo could not be released right now.', 'neutral');
+        notify(failureMessage, 'neutral');
       })
       .finally(() => {
         releasingUploadIdsRef.current.delete(publicId);
       });
   }, [notify]);
+
+  const removeCartCustomization = useCallback((lineId) => {
+    const current = cartRef.current;
+    const item = current.find((line) => line.lineId === lineId);
+    if (!item || !hasCartCustomization(item)) return false;
+    publishShopMutation('cart/recover-standard', { lineId });
+    releaseCartAttachment(
+      item,
+      'Personalization was removed, but its photo could not be released right now.',
+    );
+    notify(`Personalization was removed from ${item.product.title}. The piece remains in your bag.`, 'neutral');
+    return true;
+  }, [notify, publishShopMutation, releaseCartAttachment]);
 
   const addToCart = useCallback(
     (product, { quantity = 1, customization = {}, onAdded } = {}) => {
@@ -936,6 +911,7 @@ export function ShopProvider({ children }) {
       addToCart,
       updateQuantity,
       removeFromCart,
+      removeCartCustomization,
       clearCart,
       toggleWishlist,
       notify,
@@ -944,6 +920,7 @@ export function ShopProvider({ children }) {
       removeWelcomeOffer,
       revalidateCart,
       markCartItemUnavailable,
+      markCartCustomizationUnavailable,
       applyStudioSettings,
       refreshStudioSettings,
     }),
@@ -960,6 +937,7 @@ export function ShopProvider({ children }) {
       addToCart,
       updateQuantity,
       removeFromCart,
+      removeCartCustomization,
       clearCart,
       toggleWishlist,
       notify,
@@ -968,6 +946,7 @@ export function ShopProvider({ children }) {
       removeWelcomeOffer,
       revalidateCart,
       markCartItemUnavailable,
+      markCartCustomizationUnavailable,
       applyStudioSettings,
       refreshStudioSettings,
     ],

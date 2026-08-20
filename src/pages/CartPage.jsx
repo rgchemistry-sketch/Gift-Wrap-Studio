@@ -22,6 +22,7 @@ export default function CartPage() {
     subtotal,
     updateQuantity,
     removeFromCart,
+    removeCartCustomization,
     claimedOfferCode,
     welcomeOffer,
     studioSettings,
@@ -41,13 +42,17 @@ export default function CartPage() {
     .slice(0, 3);
   const claimedOffer = claimedOfferCode;
   const unavailableItems = cart.filter((line) => line.unavailable);
+  const customizationUnavailableItems = cart.filter((line) => line.customizationUnavailable);
+  const bagNeedsAttention = unavailableItems.length > 0 || customizationUnavailableItems.length > 0;
   const contact = resolveStudioContact(studioSettings);
   const bagCheckPending = !liveCatalogReady || catalogLoading;
   const checkoutButtonLabel = catalogError
     ? 'Retry the bag check to continue'
     : bagCheckPending
       ? 'Checking your bag…'
-      : 'Continue to order request';
+      : bagNeedsAttention
+        ? 'Resolve bag updates to continue'
+        : 'Continue to order request';
 
   const refreshLiveCart = async () => {
     setLiveCatalogReady(false);
@@ -74,6 +79,10 @@ export default function CartPage() {
   }, [cart, catalog, catalogError, catalogLoading, liveCatalogReady, revalidateCart]);
 
   const continueToCheckout = () => {
+    if (customizationUnavailableItems.length) {
+      notify('Choose whether to keep each affected piece without personalization or remove it before continuing.', 'warning');
+      return;
+    }
     if (unavailableItems.length) {
       notify('Remove unavailable pieces from your bag before continuing.', 'warning');
       return;
@@ -121,6 +130,14 @@ export default function CartPage() {
                     <div className="cart-line__head"><div><p className="eyebrow">{line.product.category}</p><h2><Link to={`/product/${line.product.slug}`}>{line.product.title}</Link></h2></div><strong>{line.unavailable ? 'Unavailable' : formatCurrency(line.product.price * line.quantity)}</strong></div>
                     {line.priceUpdatedFrom != null && Number(line.priceUpdatedFrom) !== Number(line.product.price) && <Alert variant="info" className="soft-alert"><Icon name="spark" size={14} /> Price updated from {formatCurrency(line.priceUpdatedFrom)} to {formatCurrency(line.product.price)}.</Alert>}
                     {line.unavailable && <Alert variant="warning" className="soft-alert"><strong>{line.unavailableReason || 'This piece is unavailable.'}</strong> <button type="button" className="plain-link" onClick={() => removeFromCart(line.lineId)}>Remove it from my bag</button></Alert>}
+                    {line.customizationUnavailable && (
+                      <Alert variant="warning" className="soft-alert">
+                        <strong>{line.customizationUnavailableReason || 'Personalization is no longer available for this piece.'}</strong>{' '}
+                        Your saved details are still here.{' '}
+                        <button type="button" className="plain-link" onClick={() => removeCartCustomization(line.lineId)}>Keep it without personalization</button>{' '}
+                        <button type="button" className="plain-link" onClick={() => removeFromCart(line.lineId)}>Remove the piece</button>
+                      </Alert>
+                    )}
                     {line.customization && Object.keys(line.customization).length > 0 && (
                       <div className="cart-customization">
                         <span>Personalized</span>
@@ -148,7 +165,7 @@ export default function CartPage() {
               <h2 id="cart-summary-title">Your summary</h2>
               {claimedOffer && <Alert variant={welcomeOffer?.eligible === false ? 'warning' : 'success'} className="offer-claimed"><Icon name="spark" /> {welcomeOffer?.eligible === false ? `${claimedOffer} is not available for this account.` : `${claimedOffer} saved. Eligibility will be checked before final confirmation.`} <button type="button" className="plain-link" onClick={removeWelcomeOffer}>Remove offer</button></Alert>}
               <dl><div><dt>Pieces ({cart.reduce((count, line) => count + line.quantity, 0)})</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed by studio</dd></div><div className="summary-total"><dt>Current item total</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
-              <Button type="button" onClick={continueToCheckout} disabled={bagCheckPending || Boolean(catalogError) || unavailableItems.length > 0} className="button-burgundy w-100" aria-describedby="cart-summary-note">{checkoutButtonLabel}{!bagCheckPending && !catalogError && <Icon name="arrow" />}</Button>
+              <Button type="button" onClick={continueToCheckout} disabled={bagCheckPending || Boolean(catalogError) || bagNeedsAttention} className="button-burgundy w-100" aria-describedby="cart-summary-note">{checkoutButtonLabel}{!bagCheckPending && !catalogError && !bagNeedsAttention && <Icon name="arrow" />}</Button>
               <p className="summary-note" id="cart-summary-note"><Icon name="lock" size={14} /> No payment is taken on this page. The studio confirms customization, delivery and final amount first.</p>
               {contact.phoneHref && <div className="summary-contact"><p>Need help with your design?</p><a href={contact.phoneHref}>Call the studio · {contact.phoneLabel}</a></div>}
             </aside>

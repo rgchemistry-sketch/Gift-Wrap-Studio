@@ -92,6 +92,34 @@ test('cart patches replace stale optional fields while preserving identity and q
   }]);
 });
 
+test('simultaneous two-tab personalization recovery changes quantity exactly once', () => {
+  const standard = {
+    ...line('plaque-standard'),
+    product: { id: 'plaque', slug: 'plaque', price: 100 },
+    quantity: 3,
+  };
+  const customized = {
+    ...line('plaque-name-mira'),
+    product: { id: 'plaque', slug: 'plaque', price: 100 },
+    quantity: 2,
+    customization: { name: 'Mira' },
+  };
+  const recoveries = [
+    op({ action: 'cart/recover-standard', clock: 1, lineId: customized.lineId }),
+    op({
+      action: 'cart/recover-standard',
+      clock: 1,
+      sourceId: 'tab-b',
+      lineId: customized.lineId,
+    }),
+  ];
+
+  assert.deepEqual(
+    reduceCartMutations([standard, customized], recoveries, 'buyer-a'),
+    [{ ...standard, quantity: 5 }],
+  );
+});
+
 test('a clear boundary compacts only known earlier cart operations', () => {
   const before = op({ action: 'cart/add', clock: 1, line: line('rose'), quantity: 1 });
   const clear = op({ action: 'cart/clear', clock: 2 });

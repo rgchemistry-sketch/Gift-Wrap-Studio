@@ -1269,3 +1269,38 @@
   .user-detail,
   .admin-skip-link { animation: none; transition: none; }
 }
+
+/* Product controls keep native semantics, with a clearer studio-styled affordance. */
+.product-editor .form-control,
+.product-editor .form-select {
+  border-color: rgba(58,42,34,.22);
+  border-radius: .55rem;
+  background-color: #fffdf9;
+}
+.product-editor .form-select {
+  min-height: 3rem;
+  padding: .72rem 2.8rem .72rem .9rem;
+  background-position: right .9rem center;
+  font-size: .9rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+.product-editor .form-select:hover:not(:disabled) {
+  border-color: rgba(116,43,66,.48);
+  background-color: #fffaf2;
+}
+.product-editor .form-select:focus {
+  border-color: var(--admin-red);
+  box-shadow: 0 0 0 3px rgba(116,43,66,.1);
+}
+.product-editor .form-select option {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+@media (max-width: 767.98px) {
+  .product-editor .form-control,
+  .product-editor .form-select { font-size: 1rem; }
+  .product-editor .form-select { min-height: 3.25rem; }
+}

@@ -32,6 +32,7 @@ const emptyProduct = {
   images: [],
   tags: '',
   customizationOptions: '',
+  customizationAvailable: true,
   variants: [],
   active: true,
   featured: false,
@@ -112,6 +113,13 @@ const removeProductDraft = (key) => {
 
 function toDraft(product) {
   if (!product) return { ...emptyProduct };
+  const customizationAvailable = Boolean(
+    product.customizationAvailable
+      ?? product.customizable
+      ?? product.isCustomizable
+      ?? product.madeToOrder
+      ?? product.customizationOptions?.length,
+  );
   return {
     ...emptyProduct,
     ...product,
@@ -123,6 +131,7 @@ function toDraft(product) {
       : product.image ? [{ url: product.image, alt: product.name || product.title || '' }] : [],
     tags: Array.isArray(product.tags) ? product.tags.join(', ') : product.tags || '',
     customizationOptions: Array.isArray(product.customizationOptions) ? product.customizationOptions.join(', ') : product.customizationOptions || '',
+    customizationAvailable,
     variants: Array.isArray(product.variants)
       ? product.variants.map((variant) => ({
         ...variant,
@@ -328,7 +337,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
       inertedElements.forEach(([element, wasInert]) => {
         if (element.isConnected) element.inert = wasInert;
       });
-      previousFocusRef.current?.focus();
+      previousFocusRef.current?.focus({ preventScroll: true });
     };
   }, []);
 
@@ -694,6 +703,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
       images: draft.images,
       tags,
       customizationOptions,
+      customizationAvailable: draft.customizationAvailable,
       variants,
       active: draft.active,
       featured: draft.featured,
@@ -1009,6 +1019,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               <Form.Check type="switch" id="product-active" label={<><strong>Published</strong><small>Visible and available on the storefront</small></>} checked={draft.active} onChange={(event) => setField('active', event.target.checked)}/>
               <Form.Check type="switch" id="product-featured" label={<><strong>Featured piece</strong><small>Give it priority in curated sections</small></>} checked={draft.featured} onChange={(event) => setField('featured', event.target.checked)}/>
               <Form.Check type="switch" id="product-made-order" label={<><strong>Made to order</strong><small>Created after the customer orders</small></>} checked={draft.madeToOrder} onChange={(event) => setField('madeToOrder', event.target.checked)}/>
+              <Form.Check type="switch" id="product-customization-available" label={<><strong>Customization available</strong><small>Show personalization fields and “Personalize & add” in the shop</small></>} checked={draft.customizationAvailable} onChange={(event) => setField('customizationAvailable', event.target.checked)}/>
             </div>
             </div>
           </section>

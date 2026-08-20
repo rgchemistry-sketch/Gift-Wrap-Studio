@@ -56,6 +56,13 @@ export function normalizeProduct(product = {}) {
   const slug = product.slug || String(id || title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const image = product.image || images[0] || categoryFallbacks[category] || '/assets/hero-resin-studio.webp';
   const rawOccasion = typeof product.occasion === 'object' ? product.occasion?.name : product.occasion;
+  const customizable = Boolean(
+    product.customizationAvailable
+      ?? product.customizable
+      ?? product.isCustomizable
+      ?? product.madeToOrder
+      ?? product.customizationOptions?.length,
+  );
 
   return {
     ...product,
@@ -70,8 +77,9 @@ export function normalizeProduct(product = {}) {
     compareAt: Number(product.compareAt || product.compareAtPrice || 0) || null,
     image,
     gallery: product.gallery?.length ? product.gallery : images.length ? images : [image],
-    badge: product.badge || (product.customizable ? 'Personalized' : ''),
-    customizable: Boolean(product.customizable ?? product.isCustomizable ?? product.madeToOrder ?? product.customizationOptions?.length),
+    badge: product.badge || (customizable ? 'Personalized' : ''),
+    customizationAvailable: customizable,
+    customizable,
     inStock: product.inStock ?? (product.inventory == null ? (product.stock === undefined ? true : product.stock > 0) : product.inventory > 0),
     leadTime: product.leadTime || product.processingTime || (product.leadTimeDays ? `${product.leadTimeDays} business days` : '5–10 business days'),
     description: product.description || 'A carefully finished resin piece, handmade in the Gift N Wrap Studio.',

@@ -32,6 +32,7 @@ const clone = (value) => (value == null ? value : structuredClone(value));
 
 let uploadGrantConsumptionHookForTests;
 let uploadGrantReservationConflictHookForTests;
+let orderReservationHookForTests;
 
 export const setUploadGrantConsumptionHookForTests = (hook) => {
   if (!env.isTest) throw new Error("Upload grant consumption hooks are test-only");
@@ -53,6 +54,16 @@ export const resetUploadGrantReservationConflictHookForTests = () => {
   uploadGrantReservationConflictHookForTests = undefined;
 };
 
+export const setOrderReservationHookForTests = (hook) => {
+  if (!env.isTest) throw new Error("Order reservation hooks are test-only");
+  orderReservationHookForTests = hook;
+};
+
+export const resetOrderReservationHookForTests = () => {
+  if (!env.isTest) throw new Error("Order reservation hooks are test-only");
+  orderReservationHookForTests = undefined;
+};
+
 const plain = (record) => {
   if (!record) return undefined;
   if (typeof record.toJSON === "function") return record.toJSON();
@@ -63,6 +74,23 @@ const plain = (record) => {
   }
   delete value.__v;
   return clone(value);
+};
+
+const productCustomizationAvailable = (product = {}) => {
+  if (typeof product.customizationAvailable === "boolean") {
+    return product.customizationAvailable;
+  }
+  if (typeof product.customizable === "boolean") return product.customizable;
+  if (typeof product.isCustomizable === "boolean") return product.isCustomizable;
+  if (typeof product.madeToOrder === "boolean") return product.madeToOrder;
+  return Boolean(product.customizationOptions?.length);
+};
+
+const publicProduct = (record) => {
+  const product = plain(record);
+  if (!product) return product;
+  delete product.orderReservationVersion;
+  return { ...product, customizationAvailable: productCustomizationAvailable(product) };
 };
 
 const publicOrder = (record) => {
@@ -171,7 +199,7 @@ export const listProducts = async ({ search, category, occasion, featured, page,
         .limit(limit),
       Product.countDocuments(query),
     ]);
-    return paginate(records.map(plain), page, limit, total);
+    return paginate(records.map(publicProduct), page, limit, total);
   }
 
   const needle = search?.toLowerCase();
@@ -196,7 +224,12 @@ export const listProducts = async ({ search, category, occasion, featured, page,
         Number(b.featured) - Number(a.featured) ||
         new Date(b.createdAt) - new Date(a.createdAt),
     );
-  return paginate(slicePage(filtered, page, limit), page, limit, filtered.length);
+  return paginate(
+    slicePage(filtered, page, limit).map(publicProduct),
+    page,
+    limit,
+    filtered.length,
+  );
 };
 
 export const listProductCategories = async () => {
@@ -218,7 +251,7 @@ export const getProductBySlug = async (slug, { includeInactive = false } = {}) =
           (product) => product.slug === slug && (includeInactive || product.active),
         );
   if (!record) throw notFound("Product");
-  return plain(record);
+  return publicProduct(record);
 };
 
 const adminProductStatusQuery = (status) => {
@@ -239,7 +272,7 @@ const matchesAdminProductStatus = (product, status) => {
 };
 
 const adminProductListItem = (record) => {
-  const product = plain(record);
+  const product = publicProduct(record);
   return {
     id: product.id,
     slug: product.slug,
@@ -252,6 +285,7 @@ const adminProductListItem = (record) => {
     featured: product.featured,
     active: product.active,
     inventory: product.inventory,
+    customizationAvailable: product.customizationAvailable,
     sortOrder: product.sortOrder,
     archivedAt: product.archivedAt,
     createdAt: product.createdAt,
@@ -278,7 +312,7 @@ export const listAllProductsForAdmin = async ({ q, status = "all", page = 1, lim
     const [records, total] = await Promise.all([
       Product.find(query)
         .select(
-          "slug name category sku price compareAtPrice images featured active inventory sortOrder archivedAt createdAt updatedAt",
+          "slug name category sku price compareAtPrice images featured active inventory customizationAvailable madeToOrder sortOrder archivedAt createdAt updatedAt",
         )
         .slice("images", 1)
         .sort({ active: -1, sortOrder: 1, createdAt: -1, _id: 1 })
@@ -334,7 +368,7 @@ export const getProductForAdmin = async (id) => {
         : undefined
       : memoryStore.get("products", id);
   if (!record) throw notFound("Product");
-  return plain(record);
+  return publicProduct(record);
 };
 
 const productSkus = (product) =>
@@ -476,9 +510,16 @@ const assertProductSkusAvailable = async (candidate, mode, excludedId) => {
 
 export const createProduct = async (input, { userId } = {}) => {
   const mode = assertWritable(await ensureCatalogSeeded());
-  assertProductInvariants(input);
-  await assertProductSkusAvailable(input, mode);
-  const publicIds = productImagePublicIds(input);
+  const productInput = {
+    ...input,
+    customizationAvailable:
+      typeof input.customizationAvailable === "boolean"
+        ? input.customizationAvailable
+        : productCustomizationAvailable(input),
+  };
+  assertProductInvariants(productInput);
+  await assertProductSkusAvailable(productInput, mode);
+  const publicIds = productImagePublicIds(productInput);
   if (publicIds.length && !userId) {
     throw forbidden("An authenticated administrator must own every uploaded product image");
   }
@@ -489,7 +530,7 @@ export const createProduct = async (input, { userId } = {}) => {
     try {
       session = await mongoose.startSession();
       await session.withTransaction(async () => {
-        [product] = await Product.create([input], { session });
+        [product] = await Product.create([productInput], { session });
         await consumeProductImageGrants({
           reservationToken: reservation?.reservationToken,
           productId: product.id,
@@ -499,7 +540,7 @@ export const createProduct = async (input, { userId } = {}) => {
         });
       });
       if (!product) throw conflict("The product could not be created");
-      return plain(product);
+      return publicProduct(product);
     } catch (error) {
       await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
       throw error;
@@ -510,17 +551,17 @@ export const createProduct = async (input, { userId } = {}) => {
 
   let product;
   try {
-    if (memoryStore.findOne("products", (item) => item.slug === input.slug)) {
+    if (memoryStore.findOne("products", (item) => item.slug === productInput.slug)) {
       throw conflict("A product with this slug already exists", [{ field: "slug" }]);
     }
-    product = memoryStore.create("products", input);
+    product = memoryStore.create("products", productInput);
     await consumeProductImageGrants({
       reservationToken: reservation?.reservationToken,
       productId: product.id,
       expectedCount: publicIds.length,
       mode,
     });
-    return product;
+    return publicProduct(product);
   } catch (error) {
     if (product) memoryStore.remove("products", product.id);
     await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
@@ -530,11 +571,22 @@ export const createProduct = async (input, { userId } = {}) => {
 
 export const updateProduct = async (id, input, { userId } = {}) => {
   const mode = assertWritable(await ensureCatalogSeeded());
-  const changes = input.active === true ? { ...input, archivedAt: null } : input;
+  const requestedChanges = input.active === true ? { ...input, archivedAt: null } : input;
   if (mode === "mongodb" && !mongoose.isValidObjectId(id)) throw notFound("Product");
   const existing =
-    mode === "mongodb" ? plain(await Product.findById(id)) : memoryStore.get("products", id);
+    mode === "mongodb"
+      ? plain(await Product.findById(id).lean())
+      : memoryStore.get("products", id);
   if (!existing) throw notFound("Product");
+  const changes = {
+    ...requestedChanges,
+    customizationAvailable:
+      typeof input.customizationAvailable === "boolean"
+        ? input.customizationAvailable
+        : typeof existing.customizationAvailable === "boolean"
+          ? existing.customizationAvailable
+          : productCustomizationAvailable({ ...existing, ...requestedChanges }),
+  };
   const candidate = { ...existing, ...changes };
   assertProductInvariants(candidate);
   await assertProductSkusAvailable(
@@ -580,7 +632,7 @@ export const updateProduct = async (id, input, { userId } = {}) => {
         });
       });
       if (!product) throw conflict("The product could not be updated");
-      return product;
+      return publicProduct(product);
     } catch (error) {
       await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
       throw error;
@@ -600,7 +652,7 @@ export const updateProduct = async (id, input, { userId } = {}) => {
       expectedCount: newPublicIds.length,
       mode,
     });
-    return record;
+    return publicProduct(record);
   } catch (error) {
     if (written) restoreMemoryRecord("products", existing);
     await releaseUploadGrantReservation(reservation?.reservationToken).catch(() => {});
@@ -1192,18 +1244,82 @@ const findIdempotentOrder = async (buyerId, idempotencyKey, mode) => {
   return plain(record);
 };
 
+const customizationUnavailableForOrder = (product) => conflict(
+  `${product.name} is not currently available for customization`,
+  [
+    {
+      field: "items",
+      productId: product.id,
+      customizationAvailable: false,
+      productUpdatedAt: product.updatedAt ? new Date(product.updatedAt).toISOString() : "",
+    },
+  ],
+);
+
+const buildMongoOrderProductReservationWrite = (current, request) => {
+  const currentVersion = Number.isSafeInteger(Number(current.orderReservationVersion))
+    ? Number(current.orderReservationVersion)
+    : 0;
+  const conditions = [
+    {
+      _id: request.productId,
+      active: true,
+      price: request.unitPrice,
+    },
+    current.inventory == null
+      ? { inventory: null }
+      : { inventory: { $gte: request.quantity } },
+    currentVersion === 0
+      ? {
+        $or: [
+          { orderReservationVersion: 0 },
+          { orderReservationVersion: { $exists: false } },
+        ],
+      }
+      : { orderReservationVersion: currentVersion },
+  ];
+  if (request.requiresCustomization) {
+    conditions.push({
+      $or: [
+        { customizationAvailable: true },
+        {
+          customizationAvailable: { $exists: false },
+          madeToOrder: { $ne: false },
+        },
+      ],
+    });
+  }
+  return {
+    filter: { $and: conditions },
+    update: {
+      $inc: {
+        orderReservationVersion: 1,
+        ...(current.inventory == null ? {} : { inventory: -request.quantity }),
+      },
+    },
+  };
+};
+
+export const buildMongoOrderProductReservationWriteForTests = (current, request) => {
+  if (!env.isTest) throw new Error("Order reservation builders are test-only");
+  return buildMongoOrderProductReservationWrite(current, request);
+};
+
 const persistMongoOrder = async (record, stockRequests, grantReservation) => {
   const session = await mongoose.startSession();
   let createdOrder;
   try {
     await session.withTransaction(
       async () => {
+        if (orderReservationHookForTests) {
+          await orderReservationHookForTests({ mode: "mongodb", stockRequests });
+        }
         const inventoryReservations = [];
         const currentProducts = await Product.find({
           _id: { $in: [...stockRequests.keys()] },
           active: true,
         })
-          .select("_id name price inventory")
+          .select("_id name price inventory customizationAvailable madeToOrder customizationOptions updatedAt +orderReservationVersion")
           .session(session);
         const currentById = new Map(
           currentProducts.map((product) => [String(product._id), product]),
@@ -1216,31 +1332,37 @@ const persistMongoOrder = async (record, stockRequests, grantReservation) => {
               { field: "items", productId: request.productId },
             ]);
           }
+          if (
+            request.requiresCustomization
+            && !productCustomizationAvailable(current)
+          ) {
+            throw customizationUnavailableForOrder(current);
+          }
           if (current.price !== request.unitPrice) {
             throw conflict(`${request.name}'s price changed. Refresh your bag before ordering`, [
               { field: "items", productId: request.productId, currentPrice: current.price },
             ]);
           }
-          if (current.inventory == null) continue;
+          const reservationWrite = buildMongoOrderProductReservationWrite(current, request);
           const result = await Product.updateOne(
-            {
-              _id: request.productId,
-              active: true,
-              price: request.unitPrice,
-              inventory: { $gte: request.quantity },
-            },
-            { $inc: { inventory: -request.quantity } },
+            reservationWrite.filter,
+            reservationWrite.update,
             { session },
           );
           if (result.modifiedCount !== 1) {
-            throw conflict(`${request.name} does not have enough stock`, [
-              { field: "items", productId: request.productId },
-            ]);
+            throw conflict(
+              current.inventory == null
+                ? `${request.name}'s availability changed. Refresh your bag before ordering`
+                : `${request.name} does not have enough stock`,
+              [{ field: "items", productId: request.productId }],
+            );
           }
-          inventoryReservations.push({
-            productId: request.productId,
-            quantity: request.quantity,
-          });
+          if (current.inventory != null) {
+            inventoryReservations.push({
+              productId: request.productId,
+              quantity: request.quantity,
+            });
+          }
         }
         [createdOrder] = await Order.create([{ ...record, inventoryReservations }], { session });
         await consumeOrderCustomizationGrants({
@@ -1273,6 +1395,9 @@ const reserveMemoryInventory = (stockRequests) => {
       throw notFound("One of the selected products", [
         { field: "items", productId: request.productId },
       ]);
+    }
+    if (request.requiresCustomization && !productCustomizationAvailable(current)) {
+      throw customizationUnavailableForOrder(current);
     }
     if (current.price !== request.unitPrice) {
       throw conflict(`${request.name}'s price changed. Refresh your bag before ordering`, [
@@ -1370,8 +1495,12 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
         slug: requestedItem.slug || "",
       }]);
     }
+    if (requestedItem.customization && !productCustomizationAvailable(product)) {
+      throw customizationUnavailableForOrder(product);
+    }
+    const previousRequest = stockRequests.get(product.id);
     const requestedTotal =
-      (stockRequests.get(product.id)?.quantity || 0) + requestedItem.quantity;
+      (previousRequest?.quantity || 0) + requestedItem.quantity;
     if (product.inventory != null && product.inventory < requestedTotal) {
       throw conflict(`${product.name} does not have enough stock`, [
         { field: "items", productId: product.id, available: product.inventory },
@@ -1382,6 +1511,9 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
       name: product.name,
       unitPrice: product.price,
       quantity: requestedTotal,
+      requiresCustomization: Boolean(
+        previousRequest?.requiresCustomization || requestedItem.customization,
+      ),
     });
     items.push({
       productId: product.id,
@@ -1494,10 +1626,26 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
     const grantReservation = grantAttempt.reservation;
     const inventorySnapshots = [...stockRequests.keys()]
       .map((productId) => memoryStore.get("products", productId))
-      .filter((product) => product?.inventory != null);
+      .filter((product) => product?.inventory != null)
+      .map((product) => ({
+        productId: product.id,
+        inventory: product.inventory,
+        updatedAt: product.updatedAt,
+      }));
+    let inventoryReservations = [];
+    const inventoryWriteVersions = new Map();
     let createdOrder;
     try {
-      const inventoryReservations = reserveMemoryInventory(stockRequests);
+      if (orderReservationHookForTests) {
+        await orderReservationHookForTests({ mode, stockRequests });
+      }
+      inventoryReservations = reserveMemoryInventory(stockRequests);
+      inventoryReservations.forEach(({ productId }) => {
+        inventoryWriteVersions.set(
+          productId,
+          memoryStore.get("products", productId)?.updatedAt,
+        );
+      });
       createdOrder = memoryStore.create("orders", {
           ...record,
           isFirstOrder: firstOrderNow,
@@ -1515,7 +1663,20 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
       return { order: publicOrder(createdOrder), replayed: false };
     } catch (error) {
       if (createdOrder) memoryStore.remove("orders", createdOrder.id);
-      inventorySnapshots.forEach((product) => restoreMemoryRecord("products", product));
+      inventoryReservations.forEach(({ productId }) => {
+        const current = memoryStore.get("products", productId);
+        const snapshot = inventorySnapshots.find((product) => product.productId === productId);
+        if (!current || !snapshot) return;
+        const reservationVersion = inventoryWriteVersions.get(productId);
+        const updatedAt = String(current.updatedAt) === String(reservationVersion)
+          ? snapshot.updatedAt
+          : current.updatedAt;
+        restoreMemoryRecord("products", {
+          ...current,
+          inventory: snapshot.inventory,
+          updatedAt,
+        });
+      });
       await releaseUploadGrantReservation(grantReservation?.reservationToken).catch(() => {});
       throw error;
     }

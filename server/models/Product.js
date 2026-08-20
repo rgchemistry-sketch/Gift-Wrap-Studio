@@ -36,12 +36,21 @@ const productSchema = new mongoose.Schema(
     images: { type: [imageSchema], default: [] },
     tags: { type: [String], default: [] },
     customizationOptions: { type: [String], default: [] },
+    customizationAvailable: {
+      type: Boolean,
+      // Match the storefront's historical behavior for records and callers
+      // that predate this explicit control.
+      default() {
+        return this.madeToOrder !== false;
+      },
+    },
     variants: { type: [variantSchema], default: [] },
     featured: { type: Boolean, default: false, index: true },
     active: { type: Boolean, default: true, index: true },
     madeToOrder: { type: Boolean, default: true },
     leadTimeDays: { type: Number, default: 7, min: 1, max: 60 },
     inventory: { type: Number, default: null, min: 0 },
+    orderReservationVersion: { type: Number, default: 0, min: 0, select: false },
     sortOrder: { type: Number, default: 0, index: true },
     archivedAt: { type: Date, default: null, index: true },
   },
