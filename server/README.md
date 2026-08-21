@@ -2,6 +2,8 @@
 
 The API is an ESM Express application. `server/app.js` exports the non-listening app for tests and Vercel, `server/dev.js` starts the local server, and `api/index.js` is the Vercel function entrypoint.
 
+During local development, start the API with `npm run dev:server` so Node watches imported server files and reloads route registrations. A bare `node server/dev.js` process loads the route table once and must be restarted manually after adding an endpoint.
+
 ## Environment
 
 Required for production authentication:
@@ -99,7 +101,13 @@ Configured admin only:
   lookup index, never Mongo TTL. Run `npm run db:indexes` during deployment to remove legacy
   indexes and synchronize declared indexes without adding migration latency to serverless cold
   starts. Only the separate hourly upload quota and rate-limit counters keep TTL indexes.
-- `GET /api/admin/orders`, `PATCH /api/admin/orders/:id/status`
+- `GET /api/admin/orders`, `GET /api/admin/orders/:id`, `PATCH /api/admin/orders/:id/status`
+- `GET /api/admin/analytics` for date-grouped sales, product, status and customer figures
+- `GET /api/admin/analytics/export.xlsx` for an admin-only, no-store Excel workbook containing an
+  executive view, one-row-per-order customer and delivery snapshots, separate order-item and
+  custom-request tables, trend/product/customer analysis, and a formula-backed financial
+  reconciliation. Export queries are date-bounded and capped; custom requests never count as
+  sales.
 - `GET /api/admin/custom-inquiries`, `PATCH /api/admin/custom-inquiries/:id`
 - `GET /api/admin/contacts`, `PATCH /api/admin/contacts/:id`
 

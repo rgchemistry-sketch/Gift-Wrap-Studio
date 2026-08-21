@@ -1,0 +1,184 @@
+/* Focused form polish shared by the custom brief, contact and account surfaces. */
+.custom-wizard .wizard-card {
+  scroll-margin-top: calc(var(--header-height, 6rem) + 1.25rem);
+}
+
+.custom-wizard .wizard-step h3:focus-visible {
+  outline: none;
+}
+
+.custom-wizard .character-count,
+.contact-form .character-count {
+  position: static;
+  margin-top: .4rem;
+  color: var(--muted);
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.custom-wizard .choice-grid.is-invalid span {
+  border-color: var(--danger);
+}
+
+.custom-wizard .invalid-feedback {
+  margin-top: .45rem;
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+.custom-wizard .wizard-help > span,
+.custom-wizard .form-tip,
+.custom-wizard .wizard-saved,
+.custom-wizard .review-list span,
+.custom-wizard .review-list button,
+.contact-main .contact-details > a small,
+.account-profile .profile-card dt,
+.account-profile .profile-card > p {
+  font-size: .75rem;
+}
+
+.custom-wizard .corporate-brief-fields {
+  margin: 0 0 1.5rem;
+  padding: 1.15rem;
+  border: 1px solid rgba(196, 154, 85, .5);
+  background: linear-gradient(135deg, rgba(225, 201, 149, .18), rgba(255, 250, 243, .9));
+}
+
+.custom-wizard .corporate-brief-fields > p {
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  margin: 0 0 1rem;
+  color: var(--forest);
+  font-size: .82rem;
+  line-height: 1.5;
+}
+
+.custom-wizard .corporate-brief-fields > p .icon {
+  flex: 0 0 auto;
+  margin-top: .15rem;
+}
+
+.verified-readonly.form-control {
+  color: var(--forest-dark);
+  border-color: rgba(41, 76, 64, .32);
+  background-color: rgba(143, 169, 154, .12);
+  background-image: linear-gradient(135deg, transparent 92%, rgba(41, 76, 64, .1) 92%);
+  cursor: not-allowed;
+}
+
+.verified-readonly.form-control:focus {
+  border-color: rgba(41, 76, 64, .45);
+  box-shadow: 0 0 0 .2rem rgba(41, 76, 64, .1);
+}
+
+.custom-wizard .form-text:has(.icon),
+.contact-form .form-text:has(.icon) {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+}
+
+.custom-wizard .wizard-progress button {
+  min-height: 3.25rem;
+  padding-inline: .25rem;
+}
+
+.custom-wizard .wizard-progress small {
+  font-size: .75rem;
+  line-height: 1.2;
+}
+
+.custom-wizard .review-list button {
+  display: inline-flex;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  margin: -.75rem;
+  padding: .75rem;
+}
+
+.account-profile .profile-empty {
+  gap: .55rem;
+  padding: 1rem;
+}
+
+.account-profile .profile-empty h3 {
+  margin: .2rem 0 0;
+  font-size: 1.2rem;
+}
+
+.account-profile .profile-empty p {
+  margin-bottom: .6rem;
+}
+
+.account-profile .profile-empty .btn {
+  min-height: 2.75rem;
+}
+
+/* The custom brief gives delivery dates a little breathing room without
+   replacing the browser's familiar, accessible calendar dialog. */
+.custom-wizard .studio-date-field {
+  height: 100%;
+}
+
+.custom-wizard .studio-date-field input.form-control:is([type="date"], [type="datetime-local"], [type="month"], [type="time"]) {
+  border-color: rgba(91, 32, 52, .25);
+  background-color: rgba(255, 253, 249, .82);
+}
+
+.custom-wizard .studio-date-field input.form-control:is([type="date"], [type="datetime-local"], [type="month"], [type="time"]):focus {
+  border-color: var(--burgundy);
+  background-color: var(--white);
+}
+
+.custom-wizard .studio-date-field .form-text {
+  max-width: 38ch;
+}
+
+.custom-wizard .studio-date-field .invalid-feedback {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+@media (max-width: 991.98px) {
+  .custom-wizard .wizard-progress {
+    margin-bottom: 2.25rem;
+  }
+
+  .custom-wizard .wizard-progress small {
+    display: block;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .custom-wizard .wizard-progress {
+    gap: .15rem;
+  }
+
+  .custom-wizard .wizard-progress button {
+    min-height: 3.75rem;
+  }
+
+  .custom-wizard .wizard-progress small {
+    max-width: 4.5rem;
+    font-size: var(--text-xs);
+  }
+
+  .custom-wizard .corporate-brief-fields {
+    margin-inline: -.25rem;
+    padding: 1rem;
+  }
+
+  .custom-wizard .review-list > div {
+    padding-right: 3.25rem;
+  }
+
+  .custom-wizard .review-list button {
+    top: .65rem;
+    right: .25rem;
+    margin: 0;
+  }
+}

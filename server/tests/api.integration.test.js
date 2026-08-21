@@ -224,12 +224,19 @@ test("checkout resolves a cart item by its stable product ID after its slug chan
         state: "Rajasthan",
         postalCode: "302001",
       },
+      neededBy: "2026-12-04",
+      contactPreference: "WhatsApp",
+      note: "Please call before delivery.",
     })
     .expect(201);
 
   assert.equal(order.body.data.items[0].productId, product.id);
   assert.equal(order.body.data.items[0].slug, renamedSlug);
   assert.equal(order.body.data.items[0].unitPrice, product.price);
+  assert.match(order.body.data.neededBy, /^2026-12-04T/);
+  assert.equal(order.body.data.contactPreference, "WhatsApp");
+  assert.equal(order.body.data.shippingAddress.phone, "+919876543210");
+  assert.equal(order.body.data.note, "Please call before delivery.");
 });
 
 test("checkout rejects personalization when a product has customization disabled", async () => {
@@ -396,6 +403,12 @@ test("demo buyer auth, server-priced first order, and one-time offer work togeth
   const mine = await buyer.get("/api/orders/my").expect(200);
   assert.equal(mine.body.meta.total, 1);
   assert.equal(mine.body.data[0].id, created.body.data.id);
+
+  const privateDetail = await buyer
+    .get(`/api/orders/${created.body.data.id}`)
+    .expect(200)
+    .expect("Cache-Control", /no-store/);
+  assert.equal(privateDetail.body.data.shippingAddress.phone, "+919876543210");
 
   const repeated = await buyer.post("/api/orders").send(orderPayload).expect(409);
   assert.equal(repeated.body.error.code, "WELCOME_OFFER_INELIGIBLE");

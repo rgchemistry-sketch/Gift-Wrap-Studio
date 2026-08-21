@@ -4,6 +4,7 @@ import {
   createProductInquiryText,
   createWhatsAppHref,
 } from '../utils/inquiry-links';
+import Icon from './Icon';
 import '../storefront-inquiry.css';
 
 const GENERAL_WHATSAPP_MESSAGE = 'Hello Gift N Wrap Studio, I’d love help choosing a handmade resin piece.';
@@ -24,6 +25,7 @@ function WhatsAppMark() {
 
 export function FloatingWhatsAppButton({ phone }) {
   const href = createWhatsAppHref(phone, GENERAL_WHATSAPP_MESSAGE);
+
   if (!href) return null;
 
   return (
@@ -60,47 +62,51 @@ export function ProductInquiryPanel({ product, productUrl, contact }) {
 
   return (
     <section className="product-inquiry" aria-labelledby={`${fieldId}-title`}>
-      <span className="product-inquiry__index" aria-hidden="true">ASK</span>
-      <div className="product-inquiry__heading">
-        <div>
-          <p className="eyebrow">A direct studio conversation</p>
-          <h2 id={`${fieldId}-title`}>Wondering if it can feel more like yours?</h2>
+      <header className="product-inquiry__intro">
+        <div className="product-inquiry__kicker">
+          <span aria-hidden="true"><Icon name="spark" size={16} /></span>
+          <p className="eyebrow">Ask the studio</p>
         </div>
-        <span className="product-inquiry__seal" aria-hidden="true">G<span>·</span>W</span>
-      </div>
-      <p className="product-inquiry__lede">Add your question below. The exact piece and page link will travel with your note, so the studio knows what caught your eye.</p>
-      <label className="product-inquiry__label" htmlFor={fieldId}>Your message</label>
-      <textarea
-        id={fieldId}
-        value={message}
-        maxLength={600}
-        rows={4}
-        aria-describedby={`${helpId} ${countId}`}
-        onChange={(event) => setMessage(event.target.value)}
-      />
-      <div className="product-inquiry__field-meta">
-        <span id={helpId}>Edit freely before opening your chosen app.</span>
-        <span id={countId}>{message.length}/600</span>
+        <h2 id={`${fieldId}-title`}>{customizable ? 'Could this piece be made more personal?' : 'Need help with availability or delivery?'}</h2>
+        <p className="product-inquiry__lede">Write your question once, then continue by WhatsApp or email. We’ll include this piece and its page link for context.</p>
+      </header>
+      <div className="product-inquiry__editor">
+        <div className="product-inquiry__label-row">
+          <label className="product-inquiry__label" htmlFor={fieldId}>Your message</label>
+          <span id={countId}>{message.length}/600</span>
+        </div>
+        <textarea
+          id={fieldId}
+          value={message}
+          maxLength={600}
+          rows={4}
+          aria-describedby={`${helpId} ${countId}`}
+          onChange={(event) => setMessage(event.target.value)}
+        />
+        <p className="product-inquiry__field-help" id={helpId}>You can edit the draft before anything opens or is sent.</p>
       </div>
       <div className="product-inquiry__actions">
         {whatsAppHref ? (
-          <a className="product-inquiry__action product-inquiry__action--whatsapp" href={whatsAppHref} target="_blank" rel="noreferrer"><WhatsAppMark /> Ask on WhatsApp <span className="visually-hidden">, opens in a new tab</span></a>
+          <a className="product-inquiry__action product-inquiry__action--whatsapp" href={whatsAppHref} target="_blank" rel="noreferrer">
+            <WhatsAppMark />
+            <span><strong>Continue on WhatsApp</strong><small>Opens with your draft</small></span>
+            <span className="visually-hidden">, opens in a new tab</span>
+          </a>
         ) : (
           <span className="product-inquiry__action is-disabled" role="link" aria-disabled="true"><WhatsAppMark /> WhatsApp unavailable</span>
         )}
         {emailHref ? (
           <a className="product-inquiry__action product-inquiry__action--email" href={emailHref}>
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>
-            Draft an email
+            <Icon name="mail" />
+            <span><strong>Continue by email</strong><small>Opens a ready-to-send email</small></span>
           </a>
         ) : (
           <span className="product-inquiry__action is-disabled" role="link" aria-disabled="true">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>
+            <Icon name="mail" />
             Email unavailable
           </span>
         )}
       </div>
-      <p className="product-inquiry__note">Nothing is sent automatically—you can review the complete message in WhatsApp or email first.</p>
       {!contactAvailable && <p className="product-inquiry__unavailable" role="status">Studio contact links are temporarily unavailable. Please try again later.</p>}
     </section>
   );

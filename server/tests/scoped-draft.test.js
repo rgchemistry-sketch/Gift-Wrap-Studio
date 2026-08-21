@@ -5,6 +5,7 @@ import {
   saveScopedDraft,
   scopedDraftKey,
 } from '../../src/utils/scoped-draft.js';
+import { stripCustomReferenceImages } from '../../src/utils/custom-reference-upload.js';
 
 class MemoryStorage {
   values = new Map();
@@ -82,4 +83,20 @@ test('an anonymous visitor never receives a legacy unscoped draft', () => {
 
   assert.equal(loadScopedDraft(baseKey), null);
   assert.equal(window.localStorage.getItem(baseKey), null);
+});
+
+test('logout or owner switch strips upload metadata without discarding the written custom brief', () => {
+  const baseKey = 'gnw-custom-order-draft';
+  saveScopedDraft(baseKey, 'buyer-a', {
+    description: 'Preserve the written idea.',
+    referenceImages: [{ publicId: 'private-upload', url: 'https://example.test/private.jpg' }],
+  });
+  const current = loadScopedDraft(baseKey, 'buyer-a');
+  saveScopedDraft(baseKey, 'buyer-a', stripCustomReferenceImages(current));
+
+  assert.deepEqual(loadScopedDraft(baseKey, 'buyer-a'), {
+    description: 'Preserve the written idea.',
+    referenceImages: [],
+  });
+  assert.equal(loadScopedDraft(baseKey, 'buyer-b'), null);
 });

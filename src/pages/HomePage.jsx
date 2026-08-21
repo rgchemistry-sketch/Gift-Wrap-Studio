@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Accordion from 'react-bootstrap/Accordion';
 import Alert from 'react-bootstrap/Alert';
@@ -13,6 +14,7 @@ import { categories } from '../data/catalog';
 import { useCatalog } from '../data/useCatalog';
 import { useShop } from '../context/ShopContext';
 import { resolveStudioContact } from '../utils/studio-contact';
+import '../home-shop-redesign.css';
 
 const trustPoints = [
   ['spark', '100% handmade', 'Individually composed, never mass-produced'],
@@ -28,6 +30,27 @@ const occasions = [
   ['04', 'Corporate', 'Distinctive gifts with your brand, not a catalogue feel.', '/corporate-gifts'],
 ];
 
+const editorialStories = [
+  {
+    eyebrow: 'Milestones, made tangible',
+    title: 'For the vows, names and days worth keeping.',
+    text: 'Wedding keepsakes composed with preserved florals, photographs and details that belong only to your story.',
+    link: '/shop?occasion=Wedding',
+    cta: 'Explore wedding keepsakes',
+    image: '/assets/milestone-keepsakes-v3.webp',
+    alt: 'Floral resin photo frame and pearl ring platter arranged for a wedding celebration',
+  },
+  {
+    eyebrow: 'A home with your signature',
+    title: 'Objects with presence, finished one by one.',
+    text: 'Statement clocks, botanical accents and table pieces that turn an everyday corner into something personal.',
+    link: '/shop?category=Resin%20clocks',
+    cta: 'Discover sculptural décor',
+    image: '/assets/signature-resin-collection-v3.webp',
+    alt: 'Emerald resin clock, botanical letter, tray and coasters in a sunlit studio setting',
+  },
+];
+
 const faqs = [
   ['Can I customize every product?', 'Most made-to-order pieces can be customized. Each product page shows the available names, photos, colours, florals and finish options.'],
   ['Do you accept bulk and corporate orders?', 'Yes. We create wedding return gifts, employee awards, event keepsakes, hampers and branded pieces. Share your quantity, date and budget so we can recommend the right format.'],
@@ -35,6 +58,46 @@ const faqs = [
   ['Do you deliver across India?', 'Yes, we offer PAN India delivery. Products are gift packed, bubble wrapped and placed in a protective corrugated box.'],
   ['Can I request a completely new design?', 'Yes. Use our custom order form to share the idea, palette, references, budget and occasion. We will discuss feasibility and send a concept before handcrafting begins.'],
 ];
+
+const processSteps = [
+  ['01', 'Share the idea', 'Tell us the person, occasion and details worth preserving.'],
+  ['02', 'Shape the design', 'We discuss the composition, colours and customization.'],
+  ['03', 'Approve the concept', 'You review the direction before our hands begin making.'],
+  ['04', 'Made, checked & packed', 'Your piece is finished, quality checked and securely gift packed.'],
+];
+
+function ProcessSequence() {
+  const sequenceRef = useRef(null);
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    const sequence = sequenceRef.current;
+    if (!sequence || typeof IntersectionObserver === 'undefined') {
+      setRevealed(true);
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return;
+      setRevealed(true);
+      observer.disconnect();
+    }, { threshold: 0.22, rootMargin: '0px 0px -8% 0px' });
+
+    observer.observe(sequence);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={sequenceRef} className={`process-line${revealed ? ' is-revealed' : ''}`}>
+      <span className="process-line__progress" aria-hidden="true" />
+      {processSteps.map(([number, title, text], index) => (
+        <div className="process-step" style={{ '--process-index': index }} key={number}>
+          <span>{number}</span><h3>{title}</h3><p>{text}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function HomePage() {
   const {
@@ -73,10 +136,10 @@ export default function HomePage() {
             </Col>
             <Col lg={6} className="home-hero__visual">
               <div className="hero-image hero-image--main">
-                <SmartImage src="/assets/hero-resin-studio.webp" alt="Handmade resin art arranged in the Gift N Wrap Studio" fallbackLabel="The Resin Atelier" loading="eager" fetchPriority="high" sizes="(max-width: 991px) 100vw, 50vw" />
+                <SmartImage src="/assets/hero-resin-studio.webp" alt="Handmade resin art arranged in the Gift N Wrap Studio" fallbackLabel="The Resin Atelier" loading="eager" decoding="async" fetchPriority="high" sizes="(max-width: 991px) 100vw, 50vw" />
               </div>
               <div className="hero-image hero-image--detail">
-                <SmartImage src="/assets/personalized-plaque.webp" alt="Close detail of a personalized resin plaque" fallbackLabel="Made for you" />
+                <SmartImage src="/assets/personalized-plaque.webp" alt="Close detail of a personalized resin plaque" fallbackLabel="Made for you" loading="lazy" decoding="async" sizes="(max-width: 575px) 38vw, (max-width: 991px) 280px, 20vw" />
               </div>
               <div className="hero-note" aria-hidden="true">
                 <Icon name="spark" />
@@ -108,7 +171,7 @@ export default function HomePage() {
           <header className="section-heading split-heading">
             <div>
               <p className="eyebrow">Find your kind of beautiful</p>
-              <h2>Objects with a story<br />already waiting inside.</h2>
+              <h2>Objects with a story{' '}<br />already waiting inside.</h2>
             </div>
             <p>Explore our signature collections—each piece formed, finished and inspected by hand before it reaches you.</p>
           </header>
@@ -132,6 +195,40 @@ export default function HomePage() {
         </Container>
       </section>
 
+      <section className="home-editorial-stories" aria-labelledby="home-editorial-title">
+        <Container fluid="xl">
+          <header className="home-editorial-stories__heading">
+            <p className="eyebrow">The studio point of view</p>
+            <div className="home-editorial-stories__statement">
+              <h2 id="home-editorial-title">Made to mean something.<br /><em>Beautiful from every angle.</em></h2>
+              <p>Every flower, colour and curve earns its place. We balance your story with thoughtful composition, so the finished piece feels personal—not simply decorated.</p>
+            </div>
+          </header>
+          <div className="home-editorial-stories__grid">
+            {editorialStories.map((story, index) => (
+              <Link className={`home-story-card home-story-card--${index + 1}`} to={story.link} key={story.title}>
+                <SmartImage
+                  src={story.image}
+                  alt={story.alt}
+                  fallbackLabel={story.title}
+                  loading="lazy"
+                  decoding="async"
+                  sizes="(max-width: 767px) 92vw, 50vw"
+                />
+                <span className="home-story-card__shade" aria-hidden="true" />
+                <span className="home-story-card__copy">
+                  <small>{story.eyebrow}</small>
+                  <strong>{story.title}</strong>
+                  <span>{story.text}</span>
+                  <b>{story.cta} <Icon name="arrow" size={18} /></b>
+                </span>
+                <i aria-hidden="true">0{index + 1}</i>
+              </Link>
+            ))}
+          </div>
+        </Container>
+      </section>
+
       <section className="page-section bestsellers-section" aria-busy={catalogLoading}>
           <Container fluid="xl">
             <header className="section-heading centered-heading">
@@ -144,7 +241,7 @@ export default function HomePage() {
                 <p className="visually-hidden" role="status">Loading studio favourites…</p>
                 <Row className="g-4 product-grid">
                   {Array.from({ length: 4 }, (_, index) => (
-                    <Col xs={12} sm={6} lg={3} key={`bestseller-skeleton-${index}`}><ProductCardSkeleton /></Col>
+                    <Col xs={6} lg={3} key={`bestseller-skeleton-${index}`}><ProductCardSkeleton /></Col>
                   ))}
                 </Row>
               </>
@@ -160,7 +257,7 @@ export default function HomePage() {
                 {catalogError && <Alert variant="warning" className="soft-alert catalog-alert">We couldn’t refresh every studio piece. <button type="button" className="plain-link" onClick={() => refreshCatalog({ force: true })}>Try again</button></Alert>}
                 <Row className="g-4 product-grid">
                   {bestsellers.map((product, index) => (
-                    <Col xs={12} sm={6} lg={3} key={product.id}><ProductCard product={product} index={index} /></Col>
+                    <Col xs={6} lg={3} key={product.id}><ProductCard product={product} index={index} /></Col>
                   ))}
                 </Row>
                 <div className="section-cta"><Link to="/shop" className="text-link text-link--large">See the entire collection <Icon name="arrow" /></Link></div>
@@ -180,14 +277,14 @@ export default function HomePage() {
         <Container fluid="xl">
           <Row className="align-items-stretch g-0">
             <Col lg={6} className="personalization-feature__visual">
-              <SmartImage src="/assets/wedding-keepsake.webp" alt="A personalized resin wedding keepsake" fallbackLabel="A piece of your story" loading="lazy" />
-              <div className="material-note material-note--flower">real florals</div>
-              <div className="material-note material-note--foil">gold foil</div>
-              <div className="material-note material-note--name">your names</div>
+              <SmartImage src="/assets/personalization-atelier-v2.webp" alt="Hands arranging pressed botanicals in a personalized resin keepsake" fallbackLabel="A piece of your story" loading="lazy" sizes="(max-width: 991px) 100vw, 50vw" />
+              <div className="material-note material-note--flower">real botanicals</div>
+              <div className="material-note material-note--foil">composed by hand</div>
+              <div className="material-note material-note--name">made for you</div>
             </Col>
             <Col lg={6} className="personalization-feature__copy">
               <p className="eyebrow light-eyebrow">Made personal, beautifully</p>
-              <h2>Your story is the<br />most precious material.</h2>
+              <h2>Your story is the{' '}<br />most precious material.</h2>
               <p>
                 Add names, photographs, dates, flowers, colours, logos or a line only the two of you understand. We compose every detail so the final piece feels considered—not simply customized.
               </p>
@@ -221,24 +318,13 @@ export default function HomePage() {
         </Container>
       </section>
 
-      <section className="process-section page-section">
+      <section className="process-section page-section" id="studio-process" aria-labelledby="studio-process-title">
         <Container fluid="xl">
           <header className="section-heading split-heading">
-            <div><p className="eyebrow">Our process</p><h2>From a feeling<br />to a finished piece.</h2></div>
+            <div><p className="eyebrow">Our process</p><h2 id="studio-process-title">From a feeling{' '}<br />to a finished piece.</h2></div>
             <p>Handmade shouldn’t feel uncertain. We keep you close to the process, from first idea to doorstep.</p>
           </header>
-          <div className="process-line">
-            {[
-              ['01', 'Share the idea', 'Tell us the person, occasion and details worth preserving.'],
-              ['02', 'Shape the design', 'We discuss the composition, colours and customization.'],
-              ['03', 'Approve the concept', 'You review the direction before our hands begin making.'],
-              ['04', 'Made, checked & packed', 'Your piece is finished, quality checked and securely gift packed.'],
-            ].map(([number, title, text]) => (
-              <div className="process-step" key={number}>
-                <span>{number}</span><h3>{title}</h3><p>{text}</p>
-              </div>
-            ))}
-          </div>
+          <ProcessSequence />
         </Container>
       </section>
 
@@ -287,7 +373,7 @@ export default function HomePage() {
       <section className="contact-banner">
         <Container fluid="xl">
           <div className="contact-banner__inner">
-            <div><p className="eyebrow light-eyebrow">Have something in mind?</p><h2>Let’s make a memory<br />you can hold.</h2></div>
+            <div><p className="eyebrow light-eyebrow">Have something in mind?</p><h2>Let’s make a memory{' '}<br />you can hold.</h2></div>
             <div className="contact-banner__actions">
               <Button as={Link} to="/custom-order" className="button-gold">Start a custom order <Icon name="arrow" /></Button>
               {contact.phoneHref && <a href={contact.phoneHref}>or call {contact.phoneLabel}</a>}

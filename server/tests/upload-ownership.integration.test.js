@@ -203,6 +203,61 @@ test("custom inquiries reject unowned Cloudinary images but preserve ordinary in
   assert.deepEqual(inquiry.referenceImages, []);
 });
 
+test("an account switch preserves the previous owner's active upload grants", async () => {
+  const browser = request.agent(app);
+  const buyerLogin = await browser
+    .post("/api/auth/demo")
+    .send({ role: "buyer" })
+    .expect(200);
+  const buyerId = buyerLogin.body.data.user.id;
+
+  const completedSignature = await browser
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(200);
+  const completedPublicId = completedSignature.body.data.fullPublicId;
+  await completeUpload(browser, completedPublicId);
+
+  // This grant represents a direct-to-provider upload that may still be in
+  // flight when the browser changes accounts.
+  const inFlightSignature = await browser
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(200);
+  const inFlightPublicId = inFlightSignature.body.data.fullPublicId;
+
+  const switched = await browser
+    .post("/api/auth/demo")
+    .send({ role: "admin" })
+    .expect(200);
+  assert.notEqual(switched.body.data.user.id, buyerId);
+  assert.deepEqual(destroyedPublicIds, []);
+  assert.ok(memoryStore.get("uploadGrants", completedPublicId));
+  assert.ok(memoryStore.get("uploadGrants", inFlightPublicId));
+
+  // The new account cannot complete or remove the old account's assets.
+  await browser
+    .post("/api/uploads/complete")
+    .send({ publicId: inFlightPublicId })
+    .expect(404);
+  await browser
+    .delete("/api/uploads/asset")
+    .send({ publicId: completedPublicId })
+    .expect(403);
+
+  // A separate session for the original owner remains fully functional. This
+  // also ensures an account switch cannot destroy another device's draft.
+  const otherBuyerSession = request.agent(app);
+  const otherBuyerLogin = await otherBuyerSession
+    .post("/api/auth/demo")
+    .send({ role: "buyer" })
+    .expect(200);
+  assert.equal(otherBuyerLogin.body.data.user.id, buyerId);
+  await completeUpload(otherBuyerSession, inFlightPublicId);
+  assert.ok(memoryStore.get("uploadGrants", inFlightPublicId).verifiedAt);
+  assert.deepEqual(destroyedPublicIds, []);
+});
+
 test("upload signatures expose a seven-day cart lifetime and a two-hour admin lifetime", async () => {
   const { agent: admin } = await login("admin");
   const { agent: buyer } = await login("buyer");
@@ -851,17 +906,26 @@ test("only an unconsumed grant owner can destroy and remove an uploaded asset", 
   assert.deepEqual(destroyedPublicIds, [image.publicId]);
 });
 
-test("logout removes every unconsumed user upload while preserving saved order assets", async () => {
+test("logout cleans verified and legacy uploads while deferring a new in-flight grant", async () => {
   const { agent: buyer } = await login("buyer");
   const savedMedia = await requestOrderGrant(buyer);
   await buyer.post("/api/orders").send(orderPayload(savedMedia)).expect(201);
 
   const abandonedOrderMedia = await requestOrderGrant(buyer);
-  const abandonedInquiry = await buyer
+  const inFlightInquiry = await buyer
     .post("/api/uploads/signature")
     .send({ purpose: "custom-inquiries" })
     .expect(200);
-  const abandonedInquiryPublicId = abandonedInquiry.body.data.fullPublicId;
+  const inFlightInquiryPublicId = inFlightInquiry.body.data.fullPublicId;
+
+  const legacyInquiry = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(200);
+  const legacyInquiryPublicId = legacyInquiry.body.data.fullPublicId;
+  memoryStore.update("uploadGrants", legacyInquiryPublicId, {
+    verificationRequired: false,
+  });
 
   const logout = await buyer.post("/api/auth/logout").expect(200);
   assert.equal(logout.body.data.success, true);
@@ -873,11 +937,17 @@ test("logout removes every unconsumed user upload while preserving saved order a
   });
   assert.deepEqual(
     new Set(destroyedPublicIds),
-    new Set([abandonedOrderMedia.publicId, abandonedInquiryPublicId]),
+    new Set([abandonedOrderMedia.publicId, legacyInquiryPublicId]),
   );
   assert.equal(destroyedPublicIds.includes(savedMedia.publicId), false);
+  assert.equal(destroyedPublicIds.includes(inFlightInquiryPublicId), false);
   assert.equal(memoryStore.get("uploadGrants", abandonedOrderMedia.publicId), undefined);
-  assert.equal(memoryStore.get("uploadGrants", abandonedInquiryPublicId), undefined);
+  assert.equal(memoryStore.get("uploadGrants", legacyInquiryPublicId), undefined);
+  const retainedInFlightGrant = memoryStore.get("uploadGrants", inFlightInquiryPublicId);
+  assert.ok(retainedInFlightGrant);
+  assert.equal(retainedInFlightGrant.verificationRequired, true);
+  assert.equal(retainedInFlightGrant.verifiedAt, undefined);
+  assert.equal(retainedInFlightGrant.reservationToken, "");
   assert.ok(memoryStore.get("uploadGrants", savedMedia.publicId).consumedAt);
   const session = await buyer.get("/api/auth/me").expect(200);
   assert.deepEqual(session.body.data, { user: null, authenticated: false });

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ToastContainer from 'react-bootstrap/ToastContainer';
 import Icon from './Icon';
 import { useShop } from '../context/ShopContext';
+import { isToastActionAvailable } from '../utils/toast-actions';
 
 const toastPresentation = {
   success: {
@@ -12,7 +13,7 @@ const toastPresentation = {
     role: 'status',
   },
   error: {
-    icon: 'close',
+    icon: 'alert',
     label: 'Something needs attention',
     delay: 7600,
     live: 'assertive',
@@ -44,8 +45,13 @@ const toastPresentation = {
 function StudioToast({ toast, dismissToast }) {
   const tone = toastPresentation[toast.tone] ? toast.tone : 'neutral';
   const presentation = toastPresentation[tone];
+  const timeoutDuration = Math.max(
+    presentation.delay,
+    Number(toast.duration) || 0,
+    Number(toast.action?.expiresMs) || 0,
+  );
   const timeoutRef = useRef(null);
-  const remainingRef = useRef(presentation.delay);
+  const remainingRef = useRef(timeoutDuration);
   const startedAtRef = useRef(0);
 
   const startTimer = useCallback(() => {
@@ -68,17 +74,36 @@ function StudioToast({ toast, dismissToast }) {
   };
 
   useEffect(() => {
-    remainingRef.current = presentation.delay;
+    remainingRef.current = timeoutDuration;
     startTimer();
     return () => window.clearTimeout(timeoutRef.current);
-  }, [presentation.delay, startTimer]);
+  }, [startTimer, timeoutDuration]);
+
+  useEffect(() => {
+    const expiresAt = Number(toast.action?.expiresAt);
+    if (!Number.isFinite(expiresAt)) return undefined;
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      dismissToast(toast.id);
+      return undefined;
+    }
+    const expiryTimer = window.setTimeout(() => dismissToast(toast.id), remaining);
+    return () => window.clearTimeout(expiryTimer);
+  }, [dismissToast, toast.action?.expiresAt, toast.id]);
+
+  const runAction = () => {
+    try {
+      if (isToastActionAvailable(toast.action)) toast.action.onClick();
+    } finally {
+      dismissToast(toast.id);
+    }
+  };
 
   return (
     <div
       className={`studio-toast tone-${tone}`}
-      role={presentation.role}
-      aria-live={presentation.live}
-      aria-atomic="true"
+      role="group"
+      aria-label={`${presentation.label}: ${String(toast.message || 'Your request has been updated.')}`}
       onMouseEnter={pauseTimer}
       onMouseLeave={resumeTimer}
       onFocusCapture={pauseTimer}
@@ -89,6 +114,11 @@ function StudioToast({ toast, dismissToast }) {
         <span className="toast-copy">
           <strong>{presentation.label}</strong>
           <span>{String(toast.message || 'Your request has been updated.')}</span>
+          {toast.action?.label && typeof toast.action.onClick === 'function' && (
+            <button type="button" className="studio-toast__action" onClick={runAction}>
+              {toast.action.label}
+            </button>
+          )}
         </span>
         <button type="button" onClick={() => dismissToast(toast.id)} aria-label={`Dismiss ${presentation.label.toLowerCase()} notification`}>
           <Icon name="close" size={16} />
@@ -98,12 +128,40 @@ function StudioToast({ toast, dismissToast }) {
   );
 }
 
-export function ToastStack() {
+export function ToastStack({ aboveBuyBar = false }) {
   const { toasts, dismissToast } = useShop();
+  const lastAnnouncedRef = useRef(null);
+  const [announcement, setAnnouncement] = useState({ text: '', tone: 'neutral' });
+
+  useEffect(() => {
+    const newest = toasts.at(-1);
+    if (!newest || newest.id === lastAnnouncedRef.current) return undefined;
+    const tone = toastPresentation[newest.tone] ? newest.tone : 'neutral';
+    setAnnouncement((current) => ({ ...current, text: '' }));
+    const timer = window.setTimeout(() => {
+      lastAnnouncedRef.current = newest.id;
+      setAnnouncement({
+        text: `${toastPresentation[tone].label}: ${String(newest.message || 'Your request has been updated.')}`,
+        tone,
+      });
+    }, 40);
+    return () => window.clearTimeout(timer);
+  }, [toasts]);
+
   return (
-    <ToastContainer position="bottom-end" containerPosition="fixed" className="toast-stack" role="region" aria-label="Notifications">
-      {toasts.map((toast) => <StudioToast key={toast.id} toast={toast} dismissToast={dismissToast} />)}
-    </ToastContainer>
+    <>
+      <p
+        className="visually-hidden"
+        role={announcement.tone === 'error' ? 'alert' : 'status'}
+        aria-live={announcement.tone === 'error' ? 'assertive' : 'polite'}
+        aria-atomic="true"
+      >
+        {announcement.text}
+      </p>
+      <ToastContainer position="bottom-end" containerPosition="fixed" className={`toast-stack ${aboveBuyBar ? 'toast-stack--above-buy-bar' : ''}`} role="region" aria-label="Notifications">
+        {toasts.map((toast) => <StudioToast key={toast.id} toast={toast} dismissToast={dismissToast} />)}
+      </ToastContainer>
+    </>
   );
 }
 

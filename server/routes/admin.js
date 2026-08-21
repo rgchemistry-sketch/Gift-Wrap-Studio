@@ -8,9 +8,14 @@ import {
   sendOrderStatusEmail,
 } from "../services/email-notifications.js";
 import {
+  createSalesAnalyticsWorkbook,
+  getSalesAnalytics,
+} from "../services/sales-analytics.js";
+import {
   archiveProduct,
   createProduct,
   getDashboardStats,
+  getOrder,
   getProductForAdmin,
   getRegisteredUserDetail,
   getRegisteredUserMetrics,
@@ -36,6 +41,7 @@ import {
   inquiryStatusSchema,
   orderQuerySchema,
   orderStatusSchema,
+  salesAnalyticsQuerySchema,
   studioSettingsSchema,
   updateProductSchema,
 } from "../validation/schemas.js";
@@ -185,6 +191,39 @@ adminRouter.get(
         totalPages: result.totalPages,
       },
     });
+  }),
+);
+
+adminRouter.get(
+  "/analytics/export.xlsx",
+  validate({ query: salesAnalyticsQuerySchema }),
+  asyncHandler(async (request, response) => {
+    const report = await createSalesAnalyticsWorkbook(request.validated.query);
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    response.setHeader("Content-Disposition", `attachment; filename="${report.filename}"`);
+    response.send(report.buffer);
+  }),
+);
+
+adminRouter.get(
+  "/analytics",
+  validate({ query: salesAnalyticsQuerySchema }),
+  asyncHandler(async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ data: await getSalesAnalytics(request.validated.query) });
+  }),
+);
+
+adminRouter.get(
+  "/orders/:id",
+  validate({ params: idParamsSchema }),
+  asyncHandler(async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ data: await getOrder(request.validated.params.id) });
   }),
 );
 

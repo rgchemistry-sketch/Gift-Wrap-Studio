@@ -7,6 +7,10 @@ import {
   INDIAN_MOBILE_MESSAGE,
   normalizeIndianMobile,
 } from "../../shared/indian-phone.js";
+import {
+  GOOGLE_REVIEW_URL_MESSAGE,
+  normalizeGoogleReviewUrl,
+} from "../../shared/google-review-url.js";
 
 const text = (min, max) => z.string().trim().min(min).max(max);
 const email = z.string().trim().toLowerCase().email().max(254);
@@ -258,6 +262,12 @@ const instagramOrBlank = z
   .trim()
   .max(200)
   .refine((value) => normalizeInstagramProfile(value) !== null, INSTAGRAM_PROFILE_MESSAGE);
+const googleReviewUrlOrBlank = z
+  .string()
+  .trim()
+  .max(1_000)
+  .refine((value) => normalizeGoogleReviewUrl(value) !== null, GOOGLE_REVIEW_URL_MESSAGE)
+  .transform((value) => normalizeGoogleReviewUrl(value));
 
 const leadTimesSettingsSchema = z
   .object({
@@ -301,6 +311,7 @@ const contactSettingsSchema = z
     email: emailOrBlank.optional(),
     phone: phoneOrBlank.optional(),
     instagram: instagramOrBlank.optional(),
+    googleReviewUrl: googleReviewUrlOrBlank.optional(),
   })
   .strict();
 
@@ -360,6 +371,9 @@ export const createOrderSchema = z
     items: z.array(orderItemSchema).min(1).max(20),
     shippingAddress: shippingAddressSchema,
     couponCode: z.string().trim().toUpperCase().max(40).default(""),
+    neededBy: z
+      .preprocess((value) => (value === "" || value == null ? undefined : value), z.coerce.date().optional()),
+    contactPreference: optionalBlank(z.enum(["WhatsApp", "Phone call", "Email"])).default(""),
     note: z.string().trim().max(1_000).default(""),
     paymentMethod: z.literal("manual_confirmation").default("manual_confirmation"),
   })
@@ -367,6 +381,7 @@ export const createOrderSchema = z
 
 export const orderQuerySchema = z
   .object({
+    q: z.string().trim().max(120).default(""),
     status: optionalBlank(
       z.enum(["placed", "confirmed", "in_progress", "ready", "shipped", "delivered", "cancelled"]),
     ),
@@ -378,9 +393,35 @@ export const orderQuerySchema = z
 export const orderStatusSchema = z
   .object({
     status: z.enum(["placed", "confirmed", "in_progress", "ready", "shipped", "delivered", "cancelled"]),
+    expectedStatus: optionalBlank(
+      z.enum(["placed", "confirmed", "in_progress", "ready", "shipped", "delivered", "cancelled"]),
+    ),
+    undo: z.boolean().default(false),
     note: z.string().trim().max(500).default(""),
   })
   .strict();
+
+const analyticsDateInput = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Use dates in YYYY-MM-DD format");
+
+export const salesAnalyticsQuerySchema = z
+  .object({
+    range: z.enum(["day", "week", "month", "year"]).default("month"),
+    from: analyticsDateInput.optional(),
+    to: analyticsDateInput.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (Boolean(value.from) !== Boolean(value.to)) {
+      context.addIssue({
+        code: "custom",
+        path: [value.from ? "to" : "from"],
+        message: "Choose both a start and end date",
+      });
+    }
+  });
 
 export const customInquirySchema = z
   .object({
@@ -446,6 +487,10 @@ export const inboxQuerySchema = z
 export const inquiryStatusSchema = z
   .object({
     status: z.enum(["new", "contacted", "quoted", "accepted", "closed"]),
+    expectedStatus: optionalBlank(
+      z.enum(["new", "contacted", "quoted", "accepted", "closed"]),
+    ),
+    undo: z.boolean().default(false),
     adminNote: z.string().trim().max(2_000).optional(),
   })
   .strict();
@@ -453,6 +498,10 @@ export const inquiryStatusSchema = z
 export const contactStatusSchema = z
   .object({
     status: z.enum(["new", "read", "replied", "archived"]),
+    expectedStatus: optionalBlank(
+      z.enum(["new", "read", "replied", "archived"]),
+    ),
+    undo: z.boolean().default(false),
     adminNote: z.string().trim().max(2_000).optional(),
   })
   .strict();

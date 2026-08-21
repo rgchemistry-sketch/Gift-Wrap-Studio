@@ -15,7 +15,7 @@ import { ToastStack } from './Feedback';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 import { routeScrollIntent } from '../utils/route-scroll';
-import { resolveStudioContact } from '../utils/studio-contact';
+import { DEFAULT_STUDIO_CONTACT, resolveStudioContact } from '../utils/studio-contact';
 import '../details.css';
 
 const navItems = [
@@ -57,13 +57,12 @@ const configuredValue = (settings, group, key, legacyKey, fallback) => {
 
 function Brand({ onNavigate }) {
   return (
-    <Link to="/" className="brand" onClick={onNavigate}>
-      <span className="brand__seal">G<span>·</span>W</span>
+    <Link to="/" className="brand" onClick={onNavigate} aria-label="Gift N Wrap Studio home">
+      <span className="brand__seal" aria-hidden="true">G<span>·</span>W</span>
       <span className="brand__words">
         <strong>Gift N Wrap</strong>
         <small>Resin Art Studio</small>
       </span>
-      <span className="visually-hidden">home</span>
     </Link>
   );
 }
@@ -72,8 +71,10 @@ export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [searchPrompt, setSearchPrompt] = useState(false);
   const searchInputRef = useRef(null);
   const searchToggleRef = useRef(null);
+  const searchPanelRef = useRef(null);
   const mainContentRef = useRef(null);
   const location = useLocation();
   const previousPathRef = useRef(location.pathname);
@@ -85,6 +86,7 @@ export default function Layout() {
   const { user, openAuth, signOut, signingOut, authModalOpen } = useAuth();
   const announcement = studioSettings?.announcement || {};
   const contact = resolveStudioContact(studioSettings);
+  const floatingWhatsAppPhone = contact.phone || DEFAULT_STUDIO_CONTACT.phone;
   const announcementEnabled = announcement.enabled ?? true;
   const announcementText = configuredValue(
     studioSettings,
@@ -124,6 +126,7 @@ export default function Layout() {
     setMenuOpen(false);
     setSearchOpen(false);
     setQuery('');
+    setSearchPrompt(false);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -238,10 +241,20 @@ export default function Layout() {
       setSearchOpen(false);
       window.requestAnimationFrame(() => searchToggleRef.current?.focus());
     };
+    const closeOutside = (event) => {
+      if (
+        searchPanelRef.current?.contains(event.target)
+        || searchToggleRef.current?.contains(event.target)
+      ) return;
+      setSearchOpen(false);
+      setSearchPrompt(false);
+    };
     document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('pointerdown', closeOutside);
     return () => {
       window.cancelAnimationFrame(focusFrame);
       document.removeEventListener('keydown', closeOnEscape);
+      document.removeEventListener('pointerdown', closeOutside);
     };
   }, [searchOpen]);
 
@@ -259,9 +272,15 @@ export default function Layout() {
   const submitSearch = (event) => {
     event.preventDefault();
     const clean = query.trim();
+    if (!clean) {
+      setSearchPrompt(true);
+      searchInputRef.current?.focus();
+      return;
+    }
     setSearchOpen(false);
+    setSearchPrompt(false);
     setQuery('');
-    if (clean) navigate(`/shop?q=${encodeURIComponent(clean)}`);
+    navigate(`/shop?q=${encodeURIComponent(clean)}`);
   };
 
   const activeShopItem = (() => {
@@ -298,7 +317,7 @@ export default function Layout() {
               ))}
             </Nav>
             <div className="navbar-tools">
-              <button ref={searchToggleRef} className="icon-button" type="button" onClick={() => setSearchOpen((value) => !value)} aria-label={searchOpen ? 'Close product search' : 'Search products'} aria-expanded={searchOpen} aria-controls="header-product-search">
+              <button ref={searchToggleRef} className="icon-button" type="button" onClick={() => setSearchOpen((value) => { if (value) setSearchPrompt(false); return !value; })} aria-label={searchOpen ? 'Close product search' : 'Search products'} aria-expanded={searchOpen} aria-controls="header-product-search">
                 <Icon name={searchOpen ? 'close' : 'search'} />
               </button>
               {user ? (
@@ -328,7 +347,7 @@ export default function Layout() {
             </div>
           </Navbar>
         </Container>
-        <div id="header-product-search" className={`header-search ${searchOpen ? 'is-open' : ''}`} aria-hidden={!searchOpen}>
+        <div ref={searchPanelRef} id="header-product-search" className={`header-search ${searchOpen ? 'is-open' : ''}`} aria-hidden={!searchOpen}>
           <Container fluid="xl">
             <Form role="search" onSubmit={submitSearch}>
               <Icon name="search" />
@@ -336,12 +355,18 @@ export default function Layout() {
                 ref={searchInputRef}
                 type="search"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  if (searchPrompt) setSearchPrompt(false);
+                }}
                 placeholder="Search clocks, keepsakes, trays…"
                 aria-label="Search the studio"
+                aria-invalid={searchPrompt}
+                aria-describedby={searchPrompt ? 'header-search-prompt' : undefined}
                 tabIndex={searchOpen ? 0 : -1}
               />
               <Button type="submit" variant="link" className="text-link" tabIndex={searchOpen ? 0 : -1}>Search <Icon name="arrow" size={16} /></Button>
+              {searchPrompt && <p id="header-search-prompt" className="header-search__prompt" role="status">Type what you would like to find.</p>}
             </Form>
           </Container>
         </div>
@@ -353,6 +378,23 @@ export default function Layout() {
           <button type="button" className="icon-button" onClick={() => setMenuOpen(false)} aria-label="Close menu"><Icon name="close" /></button>
         </Offcanvas.Header>
         <Offcanvas.Body>
+          <div className="mobile-menu__account" aria-label="Account actions">
+            {user ? (
+              <button type="button" className="mobile-menu__account-main" onClick={() => { setMenuOpen(false); navigate('/account'); }}>
+                <span className="mobile-menu__account-icon">{user.avatar ? <img src={user.avatar} alt="" referrerPolicy="no-referrer" /> : <Icon name="user" />}</span>
+                <span><strong>My account</strong><small>{user.name || user.email}</small></span>
+                <Icon name="arrow" />
+              </button>
+            ) : (
+              <>
+                <p><Icon name="user" /> Your studio account</p>
+                <div>
+                  <button type="button" onClick={() => { setMenuOpen(false); openAuth('', 'login'); }}>Log in</button>
+                  <button type="button" className="is-primary" onClick={() => { setMenuOpen(false); openAuth('', 'signup'); }}>Create account</button>
+                </div>
+              </>
+            )}
+          </div>
           <nav aria-label="Mobile navigation">
             {navItems.map(([label, to], index) => (
               <Link key={label} to={to} className={`mobile-menu__link ${navItemIsActive(label, to) ? 'active' : ''}`} aria-current={navItemIsActive(label, to) ? 'page' : undefined} onClick={() => setMenuOpen(false)}>
@@ -369,23 +411,23 @@ export default function Layout() {
             </div>
           </nav>
           <div className="mobile-menu__footer">
-            {user ? <><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/account'); }}><Icon name="user" /> My account</button>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/admin'); }}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="close" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></> : <><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); openAuth('', 'login'); }}><Icon name="user" /> Log in</button><button type="button" className="plain-link" onClick={() => { setMenuOpen(false); openAuth('', 'signup'); }}><Icon name="spark" /> Create account</button></>}
+            {user && <>{user.role === 'admin' && <button type="button" className="plain-link" onClick={() => { setMenuOpen(false); navigate('/admin'); }}><Icon name="shield" /> Admin dashboard</button>}<button type="button" className="plain-link" onClick={handleSignOut} disabled={signingOut}><Icon name="logout" /> {signingOut ? 'Signing out…' : 'Sign out'}</button></>}
             {contact.phoneHref && <a href={contact.phoneHref}><Icon name="phone" /> {contact.phoneLabel}</a>}
           </div>
         </Offcanvas.Body>
       </Offcanvas>
 
       <p className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{pageLabel} page</p>
+      {location.pathname === '/' && <FloatingWhatsAppButton phone={floatingWhatsAppPhone} />}
+
       <main ref={mainContentRef} id="main-content" tabIndex="-1">
         <Outlet />
       </main>
 
-      {location.pathname === '/' && <FloatingWhatsAppButton phone={contact.phone} />}
-
       <Footer settings={studioSettings} />
       {authModalOpen && <Suspense fallback={null}><AuthModal /></Suspense>}
       <OfferPopup />
-      <ToastStack />
+      <ToastStack aboveBuyBar={location.pathname.startsWith('/product/')} />
     </div>
   );
 }

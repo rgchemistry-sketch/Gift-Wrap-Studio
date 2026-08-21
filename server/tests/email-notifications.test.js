@@ -9,10 +9,11 @@ process.env.ADMIN_EMAIL = "owner@example.test";
 process.env.APP_URL = "https://studio.example.test";
 delete process.env.MONGODB_URI;
 
-const [{ resetMemoryStore }, email, notifications] = await Promise.all([
+const [{ resetMemoryStore }, email, notifications, store] = await Promise.all([
   import("../lib/memory-store.js"),
   import("../services/email.js"),
   import("../services/email-notifications.js"),
+  import("../services/store.js"),
 ]);
 
 let sent;
@@ -71,6 +72,9 @@ test("new orders send one customer confirmation and one actionable studio alert"
   assert.match(customer.text, /No payment has been taken/);
   assert.match(customer.text, /12 Garden Road/);
   assert.match(customer.html, /Names: Mira &amp; Dev/);
+  assert.match(customer.html, /Gift N Wrap/);
+  assert.match(customer.html, /Resin Art Studio/);
+  assert.match(customer.html, />G<span[^>]*>·<\/span>W</);
   assert.equal(customer.reply_to, "info@giftnwrapstudio.com");
 
   assert.match(owner.subject, /New order/);
@@ -90,6 +94,46 @@ test("order status mail carries the administrator note", async () => {
   assert.equal(sent.length, 1);
   assert.match(sent[0].subject, /Confirmed/);
   assert.match(sent[0].text, /UPI details: studio@upi/);
+});
+
+test("delivered order mail thanks the customer and asks for an honest review without a broken CTA", async () => {
+  const updated = order();
+  updated.status = "delivered";
+  updated.statusHistory.push({
+    status: "delivered",
+    note: "Delivered safely at the front desk.",
+  });
+
+  await notifications.sendOrderStatusEmail(updated);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].subject, /has arrived/i);
+  assert.match(sent[0].text, /honest Google review/i);
+  assert.match(sent[0].text, /helps our small studio improve/i);
+  assert.doesNotMatch(sent[0].html, /Share an honest Google review<\/a>/);
+  assert.doesNotMatch(sent[0].text, /Share an honest Google review: https?:/);
+  assert.match(sent[0].html, /Gift N Wrap/);
+  assert.match(sent[0].html, /Resin Art Studio/);
+});
+
+test("delivered order mail links the configured Google review destination", async () => {
+  await store.updateStudioSettings(
+    { contact: { googleReviewUrl: "https://g.page/r/gift-n-wrap/review" } },
+    "owner@example.test",
+  );
+  const updated = order();
+  updated.status = "delivered";
+  updated.statusHistory.push({ status: "delivered", note: "Handed to the recipient." });
+
+  await notifications.sendOrderStatusEmail(updated);
+  assert.equal(sent.length, 1);
+  assert.match(
+    sent[0].html,
+    /href="https:\/\/g\.page\/r\/gift-n-wrap\/review"[^>]*>Share an honest Google review<\/a>/,
+  );
+  assert.match(
+    sent[0].text,
+    /Share an honest Google review: https:\/\/g\.page\/r\/gift-n-wrap\/review/,
+  );
 });
 
 test("admin inquiry replies restate the original brief", async () => {

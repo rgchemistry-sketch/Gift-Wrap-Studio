@@ -9,10 +9,12 @@ import Form from 'react-bootstrap/Form';
 import Row from 'react-bootstrap/Row';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../components/Icon';
+import StorefrontSelect from '../components/StorefrontSelect';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 import { resolveStudioContact } from '../utils/studio-contact';
+import '../form-experience.css';
 import {
   INDIAN_MOBILE_MESSAGE,
   normalizeIndianMobile,
@@ -46,6 +48,14 @@ const emptyContactForm = {
   subject: 'Product question',
   message: '',
 };
+
+const subjectOptions = [
+  'Product question',
+  'Existing order',
+  'Custom design',
+  'Corporate or bulk gifting',
+  'Delivery and care',
+];
 
 export default function ContactPage() {
   const { user, sessionOwnerId, requireAuth, refreshSession } = useAuth();
@@ -189,7 +199,7 @@ export default function ContactPage() {
     <section className="contact-hero">
       <Container fluid="xl">
         <p className="eyebrow light-eyebrow">Contact the studio</p>
-        <h1>A thoughtful gift<br />starts with a hello.</h1>
+        <h1>A thoughtful gift{' '}<br />starts with a hello.</h1>
         <p>Questions, unusual ideas and detailed briefs are all welcome. We’ll help you find the clearest next step.</p>
       </Container>
     </section>
@@ -244,15 +254,15 @@ export default function ContactPage() {
                 <Col xs={12}>
                   <Form.Group controlId="contact-email">
                     <Form.Label>Email</Form.Label>
-                    <Form.Control required readOnly={Boolean(user)} type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} isInvalid={Boolean(fieldErrors.email)} aria-invalid={fieldErrors.email ? true : undefined} aria-describedby="contact-email-error contact-email-help" />
+                    <Form.Control required readOnly={Boolean(user)} className={user ? 'verified-readonly' : ''} aria-readonly={user ? true : undefined} type="email" maxLength={254} autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} isInvalid={Boolean(fieldErrors.email)} aria-invalid={fieldErrors.email ? true : undefined} aria-describedby="contact-email-error contact-email-help" />
                     <Form.Control.Feedback id="contact-email-error" type="invalid">{fieldErrors.email || 'Enter a valid email.'}</Form.Control.Feedback>
-                    <Form.Text id="contact-email-help">{user ? 'Replies will go to your verified account email.' : 'You’ll verify this email securely before the message is sent.'}</Form.Text>
+                    <Form.Text id="contact-email-help">{user ? <><Icon name="lock" size={12} /> Verified account email—change it by signing in with another account.</> : 'You’ll verify this email securely before the message is sent.'}</Form.Text>
                   </Form.Group>
                 </Col>
                 <Col xs={12}>
                   <Form.Group controlId="contact-subject">
                     <Form.Label>About</Form.Label>
-                    <Form.Select value={form.subject} onChange={(event) => update('subject', event.target.value)} isInvalid={Boolean(fieldErrors.subject)} aria-invalid={fieldErrors.subject ? true : undefined} aria-describedby={fieldErrors.subject ? 'contact-subject-error' : undefined}><option>Product question</option><option>Existing order</option><option>Custom design</option><option>Corporate or bulk gifting</option><option>Delivery and care</option></Form.Select>
+                    <StorefrontSelect id="contact-subject" value={form.subject} options={subjectOptions} onChange={(value) => update('subject', value)} invalid={Boolean(fieldErrors.subject)} ariaDescribedBy={fieldErrors.subject ? 'contact-subject-error' : undefined} ariaLabel="Choose what your message is about" />
                     <Form.Control.Feedback id="contact-subject-error" type="invalid">{fieldErrors.subject}</Form.Control.Feedback>
                   </Form.Group>
                 </Col>

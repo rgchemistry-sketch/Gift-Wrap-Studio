@@ -49,6 +49,7 @@ ordersRouter.get(
   asyncHandler(async (request, response) => {
     const order = await getOrder(request.validated.params.id);
     if (order.buyerId !== request.user.id && request.user.role !== "admin") throw forbidden();
+    response.setHeader("Cache-Control", "no-store");
     response.json({ data: order });
   }),
 );

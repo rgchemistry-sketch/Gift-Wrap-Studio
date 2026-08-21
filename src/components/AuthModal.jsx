@@ -99,6 +99,7 @@ export default function AuthModal() {
   const [code, setCode] = useState('');
   const [resendSeconds, setResendSeconds] = useState(0);
   const [entrySubmitted, setEntrySubmitted] = useState(false);
+  const [touchedFields, setTouchedFields] = useState({ name: false, email: false });
 
   const providers = authStatus.providers || {};
   const emailValid = emailPattern.test(email.trim());
@@ -178,6 +179,7 @@ export default function AuthModal() {
       setResendSeconds(0);
       cooldownEmailRef.current = '';
       setEntrySubmitted(false);
+      setTouchedFields({ name: false, email: false });
     }
   }, [authModalOpen]);
 
@@ -185,6 +187,7 @@ export default function AuthModal() {
     setCode('');
     setLocalError('');
     setEntrySubmitted(false);
+    setTouchedFields({ name: false, email: false });
     if (authIntent === 'login') setName('');
     if (authModalOpen && !emailChallenge) {
       const timer = window.setTimeout(focusActiveInput, 0);
@@ -375,16 +378,21 @@ export default function AuthModal() {
       aria-describedby="auth-dialog-description"
       dialogClassName="auth-dialog auth-dialog--passwordless"
     >
-      <Modal.Body>
+      <Modal.Header className="auth-modal__dismiss-bar">
         <button type="button" className="icon-button modal-close" onClick={requestClose} aria-label="Close account dialog">
           <Icon name="close" />
         </button>
-
+      </Modal.Header>
+      <Modal.Body>
         {!emailChallenge ? (
           <div className="auth-dialog__entry">
             <div className="auth-modal__topline">
-              <div className="auth-modal__brand" aria-hidden="true">
-                <span>G</span><i>·</i><span>W</span>
+              <div className="auth-modal__brand">
+                <span className="auth-modal__brand-seal" aria-hidden="true">G<span>·</span>W</span>
+                <span className="auth-modal__brand-words">
+                  <strong>Gift N Wrap</strong>
+                  <small>Resin Art Studio</small>
+                </span>
               </div>
               <div className="auth-mode-tabs" role="group" aria-label="Choose account action">
                 <button type="button" disabled={uiBusy} aria-pressed={authIntent === 'login'} className={authIntent === 'login' ? 'is-active' : ''} onClick={() => chooseIntent('login')}>Log in</button>
@@ -453,11 +461,12 @@ export default function AuthModal() {
                       setName(event.target.value.slice(0, 100));
                       if (localError) setLocalError('');
                     }}
+                    onBlur={() => setTouchedFields((current) => ({ ...current, name: true }))}
                     autoComplete="name"
                     placeholder="How should we address you?"
-                    isInvalid={(entrySubmitted || name.length > 0) && !nameValid}
-                    aria-invalid={(entrySubmitted || name.length > 0) && !nameValid}
-                    aria-describedby={(entrySubmitted || name.length > 0) && !nameValid ? 'account-name-error' : undefined}
+                    isInvalid={(entrySubmitted || touchedFields.name) && !nameValid}
+                    aria-invalid={(entrySubmitted || touchedFields.name) && !nameValid}
+                    aria-describedby={(entrySubmitted || touchedFields.name) && !nameValid ? 'account-name-error' : undefined}
                     disabled={uiBusy}
                   />
                   <Form.Control.Feedback id="account-name-error" type="invalid">Enter at least 2 characters.</Form.Control.Feedback>
@@ -483,15 +492,16 @@ export default function AuthModal() {
                       }
                       if (localError) setLocalError('');
                     }}
+                    onBlur={() => setTouchedFields((current) => ({ ...current, email: true }))}
                     autoComplete="email"
                     placeholder="you@example.com"
-                    isInvalid={(entrySubmitted || email.length > 2) && !emailValid}
-                    aria-invalid={(entrySubmitted || email.length > 2) && !emailValid}
-                    aria-describedby={(entrySubmitted || email.length > 2) && !emailValid ? 'account-email-error' : undefined}
+                    isInvalid={(entrySubmitted || touchedFields.email) && !emailValid}
+                    aria-invalid={(entrySubmitted || touchedFields.email) && !emailValid}
+                    aria-describedby={(entrySubmitted || touchedFields.email) && !emailValid ? 'account-email-error' : undefined}
                     disabled={uiBusy}
                   />
                 </div>
-                {(entrySubmitted || email.length > 2) && !emailValid && <div id="account-email-error" className="invalid-feedback d-block">Enter a valid email address.</div>}
+                {(entrySubmitted || touchedFields.email) && !emailValid && <div id="account-email-error" className="invalid-feedback d-block">Enter a valid email address.</div>}
               </Form.Group>
               <Button type="submit" className="button-burgundy auth-email-submit" disabled={uiBusy || authStatus.loading || !emailConfigured || resendSeconds > 0}>
                 {authenticating && authMethod === 'email'
@@ -537,11 +547,9 @@ export default function AuthModal() {
                 }}
                 placeholder="000000"
                 maxLength={6}
-                aria-describedby={`email-code-help${code.length > 0 && code.length !== 6 ? ' email-code-error' : ''}`}
-                aria-invalid={code.length > 0 && code.length !== 6}
+                aria-describedby="email-code-help"
                 disabled={uiBusy}
               />
-              {code.length > 0 && code.length !== 6 && <div id="email-code-error" className="invalid-feedback d-block">Enter all 6 digits from the email.</div>}
               <Form.Text id="email-code-help">The code expires in {emailChallenge.expiresInMinutes || 10} minutes and works once.</Form.Text>
             </Form.Group>
             <Button type="submit" className="button-burgundy w-100" disabled={uiBusy || code.length !== 6}>

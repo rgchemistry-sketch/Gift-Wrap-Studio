@@ -5,6 +5,11 @@ import { useLocation } from 'react-router-dom';
 import Icon from './Icon';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
+import {
+  effectiveOfferDelaySeconds,
+  offerDismissalExpiresAt,
+  offerDismissalIsActive,
+} from '../utils/offer-popup';
 
 const DISMISSED_KEY = 'gnw-first-offer-dismissed';
 const CLAIMED_KEY = 'gnw-first-offer-claimed';
@@ -16,8 +21,21 @@ const hasSessionFlag = (key) => {
   }
 };
 
+const hasPersistentDismissal = () => {
+  try {
+    const storedExpiry = window.localStorage.getItem(DISMISSED_KEY);
+    const active = offerDismissalIsActive(storedExpiry);
+    if (storedExpiry && !active) window.localStorage.removeItem(DISMISSED_KEY);
+    return active;
+  } catch {
+    return false;
+  }
+};
+
 export default function OfferPopup() {
-  const [dismissed, setDismissed] = useState(() => hasSessionFlag(DISMISSED_KEY));
+  const [dismissed, setDismissed] = useState(() => (
+    hasSessionFlag(DISMISSED_KEY) || hasPersistentDismissal()
+  ));
   const [delayElapsed, setDelayElapsed] = useState(false);
   const location = useLocation();
   const { authModalOpen, loading: authLoading, user } = useAuth();
@@ -27,12 +45,12 @@ export default function OfferPopup() {
   const eligible = welcomeOffer?.eligible ?? true;
   const code = String(welcomeOffer?.code || popup.code || 'FIRST10').toUpperCase();
   const percent = Number(welcomeOffer?.percent ?? popup.percent ?? 10);
-  const delaySeconds = Math.min(
-    60,
-    Math.max(0, Number(popup.delaySeconds ?? welcomeOffer?.popupDelaySeconds ?? 0) || 0),
+  const delaySeconds = effectiveOfferDelaySeconds(
+    popup.delaySeconds ?? welcomeOffer?.popupDelaySeconds,
   );
   const claimed = Boolean(claimedOfferCode || hasSessionFlag(CLAIMED_KEY));
-  const suppressed = authModalOpen || location.pathname.startsWith('/admin') || location.pathname.startsWith('/account') || user?.role === 'admin';
+  const onHomepage = location.pathname === '/';
+  const suppressed = authModalOpen || !onHomepage || user?.role === 'admin';
   const viewer = welcomeOffer?.viewer;
   const viewerMatches = viewer
     ? String(viewer.id || '') === String(user?.id || '')
@@ -40,15 +58,16 @@ export default function OfferPopup() {
 
   useEffect(() => {
     setDelayElapsed(false);
-    if (!welcomeOffer || !enabled || !eligible || !viewerMatches || dismissed || claimed) {
+    if (!onHomepage || !welcomeOffer || !enabled || !eligible || !viewerMatches || dismissed || claimed) {
       return undefined;
     }
     const timer = window.setTimeout(() => setDelayElapsed(true), delaySeconds * 1_000);
     return () => window.clearTimeout(timer);
-  }, [claimed, delaySeconds, dismissed, eligible, enabled, viewerMatches, welcomeOffer]);
+  }, [claimed, delaySeconds, dismissed, eligible, enabled, onHomepage, viewerMatches, welcomeOffer]);
 
   const show = Boolean(
     welcomeOffer
+    && onHomepage
     && enabled
     && eligible
     && viewerMatches
@@ -63,6 +82,11 @@ export default function OfferPopup() {
       window.sessionStorage.setItem(DISMISSED_KEY, 'true');
     } catch {
       // Local state still keeps the dialog closed for the current page.
+    }
+    try {
+      window.localStorage.setItem(DISMISSED_KEY, String(offerDismissalExpiresAt()));
+    } catch {
+      // The session flag and component state still prevent another interruption.
     }
     setDismissed(true);
   };
@@ -83,10 +107,12 @@ export default function OfferPopup() {
 
   return (
     <Modal show={show} onHide={dismiss} centered dialogClassName="offer-dialog" aria-labelledby="first-offer-title">
-      <Modal.Body>
+      <Modal.Header className="offer-dialog__dismiss-bar">
         <button type="button" className="icon-button modal-close" onClick={dismiss} aria-label="Dismiss first order offer">
           <Icon name="close" />
         </button>
+      </Modal.Header>
+      <Modal.Body>
         <div className="offer-dialog__art" aria-hidden="true">
           <span>{percent}</span><small>% off</small>
         </div>

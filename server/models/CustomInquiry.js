@@ -31,5 +31,7 @@ const customInquirySchema = new mongoose.Schema(
   { timestamps: true, toJSON: jsonTransform, toObject: jsonTransform },
 );
 
+customInquirySchema.index({ createdAt: 1 }, { name: "custom_inquiries_created_at" });
+
 export const CustomInquiry =
   mongoose.models.CustomInquiry || mongoose.model("CustomInquiry", customInquirySchema);

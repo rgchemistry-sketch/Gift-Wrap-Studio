@@ -13,6 +13,8 @@ import { useCatalog } from '../data/useCatalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 import { resolveStudioContact } from '../utils/studio-contact';
+import { shouldDisableBuyingAction } from '../utils/buying-flow';
+import '../buying-flow.css';
 
 export default function CartPage() {
   const navigate = useNavigate();
@@ -45,7 +47,7 @@ export default function CartPage() {
   const customizationUnavailableItems = cart.filter((line) => line.customizationUnavailable);
   const bagNeedsAttention = unavailableItems.length > 0 || customizationUnavailableItems.length > 0;
   const contact = resolveStudioContact(studioSettings);
-  const bagCheckPending = !liveCatalogReady || catalogLoading;
+  const bagCheckPending = !catalogError && (!liveCatalogReady || catalogLoading);
   const checkoutButtonLabel = catalogError
     ? 'Retry the bag check to continue'
     : bagCheckPending
@@ -78,7 +80,13 @@ export default function CartPage() {
     if (liveCatalogReady && !catalogLoading && !catalogError) revalidateCart(catalog);
   }, [cart, catalog, catalogError, catalogLoading, liveCatalogReady, revalidateCart]);
 
-  const continueToCheckout = () => {
+  const continueToCheckout = async () => {
+    if (catalogError) {
+      const refreshed = await refreshLiveCart();
+      if (!refreshed) notify('We still couldn’t refresh your bag. Please check your connection and try again.', 'warning');
+      return;
+    }
+    if (bagCheckPending) return;
     if (customizationUnavailableItems.length) {
       notify('Choose whether to keep each affected piece without personalization or remove it before continuing.', 'warning');
       return;
@@ -108,7 +116,7 @@ export default function CartPage() {
           <p className="eyebrow">Your gift bag</p>
           <h1>Room for something meaningful.</h1>
           <p>Your bag is empty. Explore the studio collection or begin a piece made entirely from your idea.</p>
-          <div><Button as={Link} to="/shop" className="button-burgundy">Explore the collection</Button><Link to="/custom-order" className="text-link">Start a custom order <Icon name="arrow" /></Link></div>
+          <div className="empty-bag__actions"><Button as={Link} to="/shop" className="button-burgundy">Explore the collection</Button><Link to="/custom-order" className="text-link">Start a custom order <Icon name="arrow" /></Link></div>
         </Container>
         {suggestions.length > 0 && <section className="page-section cart-suggestions"><Container fluid="xl"><header className="section-heading"><p className="eyebrow">A lovely place to begin</p><h2>Studio favourites.</h2></header><Row className="g-4">{suggestions.map((product, index) => <Col sm={6} lg={4} key={product.id}><ProductCard product={product} index={index} /></Col>)}</Row></Container></section>}
       </>
@@ -146,10 +154,10 @@ export default function CartPage() {
                       </div>
                     )}
                     <div className="cart-line__actions">
-                      <div className="quantity-control" aria-label={`Quantity for ${line.product.title}`}>
-                        <button type="button" onClick={() => updateQuantity(line.lineId, line.quantity - 1)} aria-label="Decrease quantity"><Icon name="minus" size={15} /></button>
+                      <div className="quantity-control" role="group" aria-label={`Quantity for ${line.product.title}`}>
+                        <button type="button" onClick={() => updateQuantity(line.lineId, line.quantity - 1)} aria-label="Decrease quantity" disabled={line.quantity <= 1}><Icon name="minus" size={15} /></button>
                         <span aria-live="polite">{line.quantity}</span>
-                        <button type="button" onClick={() => updateQuantity(line.lineId, line.quantity + 1)} aria-label="Increase quantity"><Icon name="plus" size={15} /></button>
+                        <button type="button" onClick={() => updateQuantity(line.lineId, line.quantity + 1)} aria-label="Increase quantity" disabled={line.quantity >= 10}><Icon name="plus" size={15} /></button>
                       </div>
                       <button type="button" className="plain-link" onClick={() => removeFromCart(line.lineId)}>Remove</button>
                     </div>
@@ -165,7 +173,7 @@ export default function CartPage() {
               <h2 id="cart-summary-title">Your summary</h2>
               {claimedOffer && <Alert variant={welcomeOffer?.eligible === false ? 'warning' : 'success'} className="offer-claimed"><Icon name="spark" /> {welcomeOffer?.eligible === false ? `${claimedOffer} is not available for this account.` : `${claimedOffer} saved. Eligibility will be checked before final confirmation.`} <button type="button" className="plain-link" onClick={removeWelcomeOffer}>Remove offer</button></Alert>}
               <dl><div><dt>Pieces ({cart.reduce((count, line) => count + line.quantity, 0)})</dt><dd>{formatCurrency(subtotal)}</dd></div><div><dt>Delivery</dt><dd>Confirmed by studio</dd></div><div className="summary-total"><dt>Current item total</dt><dd>{formatCurrency(subtotal)}</dd></div></dl>
-              <Button type="button" onClick={continueToCheckout} disabled={bagCheckPending || Boolean(catalogError) || bagNeedsAttention} className="button-burgundy w-100" aria-describedby="cart-summary-note">{checkoutButtonLabel}{!bagCheckPending && !catalogError && !bagNeedsAttention && <Icon name="arrow" />}</Button>
+              <Button type="button" onClick={continueToCheckout} disabled={shouldDisableBuyingAction({ catalogError, checkPending: bagCheckPending, needsAttention: bagNeedsAttention })} className="button-burgundy w-100" aria-describedby="cart-summary-note">{checkoutButtonLabel}{!bagCheckPending && !catalogError && !bagNeedsAttention && <Icon name="arrow" />}</Button>
               <p className="summary-note" id="cart-summary-note"><Icon name="lock" size={14} /> No payment is taken on this page. The studio confirms customization, delivery and final amount first.</p>
               {contact.phoneHref && <div className="summary-contact"><p>Need help with your design?</p><a href={contact.phoneHref}>Call the studio · {contact.phoneLabel}</a></div>}
             </aside>

@@ -18,6 +18,19 @@ import {
   hasCartCustomization,
   revalidateCartLines,
 } from './cart-validation';
+import {
+  CART_REMOVAL_UNDO_MS,
+  addCartLine,
+  createDeferredAttachmentCleanup,
+  removeCartLine,
+  requiresAuthenticatedCartAddition,
+} from './cart-actions';
+import {
+  canDedupeToast,
+  clampToastDuration,
+  normalizeToastAction,
+  retainActionableToasts,
+} from '../utils/toast-actions';
 
 const ShopContext = createContext(null);
 const CART_KEY = 'gnw-cart';
@@ -236,17 +249,6 @@ function pruneExpiringAttachments(lines = []) {
   return { kept, expired };
 }
 
-function makeLineId(product, customization = {}) {
-  const signatureParts = Object.entries(customization)
-    .filter(([, value]) => value && typeof value !== 'object')
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => `${key}:${value}`);
-  const mediaPublicId = String(customization.media?.publicId || '').trim();
-  if (mediaPublicId) signatureParts.push(`media:${mediaPublicId}`);
-  const signature = signatureParts.join('|');
-  return `${product.id}-${signature || 'standard'}`;
-}
-
 export function ShopProvider({ children }) {
   const { user, sessionOwnerId, loading: authLoading, requireAuth } = useAuth();
   const { pathname } = useLocation();
@@ -284,6 +286,7 @@ export function ShopProvider({ children }) {
   ));
   const shopChannelRef = useRef(null);
   const welcomeOfferRef = useRef(null);
+  const pendingRemovalRef = useRef(new Map());
 
   useEffect(() => {
     cartRef.current = cart;
@@ -292,6 +295,11 @@ export function ShopProvider({ children }) {
   useEffect(() => {
     wishlistRef.current = wishlist;
   }, [wishlist]);
+
+  useEffect(() => () => {
+    pendingRemovalRef.current.forEach(({ cleanup }) => cleanup.cancel());
+    pendingRemovalRef.current.clear();
+  }, []);
 
   useEffect(() => {
     if (authLoading) return;
@@ -554,6 +562,10 @@ export function ShopProvider({ children }) {
   const applyShopMutation = useCallback((value) => {
     const mutation = normalizeShopMutation(value);
     if (!mutation || mutation.ownerId !== activeOwnerIdRef.current) return false;
+    if (mutation.action === 'cart/add' && mutation.line?.lineId) {
+      const pending = pendingRemovalRef.current.get(mutation.line.lineId);
+      if (pending?.cleanup.cancel()) pendingRemovalRef.current.delete(mutation.line.lineId);
+    }
     mutationClockRef.current = Math.max(mutationClockRef.current, mutation.clock);
     const isCartMutation = mutation.action.startsWith('cart/');
     const syncRef = isCartMutation ? cartSyncRef : wishlistSyncRef;
@@ -692,21 +704,24 @@ export function ShopProvider({ children }) {
     };
   }, [applyShopMutation, authLoading, sessionOwnerId, user?.id]);
 
-  const notify = useCallback((message, tone = 'success') => {
+  const notify = useCallback((message, tone = 'success', options = {}) => {
     const id = `${Date.now()}-${Math.random()}`;
     const normalizedMessage = String(message || 'Your request has been updated.').trim();
     const normalizedTone = ['success', 'error', 'warning', 'info', 'neutral'].includes(tone)
       ? tone
       : 'neutral';
+    const duration = clampToastDuration(options.duration);
+    const action = normalizeToastAction(options.action, { duration });
+    const incomingToast = {
+      id,
+      message: normalizedMessage,
+      tone: normalizedTone,
+      duration,
+      action,
+    };
     setToasts((current) => {
-      const withoutDuplicate = current.filter((toast) => (
-        toast.message !== normalizedMessage || toast.tone !== normalizedTone
-      ));
-      return [...withoutDuplicate.slice(-3), {
-        id,
-        message: normalizedMessage,
-        tone: normalizedTone,
-      }];
+      const withoutDuplicate = current.filter((toast) => !canDedupeToast(toast, incomingToast));
+      return retainActionableToasts([...withoutDuplicate, incomingToast], 4);
     });
     return id;
   }, []);
@@ -791,6 +806,17 @@ export function ShopProvider({ children }) {
       });
   }, [notify]);
 
+  const deferCartAttachmentRelease = useCallback((item, expiresAt) => {
+    const deadline = Number(expiresAt);
+    const cleanup = createDeferredAttachmentCleanup(item, {
+      delay: Number.isFinite(deadline)
+        ? Math.max(0, deadline - Date.now())
+        : CART_REMOVAL_UNDO_MS,
+      onCleanup: (removedItem) => releaseCartAttachment(removedItem),
+    });
+    return cleanup;
+  }, [releaseCartAttachment]);
+
   const removeCartCustomization = useCallback((lineId) => {
     const current = cartRef.current;
     const item = current.find((line) => line.lineId === lineId);
@@ -807,33 +833,23 @@ export function ShopProvider({ children }) {
   const addToCart = useCallback(
     (product, { quantity = 1, customization = {}, onAdded } = {}) => {
       const commit = () => {
-        const lineId = makeLineId(product, customization);
-        const next = [...cartRef.current];
-        const existingIndex = next.findIndex((item) => item.lineId === lineId);
-        if (existingIndex >= 0) {
-          next[existingIndex] = {
-            ...next[existingIndex],
-            quantity: Math.min(10, next[existingIndex].quantity + quantity),
-          };
-        } else {
-          next.push({
-            lineId,
-            product,
-            quantity,
-            customization,
-          });
-        }
-        persistCart(next);
+        const result = addCartLine(cartRef.current, product, { quantity, customization });
+        const pending = pendingRemovalRef.current.get(result.lineId);
+        if (pending?.cleanup.cancel()) pendingRemovalRef.current.delete(result.lineId);
+        persistCart(result.cart);
         notify(`${product.title} was added to your bag.`);
         onAdded?.();
       };
 
-      if (!user) {
+      // Names, dates, messages and colour choices are safe to keep in the guest
+      // cart. An actual uploaded image remains account-scoped and still requires
+      // authentication before it can enter the cart.
+      if (!user && requiresAuthenticatedCartAddition(customization)) {
         requireAuth({
-          message: 'Log in or create an account before adding a piece to your bag. Your choices will stay right here.',
+          message: 'Log in or create an account to securely attach this photo. Your other personalization choices will stay right here.',
           onAuthenticated: commit,
           onAccountMismatch: () => {
-            notify('Your signed-in account changed. Review this account’s bag before adding the piece again.', 'warning');
+            notify('Your signed-in account changed. Review the photo before adding the piece again.', 'warning');
           },
         });
         return false;
@@ -844,36 +860,59 @@ export function ShopProvider({ children }) {
     [notify, persistCart, requireAuth, user],
   );
 
-  const updateQuantity = useCallback(
-    (lineId, quantity) => {
-      const current = cartRef.current;
-      if (quantity <= 0) {
-        const item = current.find((line) => line.lineId === lineId);
-        persistCart(current.filter((line) => line.lineId !== lineId));
-        if (item) {
-          releaseCartAttachment(item);
-          notify(`${item.product.title} was removed.`, 'neutral');
-        }
-        return;
-      }
-      persistCart(
-        current.map((line) => (line.lineId === lineId ? { ...line, quantity: Math.min(10, quantity) } : line)),
-      );
-    },
-    [notify, persistCart, releaseCartAttachment],
-  );
+  const restoreRemovedCartItem = useCallback((lineId) => {
+    const pending = pendingRemovalRef.current.get(lineId);
+    if (!pending || !pending.cleanup.cancel()) return false;
+    pendingRemovalRef.current.delete(lineId);
+    const restored = addCartLine(cartRef.current, pending.item.product, {
+      quantity: pending.item.quantity,
+      customization: pending.item.customization,
+    });
+    persistCart(restored.cart);
+    notify(`${pending.item.product.title} is back in your bag.`, 'success');
+    return true;
+  }, [notify, persistCart]);
 
   const removeFromCart = useCallback(
     (lineId) => {
-      const current = cartRef.current;
-      const item = current.find((line) => line.lineId === lineId);
-      persistCart(current.filter((line) => line.lineId !== lineId));
-      if (item) {
-        releaseCartAttachment(item);
-        notify(`${item.product.title} was removed.`, 'neutral');
-      }
+      const result = removeCartLine(cartRef.current, lineId);
+      if (!result.item) return false;
+      const previousPending = pendingRemovalRef.current.get(lineId);
+      previousPending?.cleanup.cancel();
+      persistCart(result.cart);
+      const undoExpiresAt = Date.now() + CART_REMOVAL_UNDO_MS;
+      const cleanup = deferCartAttachmentRelease(result.item, undoExpiresAt);
+      pendingRemovalRef.current.set(lineId, { item: result.item, cleanup });
+      notify(`${result.item.product.title} was removed.`, 'neutral', {
+        duration: CART_REMOVAL_UNDO_MS,
+        action: {
+          label: 'Undo',
+          expiresMs: CART_REMOVAL_UNDO_MS,
+          expiresAt: undoExpiresAt,
+          onClick: () => restoreRemovedCartItem(lineId),
+        },
+      });
+      window.setTimeout(() => {
+        const pending = pendingRemovalRef.current.get(lineId);
+        if (pending?.cleanup === cleanup && cleanup.state !== 'pending') {
+          pendingRemovalRef.current.delete(lineId);
+        }
+      }, Math.max(0, undoExpiresAt - Date.now()) + 100);
+      return true;
     },
-    [notify, persistCart, releaseCartAttachment],
+    [deferCartAttachmentRelease, notify, persistCart, restoreRemovedCartItem],
+  );
+
+  const updateQuantity = useCallback(
+    (lineId, quantity) => {
+      const current = cartRef.current;
+      if (quantity <= 0) return false;
+      persistCart(
+        current.map((line) => (line.lineId === lineId ? { ...line, quantity: Math.min(10, quantity) } : line)),
+      );
+      return true;
+    },
+    [persistCart],
   );
 
   const clearCart = useCallback(() => persistCart([]), [persistCart]);

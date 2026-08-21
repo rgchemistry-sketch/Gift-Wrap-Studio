@@ -250,6 +250,7 @@ test("saved studio settings drive the public popup and checkout totals", async (
         email: "hello@example.test",
         phone: "+91 98765 43210",
         instagram: "https://instagram.com/GiftNWrapStudio/?igsh=share",
+        googleReviewUrl: "https://search.google.com/local/writereview?placeid=studio-test",
       },
     })
     .expect(200);
@@ -263,6 +264,10 @@ test("saved studio settings drive the public popup and checkout totals", async (
     "https://www.instagram.com/giftnwrapstudio/",
   );
   assert.equal(publicSettings.body.data.contact.instagramHandle, "@giftnwrapstudio");
+  assert.equal(
+    publicSettings.body.data.contact.googleReviewUrl,
+    "https://search.google.com/local/writereview?placeid=studio-test",
+  );
 
   const offer = await request(app).get("/api/offers/welcome").expect(200);
   assert.equal(offer.body.data.code, "HELLO15");
@@ -315,7 +320,7 @@ test("an enabled welcome offer cannot advertise or consume a zero-value saving",
   assert.equal(stillDisabled.body.data.eligible, false);
 });
 
-test("studio Instagram settings reject content links and preserve explicit blanks", async () => {
+test("studio profile links reject unsafe destinations and preserve explicit blanks", async () => {
   const admin = await adminAgent();
 
   const invalidInstagram = await admin
@@ -327,21 +332,34 @@ test("studio Instagram settings reject content links and preserve explicit blank
     true,
   );
 
+  const invalidReviewLink = await admin
+    .put("/api/admin/settings")
+    .send({ contact: { googleReviewUrl: "https://reviews.example.test/gift-n-wrap" } })
+    .expect(422);
+  assert.equal(
+    invalidReviewLink.body.error.details.some(
+      (issue) => issue.field === "contact.googleReviewUrl",
+    ),
+    true,
+  );
+
   const cleared = await admin
     .put("/api/admin/settings")
-    .send({ contact: { email: "", phone: "", instagram: "" } })
+    .send({ contact: { email: "", phone: "", instagram: "", googleReviewUrl: "" } })
     .expect(200);
   assert.deepEqual(
     {
       email: cleared.body.data.contact.email,
       phone: cleared.body.data.contact.phone,
       instagramUrl: cleared.body.data.contact.instagramUrl,
+      googleReviewUrl: cleared.body.data.contact.googleReviewUrl,
     },
-    { email: "", phone: "", instagramUrl: "" },
+    { email: "", phone: "", instagramUrl: "", googleReviewUrl: "" },
   );
 
   const publicSettings = await request(app).get("/api/settings").expect(200);
   assert.equal(publicSettings.body.data.contact.instagramUrl, "");
+  assert.equal(publicSettings.body.data.contact.googleReviewUrl, "");
 });
 
 test("registered-user administration is protected, paged and privacy-conscious", async () => {

@@ -1,5 +1,9 @@
 import mongoose from "mongoose";
 import { jsonTransform } from "./helpers.js";
+import {
+  GOOGLE_REVIEW_URL_MESSAGE,
+  normalizeGoogleReviewUrl,
+} from "../../shared/google-review-url.js";
 
 const leadTimesSchema = new mongoose.Schema(
   {
@@ -47,6 +51,16 @@ const contactSchema = new mongoose.Schema(
     email: { type: String, default: "", lowercase: true, trim: true, maxlength: 254 },
     phone: { type: String, default: "", trim: true, maxlength: 20 },
     instagram: { type: String, default: "", trim: true, maxlength: 200 },
+    googleReviewUrl: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 1_000,
+      validate: {
+        validator: (value) => normalizeGoogleReviewUrl(value) !== null,
+        message: GOOGLE_REVIEW_URL_MESSAGE,
+      },
+    },
   },
   { _id: false },
 );

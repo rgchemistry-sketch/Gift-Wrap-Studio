@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
 import Modal from 'react-bootstrap/Modal';
+import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../Icon';
 import SmartImage from '../SmartImage';
 import { api } from '../../api/client';
@@ -144,6 +145,10 @@ export default function ProductManager({
     finally { markWorking(id, false); }
   };
 
+  const archiveBusy = Boolean(
+    archiveCandidate && workingIds[archiveCandidate.id || archiveCandidate._id],
+  );
+
   return <>
     <div className="admin-section-head admin-catalogue-head">
       <div><p className="eyebrow">Catalogue atelier</p><h2>Products</h2><p className="admin-section-copy">Create, price and publish every piece from one workspace.</p></div>
@@ -188,7 +193,10 @@ export default function ProductManager({
       {total > 0 && <footer className="users-pagination admin-collection-pagination admin-product-pagination"><span>Showing {first}–{last} of {total} products</span><div><Button type="button" size="sm" variant="outline-dark" disabled={loading || page <= 1} onClick={() => onQueryChange?.({ page: page - 1 })}>Previous</Button><span>Page {page} of {pages}</span><Button type="button" size="sm" variant="outline-dark" disabled={loading || page >= pages} onClick={() => onQueryChange?.({ page: page + 1 })}>Next</Button></div></footer>}
     </div>
     {editorOpen && <Suspense fallback={<div className="product-editor-backdrop"><aside className="product-editor product-editor--loading"><AdminSectionState loading title="Opening product editor" message="Preparing gallery and publishing tools…"/></aside></div>}>
-      <ProductEditor product={editorProduct} onClose={() => setEditorOpen(false)} onSaved={async (_savedProduct, cleanupWarning) => {
+      <ProductEditor product={editorProduct} onClose={(cleanupWarning) => {
+        setEditorOpen(false);
+        if (cleanupWarning) notify(cleanupWarning, 'warning');
+      }} onSaved={async (_savedProduct, cleanupWarning) => {
         setEditorOpen(false);
         notify(cleanupWarning || (editorProduct ? 'Product changes saved.' : 'New product created and ready in the catalogue.'), cleanupWarning ? 'error' : 'success');
         await onRefresh();
@@ -196,25 +204,28 @@ export default function ProductManager({
     </Suspense>}
     <Modal
       show={Boolean(archiveCandidate)}
-      onHide={() => setArchiveCandidate(null)}
+      onHide={() => { if (!archiveBusy) setArchiveCandidate(null); }}
+      backdrop={archiveBusy ? 'static' : true}
+      keyboard={!archiveBusy}
       centered
       className="admin-confirm-modal"
       aria-labelledby="archive-product-title"
+      aria-busy={archiveBusy}
     >
-      <Modal.Header closeButton>
+      <Modal.Header closeButton={!archiveBusy}>
         <div><p className="eyebrow">Catalogue action</p><Modal.Title id="archive-product-title">Archive this piece?</Modal.Title></div>
       </Modal.Header>
       <Modal.Body>
         <p><strong>{archiveCandidate ? normalizeProduct(archiveCandidate).title : 'This product'}</strong> will leave the live catalogue. You can restore it later from the Archived filter.</p>
       </Modal.Body>
       <Modal.Footer>
-        <Button type="button" variant="outline-dark" onClick={() => setArchiveCandidate(null)}>Keep product</Button>
+        <Button type="button" variant="outline-dark" onClick={() => setArchiveCandidate(null)} disabled={archiveBusy}>Keep product</Button>
         <Button
           type="button"
           variant="danger"
           onClick={() => archiveCandidate && archiveProduct(archiveCandidate)}
-          disabled={Boolean(archiveCandidate && workingIds[archiveCandidate.id || archiveCandidate._id])}
-        >Archive product</Button>
+          disabled={archiveBusy}
+        >{archiveBusy && <Spinner animation="border" size="sm" aria-hidden="true" />} {archiveBusy ? 'Archiving…' : 'Archive product'}</Button>
       </Modal.Footer>
     </Modal>
   </>;

@@ -4,8 +4,12 @@ import { optimizeCloudinaryImage } from '../utils/cloudinary-image';
 const localStudioImages = {
   '/assets/corporate-gifts.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
   '/assets/hero-resin-studio.webp': { originalWidth: 1536, widths: [320, 480, 600, 800, 1200] },
+  '/assets/milestone-keepsakes-v3.webp': { originalWidth: 1672, widths: [480, 768, 960, 1280, 1600] },
   '/assets/personalized-plaque.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
+  '/assets/personalization-atelier-v2.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
+  '/assets/resin-atelier-hero-v3.webp': { originalWidth: 1672, widths: [480, 768, 960, 1280, 1600] },
   '/assets/serving-collection.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
+  '/assets/signature-resin-collection-v3.webp': { originalWidth: 1672, widths: [480, 768, 960, 1280, 1600] },
   '/assets/wedding-keepsake.webp': { originalWidth: 960, widths: [320, 480, 600, 800, 960] },
 };
 

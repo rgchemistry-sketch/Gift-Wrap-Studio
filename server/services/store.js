@@ -27,6 +27,7 @@ import { User } from "../models/User.js";
 import { UploadGrant, UploadQuota } from "../models/UploadGrant.js";
 import { AuthIdentity } from "../models/AuthIdentity.js";
 import { normalizeInstagramProfile } from "../../shared/social-profiles.js";
+import { normalizeGoogleReviewUrl } from "../../shared/google-review-url.js";
 
 const clone = (value) => (value == null ? value : structuredClone(value));
 
@@ -1083,6 +1084,7 @@ const defaultStudioSettings = () => ({
     email: "info@giftnwrapstudio.com",
     phone: "+919588281126",
     instagram: "@giftnwrapstudio",
+    googleReviewUrl: "",
   },
 });
 
@@ -1111,6 +1113,7 @@ const mergeStudioSettings = (current = {}, changes = {}) => {
 const publicStudioSettings = (record) => {
   const settings = mergeStudioSettings(record);
   const instagram = normalizeInstagramProfile(settings.contact.instagram);
+  const googleReviewUrl = normalizeGoogleReviewUrl(settings.contact.googleReviewUrl);
   return {
     ...settings,
     offer: {
@@ -1123,6 +1126,7 @@ const publicStudioSettings = (record) => {
       ...settings.contact,
       instagramHandle: instagram?.handle ? `@${instagram.handle}` : "",
       instagramUrl: instagram?.url || "",
+      googleReviewUrl: googleReviewUrl || "",
     },
   };
 };
@@ -1583,6 +1587,8 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
     welcomeOfferClaimed: Boolean(input.couponCode),
     isFirstOrder: !hasPriorOrder,
     ...(idempotencyKey ? { idempotencyKey, idempotencyHash } : {}),
+    neededBy: input.neededBy || null,
+    contactPreference: input.contactPreference || "",
     note: input.note,
     status: "placed",
     paymentMethod: input.paymentMethod,
@@ -1762,10 +1768,25 @@ export const buyerHasOrders = async (buyerId) => {
   return hasOrdersForBuyer(buyerId, mode);
 };
 
-export const listAllOrders = async ({ status, page, limit }) => {
+export const listAllOrders = async ({ q = "", status, page, limit }) => {
   const mode = await connectDatabase();
+  const search = String(q || "").trim();
+  const normalizedSearch = search.toLowerCase();
   if (mode === "mongodb") {
-    const query = status ? { status } : {};
+    const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const query = {
+      ...(status ? { status } : {}),
+      ...(escapedSearch
+        ? {
+          $or: [
+            { orderNumber: { $regex: escapedSearch, $options: "i" } },
+            { buyerName: { $regex: escapedSearch, $options: "i" } },
+            { buyerEmail: { $regex: escapedSearch, $options: "i" } },
+            { "items.name": { $regex: escapedSearch, $options: "i" } },
+          ],
+        }
+        : {}),
+    };
     const [records, total] = await Promise.all([
       Order.find(query)
         .select("orderNumber buyerName buyerEmail items.name items.quantity status total createdAt")
@@ -1778,7 +1799,17 @@ export const listAllOrders = async ({ status, page, limit }) => {
     return paginate(records.map(publicOrder), page, limit, total);
   }
   const records = memoryStore
-    .find("orders", (order) => !status || order.status === status)
+    .find("orders", (order) => {
+      if (status && order.status !== status) return false;
+      if (!normalizedSearch) return true;
+      const searchable = [
+        order.orderNumber,
+        order.buyerName,
+        order.buyerEmail,
+        ...(order.items || []).map((item) => item.name || item.product?.title || ""),
+      ].join(" ").toLowerCase();
+      return searchable.includes(normalizedSearch);
+    })
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return paginate(slicePage(records, page, limit).map(publicOrder), page, limit, records.length);
 };
@@ -1805,8 +1836,23 @@ const fulfilmentRank = new Map([
   ["delivered", 5],
 ]);
 
-const assertStatusTransition = (from, to) => {
+const undoableOrderStatuses = new Set(["placed", "confirmed", "in_progress", "ready"]);
+
+const statusSnapshotConflict = (resourceName, undo) => conflict(
+  undo
+    ? `${resourceName} status changed after this action. Undo was not applied`
+    : `${resourceName} status changed since it was loaded. Refresh and try again`,
+);
+
+const assertStatusTransition = (from, to, { undo = false, expectedStatus } = {}) => {
   if (from === to) return;
+  if (undo) {
+    if (expectedStatus !== from) {
+      throw statusSnapshotConflict("The order", true);
+    }
+    if (undoableOrderStatuses.has(from) && undoableOrderStatuses.has(to)) return;
+    throw conflict("Only recent fulfilment changes can be undone");
+  }
   if (from === "cancelled" || from === "delivered") {
     throw conflict(`An order marked ${from} cannot move to another status`);
   }
@@ -1821,8 +1867,13 @@ const assertStatusTransition = (from, to) => {
   }
 };
 
-export const updateOrderStatus = async (id, { status, note }, { withMeta = false } = {}) => {
+export const updateOrderStatus = async (
+  id,
+  { status, note, expectedStatus, undo = false },
+  { withMeta = false } = {},
+) => {
   const mode = assertWritable(await connectDatabase());
+  if (undo && !expectedStatus) throw conflict("Undo requires the status produced by the original action");
   const now = new Date();
   const entry = { status, note, at: now };
 
@@ -1841,11 +1892,14 @@ export const updateOrderStatus = async (id, { status, note }, { withMeta = false
             .select("+inventoryReservations +inventoryReleasedAt")
             .session(session);
           if (!order) throw notFound("Order");
+          if (expectedStatus && order.status !== expectedStatus) {
+            throw statusSnapshotConflict("The order", undo);
+          }
           if (order.status === status) {
             updated = order;
             return;
           }
-          assertStatusTransition(order.status, status);
+          assertStatusTransition(order.status, status, { undo, expectedStatus });
           changed = true;
 
           if (status === "cancelled" && !order.inventoryReleasedAt) {
@@ -1884,11 +1938,14 @@ export const updateOrderStatus = async (id, { status, note }, { withMeta = false
     memoryStore.get("orders", id) ||
     memoryStore.findOne("orders", (order) => order.orderNumber === id);
   if (!existing) throw notFound("Order");
+  if (expectedStatus && existing.status !== expectedStatus) {
+    throw statusSnapshotConflict("The order", undo);
+  }
   if (existing.status === status) {
     const record = publicOrder(existing);
     return withMeta ? { record, changed: false } : record;
   }
-  assertStatusTransition(existing.status, status);
+  assertStatusTransition(existing.status, status, { undo, expectedStatus });
   let inventoryReleasedAt = existing.inventoryReleasedAt || null;
   if (status === "cancelled" && !inventoryReleasedAt) {
     for (const reservation of existing.inventoryReservations || []) {
@@ -2026,29 +2083,44 @@ const listInbox = async (collectionName, Model, { status, page, limit }) => {
 
 const updateInbox = async (collectionName, Model, id, input, resourceName) => {
   const mode = assertWritable(await connectDatabase());
-  const changes = Object.entries(input);
+  const {
+    expectedStatus = "",
+    undo = false,
+    ...recordInput
+  } = input;
+  if (undo && !expectedStatus) {
+    throw conflict("Undo requires the status produced by the original action");
+  }
+  const changes = Object.entries(recordInput);
   if (mode === "mongodb") {
     if (!mongoose.isValidObjectId(id)) throw notFound(resourceName);
     const record = await Model.findOneAndUpdate(
       {
         _id: id,
+        ...(expectedStatus ? { status: expectedStatus } : {}),
         ...(changes.length > 0
           ? { $or: changes.map(([field, value]) => ({ [field]: { $ne: value } })) }
           : {}),
       },
-      { $set: input },
+      { $set: recordInput },
       { new: true, runValidators: true },
     );
     if (record) return { record: plain(record), changed: true };
     const existing = await Model.findById(id);
     if (!existing) throw notFound(resourceName);
+    if (expectedStatus && existing.status !== expectedStatus) {
+      throw statusSnapshotConflict(resourceName, undo);
+    }
     return { record: plain(existing), changed: false };
   }
   const existing = memoryStore.get(collectionName, id);
   if (!existing) throw notFound(resourceName);
+  if (expectedStatus && existing.status !== expectedStatus) {
+    throw statusSnapshotConflict(resourceName, undo);
+  }
   const changed = changes.some(([field, value]) => existing[field] !== value);
   if (!changed) return { record: existing, changed: false };
-  return { record: memoryStore.update(collectionName, id, input), changed: true };
+  return { record: memoryStore.update(collectionName, id, recordInput), changed: true };
 };
 
 export const listCustomInquiries = (query) =>
@@ -2769,7 +2841,20 @@ export const claimUnconsumedUploadGrantsForCleanup = async ({ userId }) => {
         userId,
         consumedAt: { $exists: false },
         deletedAt: { $exists: false },
-        $or: [{ reservationToken: "" }, { reservationToken: { $exists: false } }],
+        $and: [
+          {
+            $or: [{ reservationToken: "" }, { reservationToken: { $exists: false } }],
+          },
+          {
+            // A newly signed direct upload can land at the provider after the
+            // browser logs out. Keep its grant until authoritative completion
+            // or expiry so a late asset can never become orphaned.
+            $or: [
+              { verificationRequired: { $ne: true } },
+              { verificationRequired: true, verifiedAt: { $type: "date" } },
+            ],
+          },
+        ],
       },
       {
         $set: {
@@ -2798,7 +2883,8 @@ export const claimUnconsumedUploadGrantsForCleanup = async ({ userId }) => {
         grant.userId === userId &&
         !grant.consumedAt &&
         !grant.deletedAt &&
-        !grant.reservationToken,
+        !grant.reservationToken &&
+        (grant.verificationRequired !== true || grant.verifiedAt instanceof Date),
     )
     .map((grant) =>
       memoryStore.update("uploadGrants", grant.id, {

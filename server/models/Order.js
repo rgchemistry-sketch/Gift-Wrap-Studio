@@ -58,6 +58,8 @@ const orderSchema = new mongoose.Schema(
     couponCode: { type: String, default: "", uppercase: true, trim: true },
     welcomeOfferClaimed: { type: Boolean, default: false },
     isFirstOrder: { type: Boolean, default: false },
+    neededBy: { type: Date, default: null },
+    contactPreference: { type: String, default: "", trim: true, maxlength: 50 },
     note: { type: String, default: "", maxlength: 1_000 },
     status: {
       type: String,
@@ -102,6 +104,7 @@ orderSchema.index(
     partialFilterExpression: { idempotencyKey: { $exists: true } },
   },
 );
+orderSchema.index({ createdAt: 1 }, { name: "orders_created_at" });
 orderSchema.index(
   { buyerId: 1, welcomeOfferClaimed: 1 },
   {

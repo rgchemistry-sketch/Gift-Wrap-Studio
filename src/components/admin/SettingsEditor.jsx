@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
 import Form from 'react-bootstrap/Form';
@@ -10,6 +10,11 @@ import {
   INSTAGRAM_PROFILE_MESSAGE,
   normalizeInstagramProfile,
 } from '../../../shared/social-profiles.js';
+import {
+  GOOGLE_REVIEW_URL_MESSAGE,
+  normalizeGoogleReviewUrl,
+} from '../../../shared/google-review-url.js';
+import { effectiveOfferDelaySeconds } from '../../utils/offer-popup';
 
 const defaults = {
   leadTimes: { ready: '3–10 business days', custom: '5–15 business days' },
@@ -21,7 +26,7 @@ const defaults = {
     code: 'FIRST10',
     percent: 10,
     maxDiscount: 500,
-    delaySeconds: 0,
+    delaySeconds: 10,
   },
   shipping: { flatFee: 99, freeThreshold: 2000, bulkThreshold: 10 },
   announcement: { enabled: true, text: 'Every piece handmade with care', linkLabel: 'PAN India delivery', linkUrl: '/shop' },
@@ -29,6 +34,7 @@ const defaults = {
     email: 'info@giftnwrapstudio.com',
     phone: '+919588281126',
     instagram: '@giftnwrapstudio',
+    googleReviewUrl: '',
   },
 };
 
@@ -84,6 +90,7 @@ const mergeSettings = (input = {}) => {
       email: textValue(contact, 'email', defaults.contact.email),
       phone: textValue(contact, 'phone', defaults.contact.phone),
       instagram: textValue(contact, 'instagram', defaults.contact.instagram),
+      googleReviewUrl: textValue(contact, 'googleReviewUrl', defaults.contact.googleReviewUrl),
     },
   };
 };
@@ -121,8 +128,8 @@ const normalizeAnnouncementLink = (input) => {
   }
 };
 
-const socialPublicationState = ({ savedValue, draftValue, profile, error, noun }) => {
-  const savedProfile = normalizeInstagramProfile(savedValue);
+const socialPublicationState = ({ savedValue, draftValue, profile, error, noun, normalize = normalizeInstagramProfile }) => {
+  const savedProfile = normalize(savedValue);
   const savedIsLive = Boolean(savedProfile?.url);
   const draftIsPublishable = Boolean(profile?.url);
   const changed = String(savedValue || '').trim() !== String(draftValue || '').trim();
@@ -141,6 +148,7 @@ const socialPublicationState = ({ savedValue, draftValue, profile, error, noun }
 };
 
 export default function SettingsEditor({ preview = false, notify, onPublished, draftScope = 'studio' }) {
+  const formRef = useRef(null);
   const [saved, setSaved] = useState(defaults);
   const [draft, setDraft] = useState(defaults);
   const [loading, setLoading] = useState(true);
@@ -155,6 +163,10 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
     () => normalizeInstagramProfile(draft.contact.instagram),
     [draft.contact.instagram],
   );
+  const googleReviewPreview = useMemo(
+    () => normalizeGoogleReviewUrl(draft.contact.googleReviewUrl),
+    [draft.contact.googleReviewUrl],
+  );
   const announcementLinkPreview = useMemo(
     () => normalizeAnnouncementLink(draft.announcement.linkUrl),
     [draft.announcement.linkUrl],
@@ -163,20 +175,42 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
   const instagramError = fieldError('contact', 'instagram') || (
     draft.contact.instagram.trim() && !instagramPreview ? INSTAGRAM_PROFILE_MESSAGE : ''
   );
+  const googleReviewError = fieldError('contact', 'googleReviewUrl') || (
+    draft.contact.googleReviewUrl.trim() && googleReviewPreview === null
+      ? GOOGLE_REVIEW_URL_MESSAGE
+      : ''
+  );
   const announcementLinkError = fieldError('announcement', 'linkUrl') || (
     draft.announcement.linkUrl.trim() && announcementLinkPreview === null
       ? 'Enter an HTTPS URL or a site path beginning with /'
       : ''
   );
   const hasFieldErrors = Boolean(
-    instagramError || announcementLinkError || Object.keys(fieldErrors).length,
+    instagramError || googleReviewError || announcementLinkError || Object.keys(fieldErrors).length,
   );
+  const validationCount = new Set([
+    ...Object.keys(fieldErrors),
+    ...(instagramError ? ['contact.instagram'] : []),
+    ...(googleReviewError ? ['contact.googleReviewUrl'] : []),
+    ...(announcementLinkError ? ['announcement.linkUrl'] : []),
+  ]).size;
   const instagramPublication = socialPublicationState({
     savedValue: saved.contact.instagram,
     draftValue: draft.contact.instagram,
     profile: instagramPreview,
     error: instagramError,
     noun: 'Instagram',
+  });
+  const googleReviewPublication = socialPublicationState({
+    savedValue: saved.contact.googleReviewUrl,
+    draftValue: draft.contact.googleReviewUrl,
+    profile: googleReviewPreview ? { url: googleReviewPreview } : null,
+    error: googleReviewError,
+    noun: 'Google review link',
+    normalize: (value) => {
+      const url = normalizeGoogleReviewUrl(value);
+      return url ? { url } : null;
+    },
   });
 
   const loadSettings = useCallback(async () => {
@@ -256,10 +290,20 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
     try { window.sessionStorage.removeItem(draftStorageKey); } catch { /* optional cache */ }
   };
 
+  const focusFirstError = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const target = formRef.current?.querySelector('.is-invalid, [aria-invalid="true"]');
+      if (!target) return;
+      target.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+      target.focus?.({ preventScroll: true });
+    });
+  }, []);
+
   const save = async (event) => {
     event.preventDefault();
     if (hasFieldErrors) {
-      setError('Check the highlighted links before publishing.');
+      setError(`Fix ${validationCount} highlighted ${validationCount === 1 ? 'field' : 'fields'} before publishing.`);
+      focusFirstError();
       return;
     }
     setSaving(true); setError(''); setFieldErrors({});
@@ -274,9 +318,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
           code: draft.offer.code,
           percent: numericPayloadValue(draft.offer.percent),
           maxDiscount: numericPayloadValue(draft.offer.maxDiscount),
-          // Eligibility is already checked by the server, so an artificial
-          // storefront delay only makes the promotion feel unresponsive.
-          delaySeconds: 0,
+          delaySeconds: effectiveOfferDelaySeconds(draft.offer.delaySeconds),
         },
         shipping: {
           flatFee: numericPayloadValue(draft.shipping.flatFee),
@@ -293,6 +335,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
           email: draft.contact.email,
           phone: draft.contact.phone,
           instagram: draft.contact.instagram,
+          googleReviewUrl: draft.contact.googleReviewUrl,
         },
       };
       const payload = settingsDiff(saved, nextValues);
@@ -319,6 +362,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
         : requestError.message;
       setError(message);
       notify(message, 'error');
+      focusFirstError();
     }
     finally { setSaving(false); }
   };
@@ -326,8 +370,10 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
   if (loading) return <AdminSectionState loading title="Opening studio settings" message="Gathering your current storefront controls…"/>;
   if (!loaded) return <AdminSectionState title="Settings could not load" message={error || 'The studio settings service did not return a usable response.'} actionLabel="Try again" onAction={loadSettings}/>;
 
-  return <Form className="settings-editor" onSubmit={save}>
-    <div className="admin-section-head settings-editor__head"><div><p className="eyebrow">Studio controls</p><h2>Settings</h2><p className="admin-section-copy">Offers, service details and shop messages — without touching code.</p></div><div className="settings-editor__actions"><span className={dirty ? 'is-dirty' : ''}>{dirty ? 'Unsaved changes' : 'Everything saved'}</span><Button type="button" variant="outline-dark" disabled={!dirty || saving} onClick={discard}>Discard</Button><Button type="submit" variant="dark" disabled={!dirty || saving || preview || hasFieldErrors}>{saving && <Spinner animation="border" size="sm"/>}{saving ? 'Publishing…' : 'Save & publish'}</Button></div></div>
+  const offerDelaySeconds = effectiveOfferDelaySeconds(draft.offer.delaySeconds);
+
+  return <Form ref={formRef} className="settings-editor" onSubmit={save}>
+    <div className="admin-section-head settings-editor__head"><div><p className="eyebrow">Studio controls</p><h2>Settings</h2><p className="admin-section-copy">Offers, service details and shop messages — without touching code.</p></div><div className="settings-editor__actions"><span className={hasFieldErrors ? 'has-errors' : dirty ? 'is-dirty' : ''}>{hasFieldErrors ? `${validationCount} ${validationCount === 1 ? 'field needs' : 'fields need'} attention` : dirty ? 'Unsaved changes' : 'Everything saved'}</span><Button type="button" variant="outline-dark" disabled={!dirty || saving} onClick={discard}>Discard</Button><Button type="submit" variant="dark" disabled={!dirty || saving || preview}>{saving && <Spinner animation="border" size="sm"/>}{saving ? 'Publishing…' : 'Save & publish'}</Button></div></div>
     {error && <Alert variant="danger" className="soft-alert">{error}</Alert>}
     {restoredDraft && dirty && <Alert variant="info" className="soft-alert"><strong>Unsaved settings restored.</strong> Your draft was kept when you moved to another admin section.</Alert>}
     {preview && <Alert variant="warning" className="soft-alert">Settings cannot be changed while preview data is active.</Alert>}
@@ -337,7 +383,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
       <div className="settings-editor__forms">
         <section className="admin-panel setting-card">
           <div className="setting-card__head"><span><Icon name="spark"/></span><div><p className="eyebrow">Storefront moment</p><h3>Welcome offer popup</h3><p>Control the first message new customers see.</p></div><Form.Check type="switch" id="offer-enabled" label={draft.offer.enabled ? 'Live' : 'Hidden'} checked={draft.offer.enabled} onChange={(event) => update('offer', 'enabled', event.target.checked)}/></div>
-          <div className="admin-setting-row"><Form.Group controlId="offer-eyebrow"><Form.Label>Eyebrow</Form.Label><Form.Control maxLength={80} value={draft.offer.eyebrow} isInvalid={Boolean(fieldError('offer', 'eyebrow'))} onChange={(event) => update('offer', 'eyebrow', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'eyebrow')}</Form.Control.Feedback></Form.Group><Form.Group controlId="offer-timing"><Form.Label>Popup timing</Form.Label><Form.Control readOnly value="Immediately after eligibility is confirmed"/><Form.Text>No artificial delay is added.</Form.Text></Form.Group></div>
+          <div className="admin-setting-row"><Form.Group controlId="offer-eyebrow"><Form.Label>Eyebrow</Form.Label><Form.Control maxLength={80} value={draft.offer.eyebrow} isInvalid={Boolean(fieldError('offer', 'eyebrow'))} onChange={(event) => update('offer', 'eyebrow', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'eyebrow')}</Form.Control.Feedback></Form.Group><Form.Group controlId="offer-timing"><Form.Label>Popup timing</Form.Label><Form.Control readOnly value={`About ${offerDelaySeconds} seconds after eligibility is confirmed`}/><Form.Text>A short pause lets visitors settle in before the welcome offer appears.</Form.Text></Form.Group></div>
           <Form.Group controlId="offer-title"><Form.Label>Headline</Form.Label><Form.Control maxLength={140} value={draft.offer.title} isInvalid={Boolean(fieldError('offer', 'title'))} onChange={(event) => update('offer', 'title', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'title')}</Form.Control.Feedback></Form.Group>
           <Form.Group controlId="offer-body"><Form.Label>Message</Form.Label><Form.Control as="textarea" rows={3} maxLength={300} value={draft.offer.body} isInvalid={Boolean(fieldError('offer', 'body'))} onChange={(event) => update('offer', 'body', event.target.value)}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'body')}</Form.Control.Feedback></Form.Group>
           <div className="admin-setting-row admin-setting-row--three"><Form.Group controlId="offer-code"><Form.Label>Offer code</Form.Label><Form.Control required value={draft.offer.code} isInvalid={Boolean(fieldError('offer', 'code'))} onChange={(event) => update('offer', 'code', event.target.value.toUpperCase().replace(/\s/g, ''))}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'code')}</Form.Control.Feedback></Form.Group><Form.Group controlId="offer-percent"><Form.Label>Discount (%)</Form.Label><Form.Control required type="number" min="0" max="100" step="1" value={draft.offer.percent} isInvalid={Boolean(fieldError('offer', 'percent'))} onChange={(event) => update('offer', 'percent', numericDraftValue(event))}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'percent')}</Form.Control.Feedback></Form.Group><Form.Group controlId="offer-max-discount"><Form.Label>Maximum saving (₹)</Form.Label><Form.Control required type="number" min="0" max="100000" step="1" value={draft.offer.maxDiscount} isInvalid={Boolean(fieldError('offer', 'maxDiscount'))} onChange={(event) => update('offer', 'maxDiscount', numericDraftValue(event))}/><Form.Control.Feedback type="invalid">{fieldError('offer', 'maxDiscount')}</Form.Control.Feedback></Form.Group></div>
@@ -392,7 +438,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
         </section>
 
         <section className="admin-panel setting-card setting-card--social">
-          <div className="setting-card__head"><span><Icon name="instagram"/></span><div><p className="eyebrow">Connected presence</p><h3>Instagram</h3><p>Publish the verified studio profile across the footer and contact page.</p></div></div>
+          <div className="setting-card__head"><span><Icon name="spark"/></span><div><p className="eyebrow">Connected presence</p><h3>Reviews & Instagram</h3><p>Keep the studio profile connected and make post-delivery review invitations easy to manage.</p></div></div>
           <div className="social-channel-grid">
             <article className={`social-channel social-channel--instagram ${instagramPublication.connected ? 'is-connected' : ''}`}>
               <header><span><Icon name="instagram"/></span><div><strong>Instagram</strong><small>{instagramPublication.description}</small></div><b>{instagramPublication.badge}</b></header>
@@ -403,6 +449,16 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
                 <Form.Text id="contact-instagram-help">Use @handle or an HTTPS profile URL. Post and reel links are rejected.</Form.Text>
               </Form.Group>
               {instagramPreview?.url && <a className="social-channel__test" href={instagramPreview.url} target="_blank" rel="noreferrer">Test Instagram link <Icon name="arrow" size={13}/></a>}
+            </article>
+            <article className={`social-channel social-channel--google ${googleReviewPublication.connected ? 'is-connected' : ''}`}>
+              <header><span><Icon name="map"/></span><div><strong>Google reviews</strong><small>{googleReviewPublication.description}</small></div><b>{googleReviewPublication.badge}</b></header>
+              <Form.Group controlId="contact-google-review-url">
+                <Form.Label>Google review link</Form.Label>
+                <Form.Control inputMode="url" maxLength={1000} value={draft.contact.googleReviewUrl} onChange={(event) => update('contact', 'googleReviewUrl', event.target.value)} placeholder="https://g.page/r/…/review" isInvalid={Boolean(googleReviewError)} aria-describedby="contact-google-review-url-help"/>
+                <Form.Control.Feedback type="invalid">{googleReviewError}</Form.Control.Feedback>
+                <Form.Text id="contact-google-review-url-help">Paste the HTTPS review link from your Google Business Profile. Leave blank to send delivery thanks without a review button.</Form.Text>
+              </Form.Group>
+              {googleReviewPreview && <a className="social-channel__test" href={googleReviewPreview} target="_blank" rel="noreferrer">Test review link <Icon name="arrow" size={13}/></a>}
             </article>
           </div>
         </section>
@@ -422,15 +478,16 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
             <h3>{draft.offer.title}</h3>
             <p>{draft.offer.body}</p>
             <div><strong>{draft.offer.percent}% off</strong><code>{draft.offer.code}</code></div>
-            <small>Appears as soon as eligibility is confirmed · maximum saving ₹{Number(draft.offer.maxDiscount || 0).toLocaleString('en-IN')}</small>
+            <small>Appears after a {offerDelaySeconds}-second welcome pause · maximum saving ₹{Number(draft.offer.maxDiscount || 0).toLocaleString('en-IN')}</small>
             {!draft.offer.enabled && <b className="offer-preview__hidden">Popup hidden</b>}
           </div>
-          {instagramPreview?.url && <div className="settings-preview-note settings-social-preview">
+          {(instagramPreview?.url || googleReviewPreview) && <div className="settings-preview-note settings-social-preview">
             <Icon name="spark" size={17}/>
             <p>
               <strong>Social links</strong>
               <span className="settings-social-preview__links">
                 {instagramPreview?.url && <a href={instagramPreview.url} target="_blank" rel="noreferrer"><Icon name="instagram" size={14}/> Instagram</a>}
+                {googleReviewPreview && <a href={googleReviewPreview} target="_blank" rel="noreferrer"><Icon name="map" size={14}/> Google review</a>}
               </span>
             </p>
           </div>}
@@ -442,7 +499,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
     <div className="settings-editor__mobile-actions" aria-hidden={!dirty}>
       <span>{dirty ? 'Unsaved storefront changes' : 'Everything saved'}</span>
       <Button type="button" variant="outline-dark" disabled={!dirty || saving} onClick={discard}>Discard</Button>
-      <Button type="submit" variant="dark" disabled={!dirty || saving || preview || hasFieldErrors}>{saving ? 'Publishing…' : 'Save'}</Button>
+      <Button type="submit" variant="dark" disabled={!dirty || saving || preview}>{saving ? 'Publishing…' : 'Save'}</Button>
     </div>
   </Form>;
 }

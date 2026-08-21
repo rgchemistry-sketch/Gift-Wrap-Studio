@@ -1,12 +1,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
-import { removeScopedDraft } from '../utils/scoped-draft';
+import {
+  loadScopedDraft,
+  removeScopedDraft,
+  saveScopedDraft,
+} from '../utils/scoped-draft';
+import { stripCustomReferenceImages } from '../utils/custom-reference-upload';
 
 const AuthContext = createContext(null);
 const LEGACY_USER_KEY = 'gnw-user';
 const AUTH_SYNC_KEY = 'gnw-auth-sync';
 const AUTH_SYNC_CHANNEL = 'gift-n-wrap-auth';
 const CHECKOUT_DRAFT_KEY = 'gnw-checkout-draft';
+const CUSTOM_ORDER_DRAFT_KEY = 'gnw-custom-order-draft';
 
 const userFrom = (result) => result?.user || result?.data?.user || null;
 const dataFrom = (result) => result?.data || result;
@@ -52,6 +58,14 @@ export function AuthProvider({ children }) {
     const nextOwnerId = String(normalizedUser?.id || '');
     if (previousOwnerId && previousOwnerId !== nextOwnerId) {
       removeScopedDraft(CHECKOUT_DRAFT_KEY, previousOwnerId);
+      const customDraft = loadScopedDraft(CUSTOM_ORDER_DRAFT_KEY, previousOwnerId);
+      if (customDraft?.referenceImages?.length) {
+        saveScopedDraft(
+          CUSTOM_ORDER_DRAFT_KEY,
+          previousOwnerId,
+          stripCustomReferenceImages(customDraft),
+        );
+      }
     }
     sessionUserRef.current = normalizedUser;
     setUser(normalizedUser);

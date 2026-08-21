@@ -114,6 +114,19 @@ const contactFooter = (settings = {}) => {
     .join(" · ");
 };
 
+const brandLockupHtml = `
+  <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
+    <tr>
+      <td style="vertical-align:middle;padding-right:14px">
+        <div style="width:52px;height:52px;line-height:52px;text-align:center;border-radius:50%;background:#6d1f35;color:#fffdf8;font-family:Arial,sans-serif;font-size:16px;font-weight:800;letter-spacing:.05em;box-shadow:inset 0 0 0 3px #6d1f35,inset 0 0 0 4px #dcc28b">G<span style="color:#e1c995">·</span>W</div>
+      </td>
+      <td style="vertical-align:middle">
+        <div style="font-family:Arial,sans-serif;font-size:20px;line-height:1.1;font-weight:800;color:#5b2034;letter-spacing:-.01em">Gift N Wrap</div>
+        <div style="margin-top:6px;font-family:Arial,sans-serif;font-size:9px;line-height:1;font-weight:800;color:#173f35;letter-spacing:.18em;text-transform:uppercase">Resin Art Studio</div>
+      </td>
+    </tr>
+  </table>`;
+
 export const renderBrandedEmail = (
   { eyebrow = "Gift N Wrap Studio", title, preheader = "", bodyHtml, bodyText },
   settings = {},
@@ -127,6 +140,9 @@ export const renderBrandedEmail = (
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4efe6;padding:28px 14px">
     <tr><td align="center">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fffdf8;border:1px solid #dccfbe;border-radius:18px;overflow:hidden">
+        <tr><td style="background:#fffaf2;padding:22px 34px;border-bottom:1px solid #eadfd1">
+          ${brandLockupHtml}
+        </td></tr>
         <tr><td style="background:#173f35;padding:24px 34px;color:#fffdf8">
           <div style="font-family:Arial,sans-serif;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:#d9c4a7">${escapeEmailHtml(eyebrow)}</div>
           <div style="font-size:29px;line-height:1.2;margin-top:10px">${escapeEmailHtml(title)}</div>

@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { normalizeGoogleReviewUrl } from "../../shared/google-review-url.js";
 import { escapeEmailHtml, renderBrandedEmail, sendEmailSafely } from "./email.js";
 import { getStudioSettings } from "./store.js";
 
@@ -18,7 +19,7 @@ const statusLabels = {
   cancelled: "Cancelled",
 };
 
-const notificationStatuses = new Set(["confirmed", "shipped", "cancelled"]);
+const notificationStatuses = new Set(["confirmed", "shipped", "delivered", "cancelled"]);
 
 const settingsForEmail = async () => {
   try {
@@ -85,10 +86,18 @@ const pricingRows = (order) => [
   ["Request total", money.format(Number(order.total || 0))],
 ];
 
+const orderContactRows = (order) => [
+  ["Needed by", order.neededBy ? new Date(order.neededBy).toLocaleDateString("en-IN") : ""],
+  ["Preferred contact", order.contactPreference || ""],
+];
+
 const appLink = (path) => {
   const base = String(env.appUrl || env.clientOrigins?.[0] || "").replace(/\/$/, "");
   return base ? `${base}${path}` : "";
 };
+
+const safeGoogleReviewUrl = (settings = {}) =>
+  normalizeGoogleReviewUrl(settings.contact?.googleReviewUrl) || "";
 
 const sendPrepared = (message, context) => sendEmailSafely(message, context);
 
@@ -96,6 +105,9 @@ export const sendOrderCreatedEmails = async (order) => {
   const settings = await settingsForEmail();
   const itemRows = orderItemRows(order);
   const totals = pricingRows(order);
+  const contactRows = orderContactRows(order);
+  const contactRowsHtml = contactRows.some(([, value]) => value) ? linesHtml(contactRows) : "";
+  const contactRowsText = linesText(contactRows);
   const address = orderAddress(order);
   const studioReplyTo = settings.contact?.email || env.authEmailReplyTo;
   const customerTitle = `We've received your request — ${order.orderNumber}`;
@@ -105,6 +117,7 @@ export const sendOrderCreatedEmails = async (order) => {
     "Your handmade order request is safely with the studio.",
     linesText(itemRows),
     linesText(totals),
+    contactRowsText,
     `Delivery address:\n${address}`,
     order.note ? `Your note:\n${order.note}` : "",
     `Typical lead time: ${leadTime}`,
@@ -119,6 +132,7 @@ export const sendOrderCreatedEmails = async (order) => {
         paragraph(`Hello ${order.buyerName || order.shippingAddress?.recipientName || "there"}, your handmade order request is safely with the studio.`),
         linesHtml(itemRows),
         linesHtml(totals),
+        contactRowsHtml,
         noteBlock("Delivery address", address),
         noteBlock("Your note", order.note),
         paragraph(`Typical lead time: ${leadTime}.`),
@@ -157,6 +171,7 @@ export const sendOrderCreatedEmails = async (order) => {
           ]),
           linesHtml(itemRows),
           linesHtml(totals),
+          contactRowsHtml,
           noteBlock("Delivery address", address),
           noteBlock("Customer note", order.note),
           cta("Open admin orders", appLink("/admin?section=orders")),
@@ -165,6 +180,7 @@ export const sendOrderCreatedEmails = async (order) => {
           linesText([["Buyer", order.buyerName], ["Email", order.buyerEmail], ["Phone", order.shippingAddress?.phone], ["Order", order.orderNumber]]),
           linesText(itemRows),
           linesText(totals),
+          contactRowsText,
           `Delivery address:\n${address}`,
           order.note ? `Customer note:\n${order.note}` : "",
           appLink("/admin?section=orders"),
@@ -187,22 +203,44 @@ export const sendOrderStatusEmail = async (order) => {
   const settings = await settingsForEmail();
   const label = statusLabels[order.status] || order.status;
   const latest = [...(order.statusHistory || [])].reverse().find((entry) => entry.status === order.status);
-  const subject = `${label} — ${order.orderNumber}`;
+  const delivered = order.status === "delivered";
+  const reviewUrl = delivered ? safeGoogleReviewUrl(settings) : "";
+  const subject = delivered
+    ? `Your Gift N Wrap piece has arrived — ${order.orderNumber}`
+    : `${label} — ${order.orderNumber}`;
+  const greeting = delivered
+    ? `Hello ${order.buyerName || "there"}, we hope your Gift N Wrap piece reached you safely and feels even more special in person.`
+    : `Hello ${order.buyerName || "there"}, your studio request is now ${label.toLowerCase()}.`;
+  const reviewInvitation = delivered
+    ? "If you have a moment, an honest Google review would mean a great deal. Your feedback helps our small studio improve and helps future customers choose handmade pieces with confidence."
+    : "";
   const template = renderBrandedEmail(
     {
-      eyebrow: "Order update",
+      eyebrow: delivered ? "Made for you · Delivered" : "Order update",
       title: subject,
-      preheader: `Your request ${order.orderNumber} is now ${label.toLowerCase()}.`,
+      preheader: delivered
+        ? "Thank you for choosing handmade. We would love to hear how your piece feels in its new home."
+        : `Your request ${order.orderNumber} is now ${label.toLowerCase()}.`,
       bodyHtml: [
-        paragraph(`Hello ${order.buyerName || "there"}, your studio request is now ${label.toLowerCase()}.`),
+        paragraph(greeting),
         linesHtml([["Order", order.orderNumber], ["Status", label], ["Total", money.format(Number(order.total || 0))]]),
         noteBlock("A note from the studio", latest?.note),
-        cta("View your order", appLink("/account")),
+        delivered ? noteBlock("Thank you for trusting our studio", reviewInvitation) : "",
+        delivered && reviewUrl ? cta("Share an honest Google review", reviewUrl) : "",
+        delivered
+          ? paragraph("Your experience matters to us. If anything about your order needs attention, simply reply to this email and the studio will help.")
+          : "",
+        cta(delivered ? "View your order details" : "View your order", appLink("/account")),
       ].join(""),
       bodyText: [
-        `Hello ${order.buyerName || "there"}, your studio request is now ${label.toLowerCase()}.`,
+        greeting,
         linesText([["Order", order.orderNumber], ["Status", label], ["Total", money.format(Number(order.total || 0))]]),
         latest?.note ? `A note from the studio:\n${latest.note}` : "",
+        reviewInvitation,
+        reviewUrl ? `Share an honest Google review: ${reviewUrl}` : "",
+        delivered
+          ? "Your experience matters to us. If anything about your order needs attention, simply reply to this email and the studio will help."
+          : "",
         appLink("/account"),
       ].filter(Boolean).join("\n\n"),
     },

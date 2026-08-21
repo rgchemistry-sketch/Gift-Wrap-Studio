@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
 import Form from 'react-bootstrap/Form';
+import Modal from 'react-bootstrap/Modal';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../Icon';
 import SmartImage from '../SmartImage';
@@ -78,6 +79,7 @@ const FIELD_CONTROL_IDS = {
 };
 const PRODUCT_DRAFT_KEY = 'gnw-admin-product-draft';
 const PRODUCT_DRAFT_VERSION = 1;
+const PRODUCT_CLEANUP_QUEUE_KEY = 'gnw-admin-product-upload-cleanup';
 
 const splitList = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
 const makeSlug = (value) => String(value || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -109,6 +111,23 @@ function readProductDraft(key, product) {
 
 const removeProductDraft = (key) => {
   try { window.sessionStorage.removeItem(key); } catch { /* optional cache */ }
+};
+
+const readCleanupQueue = () => {
+  try {
+    const ids = JSON.parse(window.sessionStorage.getItem(PRODUCT_CLEANUP_QUEUE_KEY) || '[]');
+    return Array.isArray(ids) ? [...new Set(ids)].filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeCleanupQueue = (ids) => {
+  try {
+    const uniqueIds = [...new Set(ids)].filter(Boolean);
+    if (uniqueIds.length) window.sessionStorage.setItem(PRODUCT_CLEANUP_QUEUE_KEY, JSON.stringify(uniqueIds));
+    else window.sessionStorage.removeItem(PRODUCT_CLEANUP_QUEUE_KEY);
+  } catch { /* optional recovery queue */ }
 };
 
 function toDraft(product) {
@@ -161,6 +180,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   const pendingUploadIdsRef = useRef(new Set(restoredState?.pendingUploadIds || []));
   const pendingRetirementIdsRef = useRef(new Set(restoredState?.pendingRetirementIds || []));
   const mountedRef = useRef(true);
+  const closingRef = useRef(false);
   const [initialDraft, setInitialDraft] = useState(() => toDraft(product));
   const [draft, setDraft] = useState(() => restoredState?.draft || toDraft(product));
   const [error, setError] = useState('');
@@ -171,13 +191,17 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   const [checkingImageUrl, setCheckingImageUrl] = useState(false);
   const [failedImageKeys, setFailedImageKeys] = useState(() => new Set());
   const [uploadStatus, setUploadStatus] = useState('');
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [imageUrl, setImageUrl] = useState(() => restoredState?.imageUrl || '');
+  const [imageUrlTouched, setImageUrlTouched] = useState(false);
   const [slugTouched, setSlugTouched] = useState(() => restoredState?.slugTouched ?? Boolean(product));
   const [restoredDraft, setRestoredDraft] = useState(Boolean(restoredState));
   const editing = Boolean(product);
-  const busy = saving || uploading || cleaningUploads || checkingImageUrl;
+  const galleryBusy = uploading || cleaningUploads || checkingImageUrl;
+  const busy = saving || galleryBusy || discarding;
   const normalizedImageUrl = useMemo(() => normalizeProductImageUrl(imageUrl), [imageUrl]);
-  const imageUrlFormatError = imageUrl.trim() && !normalizedImageUrl
+  const imageUrlFormatError = imageUrlTouched && imageUrl.trim() && !normalizedImageUrl
     ? 'Use a Cloudinary HTTPS image link or a site-relative path beginning with /.'
     : '';
   const slugChanged = editing && initialDraft.active && draft.slug !== initialDraft.slug;
@@ -221,27 +245,50 @@ export default function ProductEditor({ product, onClose, onSaved }) {
 
   const cleanupUploadedAssets = useCallback(async (publicIds) => {
     const uniqueIds = [...new Set(publicIds)].filter(Boolean);
-    if (!uniqueIds.length) return [];
+    if (!uniqueIds.length) return { failures: [], failedIds: [] };
     const results = await Promise.allSettled(
       uniqueIds.map((publicId) => api.deleteUploadedAsset(publicId)),
     );
     const failures = [];
+    const failedIds = [];
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
         pendingUploadIdsRef.current.delete(uniqueIds[index]);
         pendingRetirementIdsRef.current.delete(uniqueIds[index]);
       }
-      else failures.push(result.reason?.message || `Could not remove ${uniqueIds[index]}.`);
+      else {
+        failedIds.push(uniqueIds[index]);
+        failures.push(result.reason?.message || `Could not remove ${uniqueIds[index]}.`);
+      }
     });
-    return failures;
+    return { failures, failedIds };
   }, []);
+
+  useEffect(() => {
+    const queuedIds = readCleanupQueue();
+    if (!queuedIds.length) return undefined;
+    let active = true;
+    setUploadStatus(`Retrying storage cleanup for ${queuedIds.length} unused ${queuedIds.length === 1 ? 'image' : 'images'}…`);
+    void cleanupUploadedAssets(queuedIds).then(({ failedIds }) => {
+      const attemptedIds = new Set(queuedIds);
+      const queuedMeanwhile = readCleanupQueue().filter((publicId) => !attemptedIds.has(publicId));
+      writeCleanupQueue([...queuedMeanwhile, ...failedIds]);
+      if (!active || !mountedRef.current) return;
+      setUploadStatus(failedIds.length
+        ? `${failedIds.length} unused ${failedIds.length === 1 ? 'image still needs' : 'images still need'} storage cleanup. You can continue editing.`
+        : 'Previous unused image cleanup completed.');
+    });
+    return () => { active = false; };
+  }, [cleanupUploadedAssets]);
 
   useEffect(() => {
     const nextDraft = toDraft(product);
     const stored = readProductDraft(draftStorageKey, product);
+    closingRef.current = false;
     setInitialDraft(nextDraft);
     setDraft(stored?.draft || nextDraft);
     setImageUrl(stored?.imageUrl || '');
+    setImageUrlTouched(false);
     setError('');
     setFieldErrors({});
     setFailedImageKeys(new Set());
@@ -249,6 +296,8 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     setUploadStatus('');
     setSlugTouched(stored?.slugTouched ?? Boolean(product));
     setRestoredDraft(Boolean(stored));
+    setDiscardOpen(false);
+    setDiscarding(false);
     pendingUploadIdsRef.current = new Set(stored?.pendingUploadIds || []);
     pendingRetirementIdsRef.current = new Set(stored?.pendingRetirementIds || []);
   }, [draftStorageKey, product]);
@@ -280,36 +329,46 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     }
   }, [draft, draftStorageKey, imageUrl, isDirty, slugTouched]);
 
-  const requestClose = useCallback(async () => {
-    if (busy) {
-      setError(uploading
-        ? 'Wait for the current image upload to finish before closing the editor.'
-        : checkingImageUrl
-          ? 'Wait while the image URL is checked.'
-        : cleaningUploads
-          ? 'Wait while the unused images are removed.'
-          : 'Wait for the product to finish saving before closing the editor.');
+  const requestClose = useCallback(() => {
+    if (saving || discarding) {
+      setError('Wait for the product to finish saving before closing the editor.');
       return;
     }
-    if (isDirty && !window.confirm('Discard your unsaved product changes?')) return;
+    if (cleaningUploads) {
+      setError('Image cleanup is finishing. You can close the editor as soon as it completes.');
+      return;
+    }
+    if (isDirty || uploading || checkingImageUrl) {
+      setDiscardOpen(true);
+      return;
+    }
+    removeProductDraft(draftStorageKey);
+    onClose();
+  }, [checkingImageUrl, cleaningUploads, discarding, draftStorageKey, isDirty, onClose, saving, uploading]);
+
+  const confirmDiscard = useCallback(async () => {
+    if (discarding || saving) return;
+    closingRef.current = true;
+    setDiscarding(true);
     const pendingIds = [...new Set([
       ...pendingUploadIdsRef.current,
       ...pendingRetirementIdsRef.current,
     ])];
+    let cleanupWarning = '';
     if (pendingIds.length) {
       setCleaningUploads(true);
       setUploadStatus(`Removing ${pendingIds.length} unused ${pendingIds.length === 1 ? 'image' : 'images'}…`);
-      const failures = await cleanupUploadedAssets(pendingIds);
+      const { failures, failedIds } = await cleanupUploadedAssets(pendingIds);
       setCleaningUploads(false);
       if (failures.length) {
-        setError(`The editor stayed open because ${failures.length === 1 ? 'an unused image could not' : 'some unused images could not'} be removed. ${failures.join(' ')}`);
-        setUploadStatus('Unused image cleanup needs attention.');
-        return;
+        writeCleanupQueue([...readCleanupQueue(), ...failedIds]);
+        cleanupWarning = `Draft discarded. ${failures.length === 1 ? 'One unused image could not be cleaned up' : `${failures.length} unused images could not be cleaned up`} and will be retried the next time the editor opens.`;
       }
     }
     removeProductDraft(draftStorageKey);
-    onClose();
-  }, [busy, checkingImageUrl, cleaningUploads, cleanupUploadedAssets, draftStorageKey, isDirty, onClose, uploading]);
+    setDiscardOpen(false);
+    onClose(cleanupWarning);
+  }, [cleanupUploadedAssets, discarding, draftStorageKey, onClose, saving]);
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -345,10 +404,13 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     const handleDialogKeyDown = (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        requestClose();
+        if (discardOpen && !discarding) setDiscardOpen(false);
+        else requestClose();
         return;
       }
-      if (event.key !== 'Tab' || !dialogRef.current) return;
+      // React Bootstrap portals the discard confirmation outside this editor.
+      // Let that modal own its focus trap while it is open.
+      if (discardOpen || event.key !== 'Tab' || !dialogRef.current) return;
 
       const focusable = [...dialogRef.current.querySelectorAll(FOCUSABLE_SELECTOR)]
         .filter((element) => element.offsetWidth || element.offsetHeight || element.getClientRects().length);
@@ -370,7 +432,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     };
     document.addEventListener('keydown', handleDialogKeyDown);
     return () => document.removeEventListener('keydown', handleDialogKeyDown);
-  }, [requestClose]);
+  }, [discardOpen, discarding, requestClose]);
 
   useEffect(() => {
     if (!isDirty && !busy) return undefined;
@@ -443,7 +505,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   };
 
   const moveImage = (fromIndex, toIndex) => {
-    if (busy) return;
+    if (galleryBusy) return;
     clearFieldError('images');
     setDraft((current) => ({
       ...current,
@@ -455,7 +517,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   };
 
   const removeImage = async (index) => {
-    if (busy) return;
+    if (galleryBusy) return;
     const image = draft.images[index];
     if (!image) return;
     clearFieldError('images');
@@ -463,7 +525,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
       setCleaningUploads(true);
       setError('');
       setUploadStatus('Removing the unused uploaded image…');
-      const failures = await cleanupUploadedAssets([image.publicId]);
+      const { failures } = await cleanupUploadedAssets([image.publicId]);
       setCleaningUploads(false);
       if (failures.length) {
         setError(`The image stayed in the gallery because it could not be removed. ${failures.join(' ')}`);
@@ -532,19 +594,23 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     const uploadFailures = [];
     try {
       for (let index = 0; index < validFiles.length; index += 1) {
-        if (!mountedRef.current) break;
+        if (!mountedRef.current || closingRef.current) break;
         const file = validFiles[index];
         setUploadStatus(`Uploading image ${index + 1} of ${validFiles.length}: ${file.name}`);
         try {
           const image = await api.uploadImage(file, 'products');
-          if (!mountedRef.current) {
-            if (image.publicId) void api.deleteUploadedAsset(image.publicId).catch(() => {});
+          if (!mountedRef.current || closingRef.current) {
+            if (image.publicId) {
+              void api.deleteUploadedAsset(image.publicId).catch(() => {
+                writeCleanupQueue([...readCleanupQueue(), image.publicId]);
+              });
+            }
             break;
           }
           if (image.publicId) pendingUploadIdsRef.current.add(image.publicId);
           uploadedImages.push({ ...image, alt: draft.name || 'Gift N Wrap studio piece' });
         } catch (requestError) {
-          if (!mountedRef.current) break;
+          if (!mountedRef.current || closingRef.current) break;
           uploadFailures.push(`${file.name}: ${requestError.message}`);
         }
       }
@@ -573,6 +639,8 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   };
 
   const addImageFromUrl = async () => {
+    if (galleryBusy || closingRef.current) return;
+    setImageUrlTouched(true);
     if (draft.images.length >= MAX_GALLERY_IMAGES) {
       showFieldError('images', `A product can have up to ${MAX_GALLERY_IMAGES} images. Remove one before adding another.`);
       return;
@@ -598,6 +666,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
       });
       addImage(image);
       setImageUrl('');
+      setImageUrlTouched(false);
       setUploadStatus(`Image URL verified (${dimensions.width} × ${dimensions.height}) and added to the gallery.`);
     } catch (validationError) {
       if (!mountedRef.current) return;
@@ -609,6 +678,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   };
 
   const addVariant = () => {
+    if (saving || discarding) return;
     clearFieldError('variants');
     setDraft((current) => current.variants.length >= 100 ? current : ({
       ...current,
@@ -728,8 +798,9 @@ export default function ProductEditor({ product, onClose, onSaved }) {
       if (pendingRetirementIdsRef.current.size) {
         const retirementIds = [...pendingRetirementIdsRef.current];
         setUploadStatus(`Removing ${retirementIds.length} retired product ${retirementIds.length === 1 ? 'image' : 'images'}…`);
-        const failures = await cleanupUploadedAssets(retirementIds);
+        const { failures, failedIds } = await cleanupUploadedAssets(retirementIds);
         if (failures.length) {
+          writeCleanupQueue([...readCleanupQueue(), ...failedIds]);
           cleanupWarning = `The product was saved, but ${failures.length === 1 ? 'one retired image still needs' : 'some retired images still need'} storage cleanup. ${failures.join(' ')}`;
         }
       }
@@ -777,7 +848,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
             <h2 id="product-editor-title">{title}</h2>
             <small id="product-editor-description">{completion}% of essential product details complete</small>
           </div>
-          <button type="button" className="product-editor__close" onClick={requestClose} disabled={busy} aria-label="Close product editor"><Icon name="close" /></button>
+          <button type="button" className="product-editor__close" onClick={requestClose} disabled={saving || cleaningUploads || discarding} aria-label="Close product editor"><Icon name="close" /></button>
         </header>
         <div
           className="product-editor__progress"
@@ -789,11 +860,11 @@ export default function ProductEditor({ product, onClose, onSaved }) {
           aria-valuetext={`${completion}% complete`}
         ><span aria-hidden="true" style={{ width: `${completion}%` }} /></div>
 
-        <Form className="product-editor__form" onSubmit={submit} aria-busy={busy}>
+        <Form className="product-editor__form" onSubmit={submit} aria-busy={saving}>
           {error && <Alert variant="danger" className="soft-alert">{error}</Alert>}
           {restoredDraft && isDirty && <Alert variant="info" className="soft-alert"><strong>Unsaved product restored.</strong> Your draft and newly uploaded images were kept when you left the editor.</Alert>}
 
-          <fieldset className="product-editor__fieldset" disabled={busy}>
+          <fieldset className="product-editor__fieldset" disabled={saving || discarding}>
 
           <section className="product-form-section">
             <div className="product-form-section__intro"><span>01</span><div><h3>Identity</h3><p>The details customers see first.</p></div></div>
@@ -864,7 +935,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
 
           <section className="product-form-section">
             <div className="product-form-section__intro"><span>02</span><div><h3>Gallery</h3><p>Lead with a clear, beautifully lit image.</p></div></div>
-            <div className="product-form-section__body product-gallery-editor">
+            <div className={`product-form-section__body product-gallery-editor ${galleryBusy ? 'is-busy' : ''}`} aria-busy={galleryBusy}>
             <div className="product-image-grid">
               {draft.images.map((image, index) => {
                 const key = imageKey(image) || `${image.url}-${index}`;
@@ -882,7 +953,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                       <button
                         type="button"
                         className="product-image-tile__remove"
-                        disabled={busy}
+                        disabled={galleryBusy}
                         onClick={() => removeImage(index)}
                         aria-label={`Remove image ${index + 1}`}
                       ><Icon name="close" size={15}/></button>
@@ -892,7 +963,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                           <button
                             type="button"
                              className="product-image-tile__make-cover"
-                             disabled={busy}
+                             disabled={galleryBusy}
                              onClick={() => moveImage(index, 0)}
                              aria-label={`Make image ${index + 1} the product cover`}
                            >Make cover</button>
@@ -901,15 +972,16 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                     </div>
                     <div className="product-image-tile__details">
                       <div className="product-image-tile__order" aria-label={`Gallery position ${index + 1} of ${draft.images.length}`}>
-                        <button type="button" disabled={busy || index === 0} onClick={() => moveImage(index, index - 1)} aria-label={`Move image ${index + 1} earlier`}><Icon name="arrow" size={14} className="is-reversed"/></button>
+                        <button type="button" disabled={galleryBusy || index === 0} onClick={() => moveImage(index, index - 1)} aria-label={`Move image ${index + 1} earlier`}><Icon name="arrow" size={14} className="is-reversed"/></button>
                         <span>{index + 1} / {draft.images.length}</span>
-                        <button type="button" disabled={busy || index === draft.images.length - 1} onClick={() => moveImage(index, index + 1)} aria-label={`Move image ${index + 1} later`}><Icon name="arrow" size={14}/></button>
+                        <button type="button" disabled={galleryBusy || index === draft.images.length - 1} onClick={() => moveImage(index, index + 1)} aria-label={`Move image ${index + 1} later`}><Icon name="arrow" size={14}/></button>
                       </div>
                       <Form.Group controlId={`product-image-alt-${index}`}>
                         <Form.Label>Image description</Form.Label>
                         <Form.Control
                           value={image.alt || ''}
                           maxLength={160}
+                          disabled={galleryBusy}
                           onChange={(event) => updateImage(index, { alt: event.target.value })}
                           placeholder="Describe the product for screen readers"
                         />
@@ -921,7 +993,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               <label
                 className="product-image-upload"
                 htmlFor="product-image-upload"
-                aria-disabled={busy || draft.images.length >= MAX_GALLERY_IMAGES}
+                aria-disabled={galleryBusy || draft.images.length >= MAX_GALLERY_IMAGES}
               >
                 <input
                   ref={fileInputRef}
@@ -930,7 +1002,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                   accept="image/jpeg,image/png,image/webp"
                   multiple
                   onChange={uploadImages}
-                  disabled={busy || draft.images.length >= MAX_GALLERY_IMAGES}
+                  disabled={galleryBusy || draft.images.length >= MAX_GALLERY_IMAGES}
                   aria-label="Upload product images"
                   aria-describedby="product-image-upload-help"
                 />
@@ -957,15 +1029,17 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                   value={imageUrl}
                   onChange={(event) => {
                     setImageUrl(event.target.value);
+                    setImageUrlTouched(false);
                     clearFieldError('imageUrl');
                   }}
+                  onBlur={() => setImageUrlTouched(Boolean(imageUrl.trim()))}
                   onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addImageFromUrl(); } }}
                   placeholder="Paste a Cloudinary image link"
                   aria-describedby="product-image-url-help"
                   isInvalid={Boolean(fieldErrors.imageUrl || imageUrlFormatError)}
-                  disabled={busy || draft.images.length >= MAX_GALLERY_IMAGES}
+                  disabled={galleryBusy || draft.images.length >= MAX_GALLERY_IMAGES}
                 />
-                <Button type="button" variant="outline-dark" onClick={() => void addImageFromUrl()} disabled={busy || !normalizedImageUrl || draft.images.length >= MAX_GALLERY_IMAGES}>{checkingImageUrl && <Spinner animation="border" size="sm" aria-hidden="true"/>}{checkingImageUrl ? 'Checking…' : 'Verify & add'}</Button>
+                <Button type="button" variant="outline-dark" onClick={() => void addImageFromUrl()} disabled={galleryBusy || !imageUrl.trim() || draft.images.length >= MAX_GALLERY_IMAGES}>{checkingImageUrl && <Spinner animation="border" size="sm" aria-hidden="true"/>}{checkingImageUrl ? 'Checking…' : 'Verify & add'}</Button>
               </div>
               {(fieldErrors.imageUrl || imageUrlFormatError) && <div className="invalid-feedback d-block" role="alert">{fieldErrors.imageUrl || imageUrlFormatError}</div>}
               <Form.Text id="product-image-url-help">For images already saved in Cloudinary or on this website. The link is checked before it joins the gallery.</Form.Text>
@@ -995,7 +1069,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
               <Form.Group controlId="product-customization" className="span-2"><Form.Label>Customization choices</Form.Label><Form.Control value={draft.customizationOptions} isInvalid={Boolean(fieldErrors.customizationOptions)} onChange={(event) => setField('customizationOptions', event.target.value)} placeholder="Name, Date, Flower palette"/><Form.Control.Feedback type="invalid">{fieldErrors.customizationOptions}</Form.Control.Feedback></Form.Group>
             </div>
             <div className={`variant-list ${fieldErrors.variants ? 'is-invalid' : ''}`}>
-              <div className="variant-list__head"><div><h4>Variants</h4><p>Optional sizes, finishes or bundles.</p></div><Button type="button" size="sm" variant="outline-dark" onClick={addVariant} disabled={busy || draft.variants.length >= 100}><Icon name="plus" size={15}/> Add variant</Button></div>
+              <div className="variant-list__head"><div><h4>Variants</h4><p>Optional sizes, finishes or bundles.</p></div><Button type="button" size="sm" variant="outline-dark" onClick={addVariant} disabled={saving || discarding || draft.variants.length >= 100}><Icon name="plus" size={15}/> Add variant</Button></div>
               {draft.variants.map((variant, index) => <div className="variant-row" key={index}>
                 <Form.Control required aria-label={`Variant ${index + 1} name`} maxLength={100} value={variant.name} onChange={(event) => updateVariant(index, 'name', event.target.value)} placeholder="Large / Emerald"/>
                 <Form.Control aria-label={`Variant ${index + 1} SKU`} maxLength={80} pattern="[A-Za-z0-9][A-Za-z0-9._/-]*" title="Use letters, numbers, dots, dashes, underscores or slashes" value={variant.sku} onChange={(event) => updateVariant(index, 'sku', event.target.value)} placeholder="SKU"/>
@@ -1026,9 +1100,32 @@ export default function ProductEditor({ product, onClose, onSaved }) {
 
           </fieldset>
 
-          <footer className="product-editor__footer"><Button type="button" variant="outline-dark" onClick={requestClose} disabled={busy}>Cancel</Button><Button type="submit" variant="dark" disabled={busy}>{saving && <Spinner animation="border" size="sm" aria-hidden="true"/>}{saving ? 'Saving piece…' : editing ? 'Save changes' : 'Create product'}</Button></footer>
+          <footer className="product-editor__footer"><Button type="button" variant="outline-dark" onClick={requestClose} disabled={saving || cleaningUploads || discarding}>Cancel</Button><Button type="submit" variant="dark" disabled={busy}>{saving && <Spinner animation="border" size="sm" aria-hidden="true"/>}{saving ? 'Saving piece…' : uploading ? 'Wait for images…' : checkingImageUrl ? 'Checking image…' : editing ? 'Save changes' : 'Create product'}</Button></footer>
         </Form>
       </aside>
+      <Modal
+        show={discardOpen}
+        onHide={() => { if (!discarding) setDiscardOpen(false); }}
+        backdrop={discarding ? 'static' : true}
+        keyboard={!discarding}
+        centered
+        className="admin-confirm-modal product-discard-modal"
+        backdropClassName="product-discard-modal__backdrop"
+        aria-labelledby="discard-product-draft-title"
+        aria-busy={discarding}
+      >
+        <Modal.Header closeButton={!discarding}>
+          <div><p className="eyebrow">Unsaved product</p><Modal.Title id="discard-product-draft-title">Discard this draft?</Modal.Title></div>
+        </Modal.Header>
+        <Modal.Body>
+          <p>Your edits will be removed. Newly uploaded images will be cleaned from storage before the editor closes.</p>
+          {(uploading || checkingImageUrl) && <p className="product-discard-modal__warning"><strong>An image task is still running.</strong> It will be cancelled safely, and any completed upload will be removed.</p>}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button type="button" variant="outline-dark" disabled={discarding} onClick={() => setDiscardOpen(false)}>Keep editing</Button>
+          <Button type="button" variant="danger" disabled={discarding} onClick={() => void confirmDiscard()}>{discarding && <Spinner animation="border" size="sm" aria-hidden="true" />} {discarding ? 'Cleaning draft…' : 'Discard draft'}</Button>
+        </Modal.Footer>
+      </Modal>
     </div>
   );
 }
