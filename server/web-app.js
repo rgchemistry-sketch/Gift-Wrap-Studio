@@ -42,7 +42,11 @@ export const createWebApp = ({ apiApp, clientDirectory = defaultClientDirectory 
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
           formAction: ["'self'"],
-          scriptSrc: ["'self'", "https://accounts.google.com"],
+          scriptSrc: [
+            "'self'",
+            "https://accounts.google.com",
+            "https://checkout.razorpay.com",
+          ],
           styleSrc: ["'self'", "'unsafe-inline'"],
           fontSrc: ["'self'", "data:"],
           imgSrc: [
@@ -56,8 +60,14 @@ export const createWebApp = ({ apiApp, clientDirectory = defaultClientDirectory 
             "'self'",
             "https://accounts.google.com",
             "https://api.cloudinary.com",
+            "https://api.razorpay.com",
+            "https://checkout.razorpay.com",
           ],
-          frameSrc: ["https://accounts.google.com"],
+          frameSrc: [
+            "https://accounts.google.com",
+            "https://api.razorpay.com",
+            "https://checkout.razorpay.com",
+          ],
           upgradeInsecureRequests: env.isProduction ? [] : null,
         },
       },

@@ -410,6 +410,24 @@ export const api = {
       ...(expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {}),
     },
   }),
+  createRazorpayPaymentSession: (orderId, idempotencyKey, expectedUserId, policyConsent) => request(
+    `/payments/razorpay/orders/${encodeURIComponent(orderId)}/session`,
+    {
+      method: 'POST',
+      body: { policyConsent },
+      headers: {
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+        ...(expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {}),
+      },
+    },
+  ),
+  confirmRazorpayPayment: (payload, expectedUserId) => request('/payments/razorpay/confirm', {
+    method: 'POST',
+    body: payload,
+    timeout: 30_000,
+    headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
+  }),
+  getOrderPayment: (orderId) => request(`/payments/orders/${encodeURIComponent(orderId)}`),
   submitCustomRequest: (payload, expectedUserId) => request('/custom-inquiries', {
     method: 'POST',
     body: payload,
@@ -486,6 +504,18 @@ export const api = {
       method: 'PATCH',
       body: typeof update === 'string' ? { status: update } : update,
     }),
+  publishAdminPaymentQuote: (orderId, payload) =>
+    request(`/admin/orders/${encodeURIComponent(orderId)}/payment-quote`, {
+      method: 'POST',
+      body: payload,
+    }),
+  refundAdminOrderPayment: (orderId, payload, idempotencyKey) =>
+    request(`/admin/orders/${encodeURIComponent(orderId)}/refunds`, {
+      method: 'POST',
+      body: payload,
+      timeout: 30_000,
+      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {},
+    }),
   updateInquiryStatus: (inquiryId, update) =>
     request(`/admin/custom-inquiries/${encodeURIComponent(inquiryId)}`, {
       method: 'PATCH',
@@ -498,6 +528,20 @@ export const api = {
     }),
   getWelcomeOffer: () => request('/offers/welcome'),
   getPublicSettings: () => request('/settings'),
+  getReviews: () => request('/reviews'),
+  getMyReviews: () => request('/reviews/mine'),
+  getEligibleReviews: () => request('/reviews/eligible'),
+  createReview: (payload, expectedUserId) => request('/reviews', {
+    method: 'POST',
+    body: payload,
+    headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
+  }),
+  updateReview: (reviewId, payload, expectedUserId) =>
+    request(`/reviews/${encodeURIComponent(reviewId)}`, {
+      method: 'PATCH',
+      body: payload,
+      headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
+    }),
   requestUploadSignature: (payload) =>
     request('/uploads/signature', { method: 'POST', body: payload }),
   uploadImage,

@@ -56,6 +56,7 @@ test("retrying the same order status transition does not resend its customer ema
         postalCode: "302001",
       },
       paymentMethod: "manual_confirmation",
+      policyConsent: { accepted: true, version: "2026-08-21" },
     })
     .expect(201);
   sent = [];

@@ -312,7 +312,7 @@ function PaymentComposition({ kpis }) {
     <aside className="sales-payment" aria-labelledby="payment-composition-title">
       <p className="eyebrow">Payment context</p>
       <h4 id="payment-composition-title">Booked is not collected</h4>
-      <p>Payment is confirmed separately. Most manual-payment orders may remain pending.</p>
+      <p>Manual confirmations may remain pending. Unpaid Razorpay quotes stay outside booked sales until capture is verified.</p>
       <div className="sales-payment__track" role="img" aria-label={`${formatCurrency(kpis.paidSales)} paid, ${formatCurrency(kpis.pendingPaymentSales)} pending confirmation${kpis.otherPaymentSales ? `, ${formatCurrency(kpis.otherPaymentSales)} in other payment states` : ''}`}>
         <span className="is-paid" style={{ width: `${Math.min(100, paidWidth)}%` }} />
         <span className="is-pending" style={{ width: `${Math.min(100, pendingWidth)}%` }} />
@@ -334,7 +334,7 @@ function EmptyAnalytics() {
   return (
     <div className="sales-analytics-empty" role="status">
       <span aria-hidden="true"><Icon name="spark" size={24} /></span>
-      <div><h4>No sales in this view yet</h4><p>Try a wider date range. Cancelled, refunded and failed-payment orders remain excluded.</p></div>
+      <div><h4>No sales in this view yet</h4><p>Try a wider date range. Cancelled, refunded, failed-payment and unpaid online-payment orders remain excluded.</p></div>
     </div>
   );
 }
@@ -512,7 +512,7 @@ export default function SalesAnalyticsDashboard({ onAuthorizationFailure }) {
     || draftFilter.to !== analytics.filter.to
   );
   const kpiCards = analytics ? [
-    ['Booked sales', formatCurrency(kpis.bookedSales), analytics.changePct.bookedSales, 'Paid + pending order value'],
+    ['Booked sales', formatCurrency(kpis.bookedSales), analytics.changePct.bookedSales, 'Paid + manually confirmed pipeline'],
     ['Booked orders', formatNumber(kpis.orders), analytics.changePct.orders, `${formatNumber(excludedOrderCount)} excluded from booked`],
     ['Average order', formatCurrency(kpis.averageOrderValue), analytics.changePct.averageOrderValue, 'Per booked order'],
     ['Units booked', formatNumber(kpis.units), analytics.changePct.units, 'Across every piece'],
@@ -526,7 +526,7 @@ export default function SalesAnalyticsDashboard({ onAuthorizationFailure }) {
         <div>
           <p className="eyebrow">Sales intelligence</p>
           <h3 id="sales-analytics-title">Booked sales, clearly.</h3>
-          <p>Paid and pending order totals placed in the selected period. Cancelled, refunded and failed-payment orders are excluded.</p>
+          <p>Paid orders and the manual-confirmation pipeline for the selected period. Unpaid online quotes, cancellations, refunds and failed payments are excluded.</p>
         </div>
         <div className="sales-analytics__export">
           <button type="button" className="sales-export-button" onClick={exportExcel} disabled={exporting || !analytics} aria-describedby="sales-export-definition" aria-label={`Export complete Excel workbook for ${effectivePeriod}`} aria-busy={exporting}>

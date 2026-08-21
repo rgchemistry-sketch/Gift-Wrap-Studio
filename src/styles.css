@@ -246,10 +246,15 @@ h1 em, h2 em { color: var(--rose); font-style: normal; }
 .social-link { display: inline-flex; align-items: center; gap: .6rem; color: var(--gold-light); font-weight: 700; }
 .footer-heading { margin-bottom: 1.1rem; color: var(--gold-light); font-size: .72rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
 .footer-grid > div:not(.footer-intro) > a { display: block; width: fit-content; margin-bottom: .65rem; }
+.footer-links { display: flex; align-items: flex-start; flex-direction: column; }
+.footer-links > a { display: flex; width: fit-content; min-height: 2.75rem; align-items: center; gap: .55rem; padding-block: .45rem; }
 .footer-grid a:hover { color: var(--white); }
 .footer-contact a { display: flex !important; align-items: flex-start; gap: .55rem; }
 .footer-contact .icon { margin-top: .2rem; flex: 0 0 auto; }
 .footer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.4rem 0; border-top: 1px solid rgba(255,255,255,.12); font-size: .79rem; }
+.footer-bottom > div { display: flex; flex-wrap: wrap; gap: .35rem 1rem; }
+.footer-legal { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .25rem 1rem; }
+.footer-legal a { display: inline-flex; min-height: 2.75rem; align-items: center; color: rgba(255,250,243,.68); }
 
 .modal-content { border: 0; border-radius: var(--radius-md); background: var(--paper); box-shadow: var(--shadow-lg); }
 .modal-close { position: absolute; top: .8rem; right: .8rem; z-index: 2; }
@@ -268,6 +273,13 @@ h1 em, h2 em { color: var(--rose); font-style: normal; }
 .google-button-placeholder { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; color: var(--muted); border: 1px solid var(--line); border-radius: .25rem; }
 .privacy-note { margin: 1rem 0 0; color: var(--muted); font-size: .76rem; line-height: 1.45; }
 .privacy-note .icon { margin-right: .25rem; color: var(--forest); vertical-align: -.15rem; }
+.contact-compliance-card { display: flex; align-items: flex-start; gap: .75rem; margin-top: 1.2rem; padding: 1rem; color: var(--forest); border: 1px solid rgba(41,76,64,.18); background: rgba(41,76,64,.06); }
+.contact-compliance-card > .icon { flex: 0 0 auto; margin-top: .1rem; }
+.contact-compliance-card p { display: flex; margin: 0; flex-direction: column; }
+.contact-compliance-card small { color: var(--forest); font-size: var(--text-xs); font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.contact-compliance-card strong { margin-top: .25rem; color: var(--ink); font-size: .82rem; }
+.contact-compliance-card span { margin-top: .3rem; color: var(--muted); font-size: .72rem; line-height: 1.55; }
+.contact-compliance-card span a { color: var(--burgundy); font-weight: 750; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .14em; }
 .auth-mode-tabs { display: grid; max-width: 310px; grid-template-columns: 1fr 1fr; gap: .25rem; margin: 0 auto 1.65rem; padding: .25rem; border: 1px solid var(--line); border-radius: 999px; background: var(--ivory-deep); }
 .auth-mode-tabs button { min-height: 2.25rem; padding: .4rem .75rem; color: var(--muted); border: 0; border-radius: 999px; background: transparent; font-size: .74rem; font-weight: 800; }
 .auth-mode-tabs button.is-active { color: var(--ivory); background: var(--forest-dark); box-shadow: 0 4px 12px rgba(21,55,46,.18); }
@@ -1233,6 +1245,7 @@ body .storefront-whatsapp-float__copy strong { font-size: .8rem; }
 .trust-ribbon :focus-visible,
 .personalization-feature :focus-visible,
 .contact-banner :focus-visible,
+.customer-reviews :focus-visible,
 .admin-sidebar :focus-visible { outline-color: var(--gold-light) !important; }
 
 @media (max-width: 991.98px) {

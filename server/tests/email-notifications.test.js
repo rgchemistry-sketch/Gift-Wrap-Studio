@@ -9,11 +9,10 @@ process.env.ADMIN_EMAIL = "owner@example.test";
 process.env.APP_URL = "https://studio.example.test";
 delete process.env.MONGODB_URI;
 
-const [{ resetMemoryStore }, email, notifications, store] = await Promise.all([
+const [{ resetMemoryStore }, email, notifications] = await Promise.all([
   import("../lib/memory-store.js"),
   import("../services/email.js"),
   import("../services/email-notifications.js"),
-  import("../services/store.js"),
 ]);
 
 let sent;
@@ -96,7 +95,68 @@ test("order status mail carries the administrator note", async () => {
   assert.match(sent[0].text, /UPI details: studio@upi/);
 });
 
-test("delivered order mail thanks the customer and asks for an honest review without a broken CTA", async () => {
+test("a frozen Razorpay quote sends a credential-safe payment invitation", async () => {
+  const quoted = order();
+  quoted.status = "confirmed";
+  quoted.paymentMethod = "razorpay";
+  quoted.paymentStatus = "pending";
+  quoted.paymentQuote = {
+    amountPaise: 352_501,
+    currency: "INR",
+    note: "Includes the approved gold lettering and insured delivery.",
+  };
+
+  await notifications.sendPaymentQuoteReadyEmail(quoted);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].subject, /secure payment is ready/i);
+  assert.match(sent[0].text, /₹3,525\.01/);
+  assert.match(sent[0].text, /approved gold lettering/);
+  assert.match(sent[0].text, /account\?tab=orders/);
+  assert.match(sent[0].text, /never ask for your card number, CVV, UPI PIN/i);
+});
+
+test("a captured payment sends one customer receipt and one studio alert", async () => {
+  const paid = order();
+  paid.paymentMethod = "razorpay";
+  paid.paymentStatus = "paid";
+  paid.paymentQuote = { amountPaise: 341_800, currency: "INR" };
+
+  await notifications.sendPaymentCapturedEmails(paid);
+  assert.equal(sent.length, 2);
+  const customer = sent.find((message) => message.to.includes("mira@example.test"));
+  const owner = sent.find((message) => message.to.includes("owner@example.test"));
+  assert.match(customer.subject, /payment received/i);
+  assert.match(customer.text, /verified and matched securely/i);
+  assert.match(customer.text, /₹3,418/);
+  assert.match(owner.subject, /payment captured/i);
+});
+
+test("refund mail distinguishes initiation from final processing", async () => {
+  const paid = order();
+  paid.paymentMethod = "razorpay";
+  paid.paymentStatus = "paid";
+
+  await notifications.sendRefundUpdateEmail(paid, {
+    amountPaise: 100_000,
+    state: "pending",
+    reason: "Customer cancellation before production",
+  });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].subject, /refund initiated/i);
+  assert.match(sent[0].text, /original payment method/i);
+
+  sent = [];
+  await notifications.sendRefundUpdateEmail(paid, {
+    amountPaise: 100_000,
+    state: "processed",
+    reason: "Customer cancellation before production",
+  });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].subject, /refund processed/i);
+  assert.match(sent[0].text, /5–7 working days/i);
+});
+
+test("delivered order mail invites a verified product review in the customer account", async () => {
   const updated = order();
   updated.status = "delivered";
   updated.statusHistory.push({
@@ -107,33 +167,18 @@ test("delivered order mail thanks the customer and asks for an honest review wit
   await notifications.sendOrderStatusEmail(updated);
   assert.equal(sent.length, 1);
   assert.match(sent[0].subject, /has arrived/i);
-  assert.match(sent[0].text, /honest Google review/i);
+  assert.match(sent[0].text, /verified-purchase review/i);
   assert.match(sent[0].text, /helps our small studio improve/i);
-  assert.doesNotMatch(sent[0].html, /Share an honest Google review<\/a>/);
-  assert.doesNotMatch(sent[0].text, /Share an honest Google review: https?:/);
-  assert.match(sent[0].html, /Gift N Wrap/);
-  assert.match(sent[0].html, /Resin Art Studio/);
-});
-
-test("delivered order mail links the configured Google review destination", async () => {
-  await store.updateStudioSettings(
-    { contact: { googleReviewUrl: "https://g.page/r/gift-n-wrap/review" } },
-    "owner@example.test",
-  );
-  const updated = order();
-  updated.status = "delivered";
-  updated.statusHistory.push({ status: "delivered", note: "Handed to the recipient." });
-
-  await notifications.sendOrderStatusEmail(updated);
-  assert.equal(sent.length, 1);
   assert.match(
     sent[0].html,
-    /href="https:\/\/g\.page\/r\/gift-n-wrap\/review"[^>]*>Share an honest Google review<\/a>/,
+    /href="https:\/\/studio\.example\.test\/account\?tab=reviews"[^>]*>Rate your delivered piece<\/a>/,
   );
   assert.match(
     sent[0].text,
-    /Share an honest Google review: https:\/\/g\.page\/r\/gift-n-wrap\/review/,
+    /Rate your delivered piece: https:\/\/studio\.example\.test\/account\?tab=reviews/,
   );
+  assert.match(sent[0].html, /Gift N Wrap/);
+  assert.match(sent[0].html, /Resin Art Studio/);
 });
 
 test("admin inquiry replies restate the original brief", async () => {

@@ -27,7 +27,6 @@ import { User } from "../models/User.js";
 import { UploadGrant, UploadQuota } from "../models/UploadGrant.js";
 import { AuthIdentity } from "../models/AuthIdentity.js";
 import { normalizeInstagramProfile } from "../../shared/social-profiles.js";
-import { normalizeGoogleReviewUrl } from "../../shared/google-review-url.js";
 
 const clone = (value) => (value == null ? value : structuredClone(value));
 
@@ -102,6 +101,7 @@ const publicOrder = (record) => {
   delete value.inventoryReservations;
   delete value.inventoryReleasedAt;
   delete value.writePending;
+  if (value.paymentQuote) delete value.paymentQuote.quotedBy;
   return value;
 };
 
@@ -1084,7 +1084,6 @@ const defaultStudioSettings = () => ({
     email: "info@giftnwrapstudio.com",
     phone: "+919588281126",
     instagram: "@giftnwrapstudio",
-    googleReviewUrl: "",
   },
 });
 
@@ -1113,7 +1112,6 @@ const mergeStudioSettings = (current = {}, changes = {}) => {
 const publicStudioSettings = (record) => {
   const settings = mergeStudioSettings(record);
   const instagram = normalizeInstagramProfile(settings.contact.instagram);
-  const googleReviewUrl = normalizeGoogleReviewUrl(settings.contact.googleReviewUrl);
   return {
     ...settings,
     offer: {
@@ -1126,7 +1124,6 @@ const publicStudioSettings = (record) => {
       ...settings.contact,
       instagramHandle: instagram?.handle ? `@${instagram.handle}` : "",
       instagramUrl: instagram?.url || "",
-      googleReviewUrl: googleReviewUrl || "",
     },
   };
 };
@@ -1593,6 +1590,7 @@ export const createOrder = async (buyer, input, { idempotencyKey = "" } = {}) =>
     status: "placed",
     paymentMethod: input.paymentMethod,
     paymentStatus: "pending",
+    policyConsent: { ...input.policyConsent, acceptedAt: now },
     statusHistory: [{ status: "placed", at: now, note: "Order received" }],
   };
 
@@ -1837,6 +1835,29 @@ const fulfilmentRank = new Map([
 ]);
 
 const undoableOrderStatuses = new Set(["placed", "confirmed", "in_progress", "ready"]);
+const razorpayProductionStatuses = new Set(["in_progress", "ready", "shipped", "delivered"]);
+
+const assertRazorpayPaymentAllowsStatus = (order, nextStatus) => {
+  if (order.paymentMethod !== "razorpay") return;
+  if (
+    razorpayProductionStatuses.has(nextStatus) &&
+    !["paid", "partially_refunded"].includes(order.paymentStatus)
+  ) {
+    throw conflict("A captured Razorpay payment is required before production can begin");
+  }
+  if (
+    nextStatus === "cancelled" &&
+    ["paid", "partially_refunded"].includes(order.paymentStatus)
+  ) {
+    throw conflict("Create the Razorpay refund before cancelling this paid order");
+  }
+  if (
+    nextStatus === "cancelled" &&
+    ["authorized", "review_required", "disputed"].includes(order.paymentStatus)
+  ) {
+    throw conflict("Resolve the active Razorpay payment state before cancelling this order");
+  }
+};
 
 const statusSnapshotConflict = (resourceName, undo) => conflict(
   undo
@@ -1900,6 +1921,7 @@ export const updateOrderStatus = async (
             return;
           }
           assertStatusTransition(order.status, status, { undo, expectedStatus });
+          assertRazorpayPaymentAllowsStatus(order, status);
           changed = true;
 
           if (status === "cancelled" && !order.inventoryReleasedAt) {
@@ -1946,6 +1968,7 @@ export const updateOrderStatus = async (
     return withMeta ? { record, changed: false } : record;
   }
   assertStatusTransition(existing.status, status, { undo, expectedStatus });
+  assertRazorpayPaymentAllowsStatus(existing, status);
   let inventoryReleasedAt = existing.inventoryReleasedAt || null;
   if (status === "cancelled" && !inventoryReleasedAt) {
     for (const reservation of existing.inventoryReservations || []) {

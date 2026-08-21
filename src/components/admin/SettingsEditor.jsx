@@ -10,10 +10,6 @@ import {
   INSTAGRAM_PROFILE_MESSAGE,
   normalizeInstagramProfile,
 } from '../../../shared/social-profiles.js';
-import {
-  GOOGLE_REVIEW_URL_MESSAGE,
-  normalizeGoogleReviewUrl,
-} from '../../../shared/google-review-url.js';
 import { effectiveOfferDelaySeconds } from '../../utils/offer-popup';
 
 const defaults = {
@@ -34,7 +30,6 @@ const defaults = {
     email: 'info@giftnwrapstudio.com',
     phone: '+919588281126',
     instagram: '@giftnwrapstudio',
-    googleReviewUrl: '',
   },
 };
 
@@ -90,7 +85,6 @@ const mergeSettings = (input = {}) => {
       email: textValue(contact, 'email', defaults.contact.email),
       phone: textValue(contact, 'phone', defaults.contact.phone),
       instagram: textValue(contact, 'instagram', defaults.contact.instagram),
-      googleReviewUrl: textValue(contact, 'googleReviewUrl', defaults.contact.googleReviewUrl),
     },
   };
 };
@@ -163,10 +157,6 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
     () => normalizeInstagramProfile(draft.contact.instagram),
     [draft.contact.instagram],
   );
-  const googleReviewPreview = useMemo(
-    () => normalizeGoogleReviewUrl(draft.contact.googleReviewUrl),
-    [draft.contact.googleReviewUrl],
-  );
   const announcementLinkPreview = useMemo(
     () => normalizeAnnouncementLink(draft.announcement.linkUrl),
     [draft.announcement.linkUrl],
@@ -175,23 +165,17 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
   const instagramError = fieldError('contact', 'instagram') || (
     draft.contact.instagram.trim() && !instagramPreview ? INSTAGRAM_PROFILE_MESSAGE : ''
   );
-  const googleReviewError = fieldError('contact', 'googleReviewUrl') || (
-    draft.contact.googleReviewUrl.trim() && googleReviewPreview === null
-      ? GOOGLE_REVIEW_URL_MESSAGE
-      : ''
-  );
   const announcementLinkError = fieldError('announcement', 'linkUrl') || (
     draft.announcement.linkUrl.trim() && announcementLinkPreview === null
       ? 'Enter an HTTPS URL or a site path beginning with /'
       : ''
   );
   const hasFieldErrors = Boolean(
-    instagramError || googleReviewError || announcementLinkError || Object.keys(fieldErrors).length,
+    instagramError || announcementLinkError || Object.keys(fieldErrors).length,
   );
   const validationCount = new Set([
     ...Object.keys(fieldErrors),
     ...(instagramError ? ['contact.instagram'] : []),
-    ...(googleReviewError ? ['contact.googleReviewUrl'] : []),
     ...(announcementLinkError ? ['announcement.linkUrl'] : []),
   ]).size;
   const instagramPublication = socialPublicationState({
@@ -201,18 +185,6 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
     error: instagramError,
     noun: 'Instagram',
   });
-  const googleReviewPublication = socialPublicationState({
-    savedValue: saved.contact.googleReviewUrl,
-    draftValue: draft.contact.googleReviewUrl,
-    profile: googleReviewPreview ? { url: googleReviewPreview } : null,
-    error: googleReviewError,
-    noun: 'Google review link',
-    normalize: (value) => {
-      const url = normalizeGoogleReviewUrl(value);
-      return url ? { url } : null;
-    },
-  });
-
   const loadSettings = useCallback(async () => {
     setLoading(true); setLoaded(false); setError(''); setFieldErrors({});
     try {
@@ -335,7 +307,6 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
           email: draft.contact.email,
           phone: draft.contact.phone,
           instagram: draft.contact.instagram,
-          googleReviewUrl: draft.contact.googleReviewUrl,
         },
       };
       const payload = settingsDiff(saved, nextValues);
@@ -438,7 +409,7 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
         </section>
 
         <section className="admin-panel setting-card setting-card--social">
-          <div className="setting-card__head"><span><Icon name="spark"/></span><div><p className="eyebrow">Connected presence</p><h3>Reviews & Instagram</h3><p>Keep the studio profile connected and make post-delivery review invitations easy to manage.</p></div></div>
+          <div className="setting-card__head"><span><Icon name="spark"/></span><div><p className="eyebrow">Connected presence</p><h3>Instagram</h3><p>Keep the studio profile connected wherever customers discover your work.</p></div></div>
           <div className="social-channel-grid">
             <article className={`social-channel social-channel--instagram ${instagramPublication.connected ? 'is-connected' : ''}`}>
               <header><span><Icon name="instagram"/></span><div><strong>Instagram</strong><small>{instagramPublication.description}</small></div><b>{instagramPublication.badge}</b></header>
@@ -449,16 +420,6 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
                 <Form.Text id="contact-instagram-help">Use @handle or an HTTPS profile URL. Post and reel links are rejected.</Form.Text>
               </Form.Group>
               {instagramPreview?.url && <a className="social-channel__test" href={instagramPreview.url} target="_blank" rel="noreferrer">Test Instagram link <Icon name="arrow" size={13}/></a>}
-            </article>
-            <article className={`social-channel social-channel--google ${googleReviewPublication.connected ? 'is-connected' : ''}`}>
-              <header><span><Icon name="map"/></span><div><strong>Google reviews</strong><small>{googleReviewPublication.description}</small></div><b>{googleReviewPublication.badge}</b></header>
-              <Form.Group controlId="contact-google-review-url">
-                <Form.Label>Google review link</Form.Label>
-                <Form.Control inputMode="url" maxLength={1000} value={draft.contact.googleReviewUrl} onChange={(event) => update('contact', 'googleReviewUrl', event.target.value)} placeholder="https://g.page/r/…/review" isInvalid={Boolean(googleReviewError)} aria-describedby="contact-google-review-url-help"/>
-                <Form.Control.Feedback type="invalid">{googleReviewError}</Form.Control.Feedback>
-                <Form.Text id="contact-google-review-url-help">Paste the HTTPS review link from your Google Business Profile. Leave blank to send delivery thanks without a review button.</Form.Text>
-              </Form.Group>
-              {googleReviewPreview && <a className="social-channel__test" href={googleReviewPreview} target="_blank" rel="noreferrer">Test review link <Icon name="arrow" size={13}/></a>}
             </article>
           </div>
         </section>
@@ -481,13 +442,12 @@ export default function SettingsEditor({ preview = false, notify, onPublished, d
             <small>Appears after a {offerDelaySeconds}-second welcome pause · maximum saving ₹{Number(draft.offer.maxDiscount || 0).toLocaleString('en-IN')}</small>
             {!draft.offer.enabled && <b className="offer-preview__hidden">Popup hidden</b>}
           </div>
-          {(instagramPreview?.url || googleReviewPreview) && <div className="settings-preview-note settings-social-preview">
+          {instagramPreview?.url && <div className="settings-preview-note settings-social-preview">
             <Icon name="spark" size={17}/>
             <p>
               <strong>Social links</strong>
               <span className="settings-social-preview__links">
                 {instagramPreview?.url && <a href={instagramPreview.url} target="_blank" rel="noreferrer"><Icon name="instagram" size={14}/> Instagram</a>}
-                {googleReviewPreview && <a href={googleReviewPreview} target="_blank" rel="noreferrer"><Icon name="map" size={14}/> Google review</a>}
               </span>
             </p>
           </div>}

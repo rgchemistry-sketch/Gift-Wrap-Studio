@@ -14,6 +14,7 @@ import SmartImage from '../components/SmartImage';
 import AdminSectionState from '../components/admin/AdminSectionState';
 import AdminStatusDropdown from '../components/admin/AdminStatusDropdown';
 import AdminTableShell from '../components/admin/AdminTableShell';
+import AdminPaymentDesk from '../components/admin/AdminPaymentDesk';
 import { formatCurrency, normalizeProduct } from '../data/catalog';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
@@ -35,6 +36,7 @@ import {
 import { adminSectionHref, resolveAdminSection } from '../utils/admin-navigation';
 import '../admin.css';
 import '../admin-request-board.css';
+import '../payment-flow.css';
 
 const importProductManager = () => import('../components/admin/ProductManager');
 const ProductManager = lazy(importProductManager);
@@ -1225,12 +1227,16 @@ function Orders({ summary, preview, updateStatus, updateBulkStatus, loading, wor
         ) : <AdminEmpty text={query ? `No orders match “${query}”. Try an order number, buyer email or piece name.` : status ? `No ${orderStatusOptions.find((option) => option.value === status)?.label.toLowerCase() || status} orders right now.` : 'No orders have been placed yet.'} />}
         <AdminPager pagination={pagination} visibleCount={orders.length} filtered={Boolean(query || status)} noun="orders" loading={loading} onPageChange={(page) => onQueryChange({ page })} />
       </AdminTableShell>
-      <OrderDetailsModal order={activeOrder} onHide={() => setActiveOrder(null)} />
+      <OrderDetailsModal
+        order={activeOrder}
+        onHide={() => setActiveOrder(null)}
+        onOrderChanged={() => onQueryChange({})}
+      />
     </>
   );
 }
 
-function OrderDetailsModal({ order, onHide }) {
+function OrderDetailsModal({ order, onHide, onOrderChanged }) {
   const orderId = order?.id || order?._id || order?.orderNumber || '';
   const [record, setRecord] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1279,6 +1285,10 @@ function OrderDetailsModal({ order, onHide }) {
     address.country,
   ].filter(Boolean);
   const summaryOnlyLabel = loading ? 'Loading…' : 'Unavailable in summary';
+  const refreshOrder = () => {
+    setLoadAttempt((attempt) => attempt + 1);
+    onOrderChanged?.();
+  };
 
   return (
     <Modal show onHide={onHide} size="xl" centered scrollable className="admin-order-modal" aria-labelledby="admin-order-title">
@@ -1355,6 +1365,7 @@ function OrderDetailsModal({ order, onHide }) {
                 <div><dt>Payment</dt><dd>{String(details.paymentStatus || 'pending').replaceAll('_', ' ')}</dd></div>
               </dl> : <div className="admin-order-summary-only"><span>Order-list total</span><strong>{details.total != null ? formatCurrency(details.total) : 'Unavailable'}</strong><small>Items, delivery, discounts and payment appear after the complete record loads.</small></div>}
             </section>
+            {hasCompleteRecord && <AdminPaymentDesk order={details} onChanged={refreshOrder} />}
           </aside>
         </div>
       </Modal.Body>

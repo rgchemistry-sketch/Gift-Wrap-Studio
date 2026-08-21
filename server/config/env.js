@@ -50,6 +50,21 @@ export const env = Object.freeze({
   resendApiKey: process.env.RESEND_API_KEY?.trim() || "",
   authEmailFrom: process.env.AUTH_EMAIL_FROM?.trim() || "",
   authEmailReplyTo: process.env.AUTH_EMAIL_REPLY_TO?.trim() || "",
+  razorpayMode: ["test", "live"].includes(String(process.env.RAZORPAY_MODE || "").trim().toLowerCase())
+    ? String(process.env.RAZORPAY_MODE).trim().toLowerCase()
+    : "",
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID?.trim() || "",
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET?.trim() || "",
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET?.trim() || "",
+  razorpayWebhookSecretPrevious: process.env.RAZORPAY_WEBHOOK_SECRET_PREVIOUS?.trim() || "",
+  razorpayApiTimeoutMs: asInteger(process.env.RAZORPAY_API_TIMEOUT_MS, 8_000, {
+    min: 1_000,
+    max: 30_000,
+  }),
+  razorpayReconcileBatchSize: asInteger(process.env.RAZORPAY_RECONCILE_BATCH_SIZE, 20, {
+    min: 1,
+    max: 50,
+  }),
   emailOtpSecret: process.env.EMAIL_OTP_SECRET?.trim() || "",
   emailOtpChallengeMinutes: asInteger(process.env.EMAIL_OTP_CHALLENGE_MINUTES, 10, {
     min: 2,

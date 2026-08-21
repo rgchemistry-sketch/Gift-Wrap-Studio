@@ -1,11 +1,22 @@
 import { Router } from "express";
+import { rateLimit } from "express-rate-limit";
+import { env } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
+import { badRequest } from "../lib/errors.js";
 import { authenticate, requireAdmin } from "../middleware/auth.js";
+import { DurableRateLimitStore } from "../middleware/durable-rate-limit.js";
+import { rateLimitHandler } from "../middleware/rate-limit.js";
 import { validate } from "../middleware/validate.js";
+import {
+  createAdminRefund,
+  setPaymentQuote,
+} from "../services/payments.js";
 import {
   sendContactReplyEmail,
   sendInquiryReplyEmail,
   sendOrderStatusEmail,
+  sendPaymentQuoteReadyEmail,
+  sendRefundUpdateEmail,
 } from "../services/email-notifications.js";
 import {
   createSalesAnalyticsWorkbook,
@@ -41,6 +52,8 @@ import {
   inquiryStatusSchema,
   orderQuerySchema,
   orderStatusSchema,
+  paymentQuoteSchema,
+  razorpayRefundSchema,
   salesAnalyticsQuerySchema,
   studioSettingsSchema,
   updateProductSchema,
@@ -48,6 +61,25 @@ import {
 
 export const adminRouter = Router();
 adminRouter.use(authenticate, requireAdmin);
+
+const adminRefundLimiter = rateLimit({
+  windowMs: 60 * 60 * 1_000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  skip: () => env.isTest,
+  store: new DurableRateLimitStore("admin-razorpay-refund"),
+  passOnStoreError: !env.isProduction,
+  handler: rateLimitHandler("Too many refund requests. Please review existing refund status first"),
+});
+
+const refundIdempotencyKey = (request) => {
+  const key = request.get("idempotency-key")?.trim() || "";
+  if (!/^[A-Za-z0-9_-]{10,100}$/.test(key)) {
+    throw badRequest("Idempotency-Key is required and must contain 10-100 letters, numbers, dashes or underscores");
+  }
+  return key;
+};
 
 adminRouter.get(
   "/dashboard",
@@ -224,6 +256,46 @@ adminRouter.get(
   asyncHandler(async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.json({ data: await getOrder(request.validated.params.id) });
+  }),
+);
+
+adminRouter.post(
+  "/orders/:id/payment-quote",
+  validate({ params: idParamsSchema, body: paymentQuoteSchema }),
+  asyncHandler(async (request, response) => {
+    const result = await setPaymentQuote(
+      request.validated.params.id,
+      request.validated.body,
+      request.user,
+    );
+    if (result.quoteChanged) await sendPaymentQuoteReadyEmail(result.order);
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ data: { order: result.order }, meta: { quoteChanged: result.quoteChanged } });
+  }),
+);
+
+adminRouter.post(
+  "/orders/:id/refunds",
+  adminRefundLimiter,
+  validate({ params: idParamsSchema, body: razorpayRefundSchema }),
+  asyncHandler(async (request, response) => {
+    const result = await createAdminRefund(
+      request.validated.params.id,
+      request.validated.body,
+      request.user,
+      refundIdempotencyKey(request),
+    );
+    if (result.refundCreated || result.refundBecameProcessed) {
+      await sendRefundUpdateEmail(result.order, result.refund);
+    }
+    response.setHeader("Cache-Control", "no-store");
+    response.status(result.refundCreated ? 201 : 200).json({
+      data: { order: result.order, payment: result.payment, refund: result.refund },
+      meta: {
+        refundCreated: result.refundCreated,
+        refundBecameProcessed: result.refundBecameProcessed,
+      },
+    });
   }),
 );
 

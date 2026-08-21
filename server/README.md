@@ -27,11 +27,31 @@ Required for signed browser uploads:
 - `CLOUDINARY_API_SECRET`
 - `CLOUDINARY_UPLOAD_PRESET` (a **signed** preset configured for JPG/PNG/WebP and metadata stripping; the API supplies the signed public ID)
 
+Required to enable post-confirmation Razorpay collection (all are server-only):
+
+- `RAZORPAY_MODE` (`test` or `live`; it must agree with the key pair)
+- `RAZORPAY_KEY_ID`
+- `RAZORPAY_KEY_SECRET`
+- `RAZORPAY_WEBHOOK_SECRET` (the separate secret configured for the matching Dashboard webhook)
+- `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` is optional and should be set only while rotating the webhook
+  secret, because Razorpay signs retries of an older delivery with the secret active when that
+  event was first sent
+
+Never use a `VITE_` prefix for this configuration, log a Key Secret/webhook secret, or return one
+to a browser. The Key ID can be returned only where Standard Checkout requires it. Payment routes
+fail closed when required provider configuration is absent or inconsistent. Dashboard state cannot
+be inspected from this repository, so KYC/website approval, the matching Test/Live keys, automatic
+capture, payment-method availability, Live webhook activation, and event subscriptions still
+require a manual Razorpay Dashboard check. The operational checklist and official source links are
+in the root `README.md`.
+
 The default browser flow uses Cloudinary's normal `upload` delivery type, so anyone who obtains an asset URL can view it. Accept product-reference images only, not identity documents or other sensitive media. If confidential uploads are required, switch the preset to authenticated delivery and add a signed-delivery endpoint. In production, the signature endpoint verifies that the configured preset is signed. After the direct browser upload, `POST /api/uploads/complete` reads the provider's authoritative asset metadata and unlocks the grant only when its ID, format, secure URL, byte size, and pixel dimensions satisfy the upload policy. Invalid assets are rejected and cleaned up. Expired, unused grants are processed by the authenticated Vercel cron in bounded batches. The grant remains in MongoDB until Cloudinary confirms `ok` or `not found`; provider failures release the claim with exponential backoff for a later retry. A Cloudinary lifecycle rule can still be used as defense in depth.
 
 Optional tuning:
 
 - `PORT=4000`
+- `RAZORPAY_API_TIMEOUT_MS=8000` bounds one Razorpay API call; accepted range 1,000–30,000 ms
+- `RAZORPAY_RECONCILE_BATCH_SIZE=20` limits one payment-reconciliation run; accepted range 1–50
 - `AUTH_COOKIE_DAYS=7`, `COOKIE_SAME_SITE=lax`, `AUTH_COOKIE_NAME=gnw_session`
 - `EMAIL_OTP_CHALLENGE_MINUTES=10`, `EMAIL_OTP_RESEND_SECONDS=60`,
   `EMAIL_OTP_MAX_ATTEMPTS=5`, `AUTH_EMAIL_REPLY_TO`
@@ -57,6 +77,20 @@ Public:
 - `GET /api/health`
 - `GET /api/products`, `GET /api/products/categories`, `GET /api/products/:slug`
 - `GET /api/offers/welcome`
+- `POST /api/payments/razorpay/webhook` receives Razorpay's server-to-server events. This route
+  must keep the exact raw request body for HMAC-SHA256 verification against
+  `X-Razorpay-Signature`, deduplicate the `x-razorpay-event-id` header, and tolerate duplicate or
+  out-of-order events. Configure its stable production URL as
+  `https://<production-domain>/api/payments/razorpay/webhook`; it is public only in the routing
+  sense and rejects an invalid signature. Keep the handler bounded so it can return `2xx` within
+  Razorpay's five-second delivery window; non-`2xx` and timeouts are retried. The minimum Dashboard
+  subscriptions are `payment.authorized`, `payment.captured`, `payment.failed`, `order.paid`,
+  `refund.created`, `refund.processed`, `refund.failed`, and `payment.dispute.created`. Disputes
+  and provider mismatches persist a `disputed` or `review_required` payment state for operator
+  review in the admin payment desk; this repository does not claim a separate paging integration.
+- `GET /api/reviews` returns the aggregate rating and recent first-party reviews. Public review
+  records expose only a privacy-safe author name, product snapshot, rating, comment, timestamps,
+  and the server-issued verified-purchase flag.
 - `GET /api/auth/status` returns whether Google and email-code sign-in are ready without exposing secrets.
 - `POST /api/auth/email/start` with `{ email, name?, intent: "login" | "signup" }`, then
   `POST /api/auth/email/verify` with `{ challengeId, code }`. Codes are HMAC-protected at rest,
@@ -73,7 +107,23 @@ Public:
 
 Authenticated buyer:
 
-- `POST /api/orders`, `GET /api/orders/my`, `GET /api/orders/:id`. Send a stable `Idempotency-Key` header (8-100 letters, digits, `.`, `_`, `:`, or `-`) for each checkout attempt; a safe retry returns the original order with `Idempotency-Replayed: true`.
+- `POST /api/orders`, `GET /api/orders/my`, `GET /api/orders/:id`. Creation requires
+  `policyConsent: { accepted: true, version: "2026-08-21" }`; the server records its own
+  acceptance timestamp. Send a stable `Idempotency-Key` header (8-100 letters, digits, `.`, `_`,
+  `:`, or `-`) for each checkout attempt; a safe retry returns the original order with
+  `Idempotency-Replayed: true`.
+- `POST /api/payments/razorpay/orders/:orderId/session` creates or safely reuses the Razorpay Order
+  for an owned order only after the studio has confirmed its final server-owned quote. Send a
+  stable `Idempotency-Key` for retries. `POST /api/payments/razorpay/confirm` verifies Checkout's
+  payment ID and signature on the server against the Razorpay order ID stored by the API; it never
+  trusts a browser-supplied amount or payment state. `GET /api/payments/orders/:orderId` returns
+  the buyer's current server-owned payment snapshot. An authentic callback is not a fulfilment
+  signal: the payment must reach `captured`.
+- `GET /api/reviews/mine` lists the signed-in customer's reviews and `GET /api/reviews/eligible`
+  lists unreviewed products from delivered orders. `POST /api/reviews` accepts
+  `{ productId, rating, comment }` only after a delivered purchase; `PATCH /api/reviews/:id`
+  edits only the current customer's review. Rating is an integer from 1–5 and comment length is
+  10–1,000 characters. There is one review per customer and product.
 - `POST /api/custom-inquiries`, `GET /api/custom-inquiries/mine`. The server binds each brief to the verified session account and never trusts a submitted email as account identity.
 - `POST /api/contact`. The saved message is linked to the verified session account.
 - `POST /api/uploads/signature` with `{ purpose: "custom-inquiries" | "orders" }`.
@@ -102,6 +152,10 @@ Configured admin only:
   indexes and synchronize declared indexes without adding migration latency to serverless cold
   starts. Only the separate hourly upload quota and rate-limit counters keep TTL indexes.
 - `GET /api/admin/orders`, `GET /api/admin/orders/:id`, `PATCH /api/admin/orders/:id/status`
+- `POST /api/admin/orders/:id/payment-quote` records the final amount that makes a confirmed order
+  eligible for Razorpay payment. `POST /api/admin/orders/:id/refunds` initiates a Razorpay refund
+  to the original payment source; each intended refund needs its own stable idempotency key, and a
+  retry must reuse the same key and request body.
 - `GET /api/admin/analytics` for date-grouped sales, product, status and customer figures
 - `GET /api/admin/analytics/export.xlsx` for an admin-only, no-store Excel workbook containing an
   executive view, one-row-per-order customer and delivery snapshots, separate order-item and
@@ -111,9 +165,21 @@ Configured admin only:
 - `GET /api/admin/custom-inquiries`, `PATCH /api/admin/custom-inquiries/:id`
 - `GET /api/admin/contacts`, `PATCH /api/admin/contacts/:id`
 
-All product prices, shipping, and first-order discounts are recalculated by the server. `FIRST10` is rejected for corporate gifts and line-item quantities at or above the bulk threshold. The only checkout payment method is `manual_confirmation`; the studio confirms payment separately and the initial payment status remains pending. The API never trusts client-submitted prices or roles.
+All product prices, shipping, and first-order discounts are recalculated by the server. `FIRST10`
+is rejected for corporate gifts and line-item quantities at or above the bulk threshold. Initial
+checkout remains a `manual_confirmation` order request and takes no payment. Only after the studio
+confirms the order and final server-owned total can the post-confirmation Razorpay flow create a
+provider Order. A browser callback is never authoritative: payment signature verification uses
+the Razorpay order ID stored by the API, and paid fulfilment requires a captured provider payment.
+The API never trusts client-submitted prices, payment state, or roles.
 
 MongoDB Atlas (or another replica-set deployment) is required for the transaction that atomically reserves finite inventory, assigns the first-order slot, and creates an order. API, authentication, inquiry, contact, and upload throttles use MongoDB-backed counters in production so limits survive serverless instance recycling.
+
+`GET /api/maintenance/payments/reconcile` is the `CRON_SECRET`-authenticated recovery path for
+ambiguous or missed payment updates. It reconciles a bounded batch rather than trusting a browser
+callback. `vercel.json` schedules a daily recovery run, which is compatible with Vercel Hobby;
+webhooks and signed browser confirmation remain the real-time paths. Pro or Enterprise deployments
+can deliberately shorten that interval after reviewing usage and overlapping-run behaviour.
 
 ## Dependencies
 

@@ -9,6 +9,7 @@ import Row from 'react-bootstrap/Row';
 import Icon from '../components/Icon';
 import ProductCard from '../components/ProductCard';
 import SmartImage from '../components/SmartImage';
+import CustomerReviewsSection from '../components/CustomerReviewsSection';
 import { ProductCardSkeleton } from '../components/Feedback';
 import { categories } from '../data/catalog';
 import { useCatalog } from '../data/useCatalog';
@@ -346,6 +347,8 @@ export default function HomePage() {
           </Row>
         </Container>
       </section>
+
+      <CustomerReviewsSection />
 
       <section className="faq-section page-section" id="faq">
         <Container fluid="xl">

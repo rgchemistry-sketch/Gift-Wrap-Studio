@@ -37,6 +37,27 @@ const inventoryReservationSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const policyConsentSchema = new mongoose.Schema(
+  {
+    accepted: { type: Boolean, required: true },
+    version: { type: String, required: true, trim: true, maxlength: 20 },
+    acceptedAt: { type: Date, required: true },
+  },
+  { _id: false },
+);
+
+const paymentQuoteSchema = new mongoose.Schema(
+  {
+    amountPaise: { type: Number, required: true, min: 1 },
+    currency: { type: String, enum: ["INR"], default: "INR" },
+    note: { type: String, default: "", trim: true, maxlength: 500 },
+    quotedAt: { type: Date, required: true },
+    quotedBy: { type: String, required: true, trim: true, maxlength: 100 },
+    version: { type: Number, default: 1, min: 1 },
+  },
+  { _id: false },
+);
+
 const orderSchema = new mongoose.Schema(
   {
     orderNumber: { type: String, required: true, unique: true, index: true },
@@ -69,10 +90,29 @@ const orderSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ["manual_confirmation"],
+      enum: ["manual_confirmation", "razorpay"],
       default: "manual_confirmation",
     },
-    paymentStatus: { type: String, enum: ["pending", "paid", "failed", "refunded"], default: "pending" },
+    paymentStatus: {
+      type: String,
+      enum: [
+        "pending",
+        "authorized",
+        "paid",
+        "partially_refunded",
+        "refunded",
+        "review_required",
+        "disputed",
+        "failed",
+      ],
+      default: "pending",
+      index: true,
+    },
+    paymentReviewCode: { type: String, default: "", trim: true, maxlength: 80 },
+    paymentQuote: { type: paymentQuoteSchema, default: null },
+    refundedAmountPaise: { type: Number, default: 0, min: 0 },
+    paymentCapturedAt: { type: Date, default: null },
+    policyConsent: { type: policyConsentSchema, default: null },
     statusHistory: {
       type: [
         new mongoose.Schema(

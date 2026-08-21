@@ -31,10 +31,31 @@ test("Vercel rewrites every API subpath to the Express function before the SPA f
     { source: "/api/(.*)", destination: "/api" },
     { source: "/(.*)", destination: "/index.html" },
   ]);
+  assert.ok(
+    config.crons.some(({ path, schedule }) =>
+      path === "/api/maintenance/payments/reconcile" && schedule === "47 2 * * *"),
+    "the production deployment must schedule payment reconciliation",
+  );
+
+  const contentSecurityPolicy = config.headers
+    .flatMap(({ headers = [] }) => headers)
+    .find(({ key }) => key.toLowerCase() === "content-security-policy")?.value || "";
+  assert.match(contentSecurityPolicy, /script-src[^;]*https:\/\/checkout\.razorpay\.com/);
+  assert.match(contentSecurityPolicy, /frame-src[^;]*https:\/\/api\.razorpay\.com/);
+  assert.match(contentSecurityPolicy, /connect-src[^;]*https:\/\/api\.razorpay\.com/);
 });
 
 test("the Vercel API entry exposes order detail, sales analysis and Excel export", async () => {
   resetMemoryStore();
+  const apiRoot = await request(vercelApi).get("/api").expect(200);
+  assert.match(
+    apiRoot.headers["content-security-policy"],
+    /script-src[^;]*https:\/\/checkout\.razorpay\.com/,
+  );
+  assert.match(
+    apiRoot.headers["content-security-policy"],
+    /frame-src[^;]*https:\/\/api\.razorpay\.com/,
+  );
   const order = memoryStore.create(
     "orders",
     {

@@ -1,12 +1,12 @@
 import { env } from "../config/env.js";
-import { normalizeGoogleReviewUrl } from "../../shared/google-review-url.js";
 import { escapeEmailHtml, renderBrandedEmail, sendEmailSafely } from "./email.js";
 import { getStudioSettings } from "./store.js";
 
 const money = new Intl.NumberFormat("en-IN", {
   style: "currency",
   currency: "INR",
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
 });
 
 const statusLabels = {
@@ -96,10 +96,13 @@ const appLink = (path) => {
   return base ? `${base}${path}` : "";
 };
 
-const safeGoogleReviewUrl = (settings = {}) =>
-  normalizeGoogleReviewUrl(settings.contact?.googleReviewUrl) || "";
-
 const sendPrepared = (message, context) => sendEmailSafely(message, context);
+
+const quotedAmount = (order) => {
+  const amountPaise = Number(order.paymentQuote?.amountPaise);
+  if (Number.isSafeInteger(amountPaise) && amountPaise >= 0) return amountPaise / 100;
+  return Number(order.total || 0);
+};
 
 export const sendOrderCreatedEmails = async (order) => {
   const settings = await settingsForEmail();
@@ -198,13 +201,153 @@ export const sendOrderCreatedEmails = async (order) => {
   return Promise.all(jobs);
 };
 
+export const sendPaymentQuoteReadyEmail = async (order) => {
+  if (!order?.buyerEmail || order.paymentMethod !== "razorpay") return [];
+  const settings = await settingsForEmail();
+  const total = money.format(quotedAmount(order));
+  const subject = `Your secure payment is ready — ${order.orderNumber}`;
+  const accountUrl = appLink("/account?tab=orders");
+  const template = renderBrandedEmail(
+    {
+      eyebrow: "Studio quote confirmed",
+      title: subject,
+      preheader: `${order.orderNumber} is ready for secure online payment.`,
+      bodyHtml: [
+        paragraph(`Hello ${order.buyerName || "there"}, the studio has confirmed your design, availability and payable total.`),
+        linesHtml([
+          ["Order", order.orderNumber],
+          ["Payable total", total],
+          ["Payment", "Secure Razorpay Checkout"],
+        ]),
+        noteBlock("From the studio", order.paymentQuote?.note),
+        noteBlock("Pay safely", "Open your verified Gift N Wrap account and choose Pay securely. Razorpay collects payment credentials in its hosted checkout. We will never ask for your card number, CVV, UPI PIN, banking password or payment OTP."),
+        cta("Review order & pay securely", accountUrl),
+      ].join(""),
+      bodyText: [
+        `Hello ${order.buyerName || "there"}, the studio has confirmed your design, availability and payable total.`,
+        linesText([["Order", order.orderNumber], ["Payable total", total], ["Payment", "Secure Razorpay Checkout"]]),
+        order.paymentQuote?.note ? `From the studio:\n${order.paymentQuote.note}` : "",
+        "Open your verified Gift N Wrap account and choose Pay securely. Razorpay collects payment credentials in its hosted checkout. We will never ask for your card number, CVV, UPI PIN, banking password or payment OTP.",
+        accountUrl,
+      ].filter(Boolean).join("\n\n"),
+    },
+    settings,
+  );
+  return [
+    await sendPrepared(
+      { to: order.buyerEmail, subject, replyTo: settings.contact?.email || env.authEmailReplyTo, ...template },
+      `payment quote ${order.orderNumber}`,
+    ),
+  ];
+};
+
+export const sendPaymentCapturedEmails = async (order) => {
+  if (!order?.buyerEmail || order.paymentStatus !== "paid") return [];
+  const settings = await settingsForEmail();
+  const total = money.format(quotedAmount(order));
+  const customerSubject = `Payment received — ${order.orderNumber}`;
+  const customerTemplate = renderBrandedEmail(
+    {
+      eyebrow: "Payment securely confirmed",
+      title: customerSubject,
+      preheader: `Payment for ${order.orderNumber} has been verified.`,
+      bodyHtml: [
+        paragraph(`Hello ${order.buyerName || "there"}, your payment has been verified and matched securely to your studio order.`),
+        linesHtml([["Order", order.orderNumber], ["Amount received", total], ["Status", "Paid"]]),
+        noteBlock("What happens next", "The studio can now begin the agreed production steps. You can follow each update from your account."),
+        cta("Follow your order", appLink("/account?tab=orders")),
+      ].join(""),
+      bodyText: [
+        `Hello ${order.buyerName || "there"}, your payment has been verified and matched securely to your studio order.`,
+        linesText([["Order", order.orderNumber], ["Amount received", total], ["Status", "Paid"]]),
+        "The studio can now begin the agreed production steps. You can follow each update from your account.",
+        appLink("/account?tab=orders"),
+      ].filter(Boolean).join("\n\n"),
+    },
+    settings,
+  );
+  const jobs = [
+    sendPrepared(
+      { to: order.buyerEmail, subject: customerSubject, replyTo: settings.contact?.email || env.authEmailReplyTo, ...customerTemplate },
+      `payment confirmation ${order.orderNumber}`,
+    ),
+  ];
+  if (env.adminEmail) {
+    const ownerSubject = `Payment captured — ${order.orderNumber} · ${total}`;
+    const ownerTemplate = renderBrandedEmail(
+      {
+        eyebrow: "Verified payment alert",
+        title: ownerSubject,
+        bodyHtml: [
+          linesHtml([["Order", order.orderNumber], ["Customer", order.buyerName], ["Amount", total], ["Status", "Paid"]]),
+          cta("Open admin orders", appLink("/admin?section=orders")),
+        ].join(""),
+        bodyText: [
+          linesText([["Order", order.orderNumber], ["Customer", order.buyerName], ["Amount", total], ["Status", "Paid"]]),
+          appLink("/admin?section=orders"),
+        ].filter(Boolean).join("\n\n"),
+      },
+      settings,
+    );
+    jobs.push(sendPrepared(
+      { to: env.adminEmail, subject: ownerSubject, replyTo: order.buyerEmail, ...ownerTemplate },
+      `studio payment alert ${order.orderNumber}`,
+    ));
+  }
+  return Promise.all(jobs);
+};
+
+export const sendRefundUpdateEmail = async (order, refund) => {
+  if (!order?.buyerEmail || !refund) return [];
+  const settings = await settingsForEmail();
+  const amount = money.format(Number(refund.amountPaise || 0) / 100);
+  const refundState = refund.state || refund.status;
+  const processed = refundState === "processed";
+  const failed = refundState === "failed";
+  const subject = processed
+    ? `Refund processed — ${order.orderNumber}`
+    : failed
+      ? `Refund needs attention — ${order.orderNumber}`
+      : `Refund initiated — ${order.orderNumber}`;
+  const statusCopy = processed
+    ? "Razorpay has processed the refund to the original payment method. Your bank may take approximately 5–7 working days to show the credit."
+    : failed
+      ? "The refund could not be completed automatically. The studio has been notified and will review it; no alternative bank or card credentials are needed from you."
+      : "The refund request has been securely sent to Razorpay for the original payment method. We will keep the order record updated as it is processed.";
+  const template = renderBrandedEmail(
+    {
+      eyebrow: processed ? "Original-source refund processed" : failed ? "Refund follow-up" : "Original-source refund initiated",
+      title: subject,
+      bodyHtml: [
+        paragraph(`Hello ${order.buyerName || "there"}, ${statusCopy}`),
+        linesHtml([["Order", order.orderNumber], ["Refund amount", amount], ["Status", processed ? "Processed" : failed ? "Needs studio review" : "Processing"]]),
+        noteBlock("Reason", refund.reason),
+        cta("View your order", appLink("/account?tab=orders")),
+      ].join(""),
+      bodyText: [
+        `Hello ${order.buyerName || "there"}, ${statusCopy}`,
+        linesText([["Order", order.orderNumber], ["Refund amount", amount], ["Status", processed ? "Processed" : failed ? "Needs studio review" : "Processing"]]),
+        refund.reason ? `Reason:\n${refund.reason}` : "",
+        appLink("/account?tab=orders"),
+      ].filter(Boolean).join("\n\n"),
+    },
+    settings,
+  );
+  return [
+    await sendPrepared(
+      { to: order.buyerEmail, subject, replyTo: settings.contact?.email || env.authEmailReplyTo, ...template },
+      `refund update ${order.orderNumber}`,
+    ),
+  ];
+};
+
 export const sendOrderStatusEmail = async (order) => {
   if (!notificationStatuses.has(order.status) || !order.buyerEmail) return [];
   const settings = await settingsForEmail();
   const label = statusLabels[order.status] || order.status;
   const latest = [...(order.statusHistory || [])].reverse().find((entry) => entry.status === order.status);
   const delivered = order.status === "delivered";
-  const reviewUrl = delivered ? safeGoogleReviewUrl(settings) : "";
+  const reviewUrl = delivered ? appLink("/account?tab=reviews") : "";
   const subject = delivered
     ? `Your Gift N Wrap piece has arrived — ${order.orderNumber}`
     : `${label} — ${order.orderNumber}`;
@@ -212,7 +355,7 @@ export const sendOrderStatusEmail = async (order) => {
     ? `Hello ${order.buyerName || "there"}, we hope your Gift N Wrap piece reached you safely and feels even more special in person.`
     : `Hello ${order.buyerName || "there"}, your studio request is now ${label.toLowerCase()}.`;
   const reviewInvitation = delivered
-    ? "If you have a moment, an honest Google review would mean a great deal. Your feedback helps our small studio improve and helps future customers choose handmade pieces with confidence."
+    ? "If you have a moment, rate the piece you received. Your verified-purchase review helps our small studio improve and helps future customers choose handmade pieces with confidence."
     : "";
   const template = renderBrandedEmail(
     {
@@ -226,7 +369,7 @@ export const sendOrderStatusEmail = async (order) => {
         linesHtml([["Order", order.orderNumber], ["Status", label], ["Total", money.format(Number(order.total || 0))]]),
         noteBlock("A note from the studio", latest?.note),
         delivered ? noteBlock("Thank you for trusting our studio", reviewInvitation) : "",
-        delivered && reviewUrl ? cta("Share an honest Google review", reviewUrl) : "",
+        delivered && reviewUrl ? cta("Rate your delivered piece", reviewUrl) : "",
         delivered
           ? paragraph("Your experience matters to us. If anything about your order needs attention, simply reply to this email and the studio will help.")
           : "",
@@ -237,7 +380,7 @@ export const sendOrderStatusEmail = async (order) => {
         linesText([["Order", order.orderNumber], ["Status", label], ["Total", money.format(Number(order.total || 0))]]),
         latest?.note ? `A note from the studio:\n${latest.note}` : "",
         reviewInvitation,
-        reviewUrl ? `Share an honest Google review: ${reviewUrl}` : "",
+        reviewUrl ? `Rate your delivered piece: ${reviewUrl}` : "",
         delivered
           ? "Your experience matters to us. If anything about your order needs attention, simply reply to this email and the studio will help."
           : "",

@@ -8,6 +8,8 @@ import Row from 'react-bootstrap/Row';
 import Spinner from 'react-bootstrap/Spinner';
 import Icon from '../components/Icon';
 import ProductCard from '../components/ProductCard';
+import CustomerReviewsPanel from '../components/account/CustomerReviewsPanel';
+import OrderPaymentPanel from '../components/account/OrderPaymentPanel';
 import { api } from '../api/client';
 import { formatCurrency } from '../data/catalog';
 import { useCatalog } from '../data/useCatalog';
@@ -15,11 +17,13 @@ import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 import { resolveStudioContact } from '../utils/studio-contact';
 import '../form-experience.css';
+import '../payment-flow.css';
 
 const tabs = [
   ['overview', 'Overview'],
   ['orders', 'Orders & requests'],
   ['saved', 'Saved pieces'],
+  ['reviews', 'My reviews'],
   ['profile', 'Profile & delivery'],
 ];
 
@@ -139,9 +143,10 @@ export default function AccountPage() {
         <div className="account-tabs" role="tablist" aria-label="Account sections">{tabs.map(([key,label])=><button type="button" role="tab" id={`account-tab-${key}`} aria-selected={tab===key} aria-controls="account-panel" tabIndex={tab===key?0:-1} key={key} className={tab===key?'is-active':''} onKeyDown={(event)=>handleTabKeyDown(event,key)} onClick={()=>selectTab(key)}>{label}</button>)}</div>
         {error && (tab === 'overview' || tab === 'orders') && <Alert variant="warning" className="soft-alert">{error} <button type="button" className="plain-link" onClick={loadOrders}>Retry</button></Alert>}
         <div ref={panelRef} className="account-tab-panel" role="tabpanel" id="account-panel" aria-labelledby={`account-tab-${tab}`} tabIndex="-1" aria-busy={tab === 'saved' ? catalogLoading : (tab === 'overview' || tab === 'orders') && ordersLoading}>
-          {tab === 'overview' && <Overview latestOrder={latestOrder} orders={orders} savedCount={catalogLoading && wishlist.length ? '—' : savedProducts.length} loading={ordersLoading} error={error} goTo={selectTab} contact={contact} />}
-          {tab === 'orders' && <OrdersPanel orders={orders} loading={ordersLoading} error={error} contact={contact} />}
+          {tab === 'overview' && <Overview latestOrder={latestOrder} orders={orders} savedCount={catalogLoading && wishlist.length ? '—' : savedProducts.length} loading={ordersLoading} error={error} goTo={selectTab} contact={contact} userId={user.id} onOrderChange={loadOrders} />}
+          {tab === 'orders' && <OrdersPanel orders={orders} loading={ordersLoading} error={error} contact={contact} userId={user.id} onOrderChange={loadOrders} />}
           {tab === 'saved' && <SavedPanel products={savedProducts} hasSavedItems={wishlist.length > 0} loading={catalogLoading} error={catalogError} retry={() => refreshCatalog({ force: true })} />}
+          {tab === 'reviews' && <CustomerReviewsPanel key={user.id} userId={user.id} />}
           {tab === 'profile' && <ProfilePanel user={user} />}
         </div>
       </Container>
@@ -149,23 +154,23 @@ export default function AccountPage() {
   );
 }
 
-function Overview({ latestOrder, orders, savedCount, loading, error, goTo, contact }) {
-  return <div className="account-panel"><div className="account-stat-grid"><button type="button" onClick={()=>goTo('orders')}><span><Icon name="package"/></span><p><strong>{orders.length}</strong><small>Orders & requests</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('saved')}><span><Icon name="heart"/></span><p><strong>{savedCount}</strong><small>Saved pieces</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('profile')}><span><Icon name="map"/></span><p><strong>Per order</strong><small>Delivery details</small></p><Icon name="arrow"/></button></div><Row className="g-4"><Col lg={contact.phoneHref ? 8 : 12}>{loading?<div className="account-loading" role="status"><Spinner/><span>Gathering your studio updates…</span></div>:error&&!latestOrder?<div className="account-empty"><span><Icon name="package"/></span><div><p className="eyebrow">Studio updates unavailable</p><h2>We couldn’t gather your requests.</h2><p>Use Retry above. Nothing in your account has been changed.</p></div></div>:latestOrder?<OrderCard order={latestOrder} contact={contact}/>:<div className="account-empty"><span><Icon name="spark"/></span><div><p className="eyebrow">No requests yet</p><h2>Your first keepsake can begin whenever you’re ready.</h2><p>Choose a studio design to personalize or bring us a completely new idea.</p><div className="account-empty__actions"><Button as={Link} to="/shop" className="button-burgundy">Explore pieces</Button><Link to="/custom-order" className="text-link">Start a custom design <Icon name="arrow"/></Link></div></div></div>}</Col>{contact.phoneHref && <Col lg={4}><aside className="account-help"><Icon name="phone"/><p className="eyebrow">Direct studio help</p><h2>A real person, close to every order.</h2><p>For a date-sensitive gift or customization question, speak with our studio.</p><a href={contact.phoneHref}>{contact.phoneLabel} <Icon name="arrow"/></a></aside></Col>}</Row></div>;
+function Overview({ latestOrder, orders, savedCount, loading, error, goTo, contact, userId, onOrderChange }) {
+  return <div className="account-panel"><div className="account-stat-grid"><button type="button" onClick={()=>goTo('orders')}><span><Icon name="package"/></span><p><strong>{orders.length}</strong><small>Orders & requests</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('saved')}><span><Icon name="heart"/></span><p><strong>{savedCount}</strong><small>Saved pieces</small></p><Icon name="arrow"/></button><button type="button" onClick={()=>goTo('profile')}><span><Icon name="map"/></span><p><strong>Per order</strong><small>Delivery details</small></p><Icon name="arrow"/></button></div><Row className="g-4"><Col lg={contact.phoneHref ? 8 : 12}>{loading?<div className="account-loading" role="status"><Spinner/><span>Gathering your studio updates…</span></div>:error&&!latestOrder?<div className="account-empty"><span><Icon name="package"/></span><div><p className="eyebrow">Studio updates unavailable</p><h2>We couldn’t gather your requests.</h2><p>Use Retry above. Nothing in your account has been changed.</p></div></div>:latestOrder?<OrderCard order={latestOrder} contact={contact} userId={userId} onOrderChange={onOrderChange}/>:<div className="account-empty"><span><Icon name="spark"/></span><div><p className="eyebrow">No requests yet</p><h2>Your first keepsake can begin whenever you’re ready.</h2><p>Choose a studio design to personalize or bring us a completely new idea.</p><div className="account-empty__actions"><Button as={Link} to="/shop" className="button-burgundy">Explore pieces</Button><Link to="/custom-order" className="text-link">Start a custom design <Icon name="arrow"/></Link></div></div></div>}</Col>{contact.phoneHref && <Col lg={4}><aside className="account-help"><Icon name="phone"/><p className="eyebrow">Direct studio help</p><h2>A real person, close to every order.</h2><p>For a date-sensitive gift or customization question, speak with our studio.</p><a href={contact.phoneHref}>{contact.phoneLabel} <Icon name="arrow"/></a></aside></Col>}</Row></div>;
 }
 
-function OrdersPanel({ orders, loading, error, contact }) {
+function OrdersPanel({ orders, loading, error, contact, userId, onOrderChange }) {
   if(loading)return <div className="account-loading" role="status"><Spinner/><span>Loading your requests…</span></div>;
   if(error&&!orders.length)return <div className="account-empty account-empty--wide"><span><Icon name="package"/></span><div><p className="eyebrow">Orders & requests</p><h2>Your requests couldn’t be loaded.</h2><p>Use Retry above. Nothing in your account has been changed.</p></div></div>;
   if(!orders.length)return <div className="account-empty account-empty--wide"><span><Icon name="package"/></span><div><p className="eyebrow">Orders & requests</p><h2>Nothing here yet.</h2><p>When you send a custom or catalogue order request, its design and delivery progress will appear here.</p><div className="account-empty__actions"><Button as={Link} to="/shop" className="button-burgundy">Find a piece</Button></div></div></div>;
-  return <div className="orders-list">{orders.map(order=><OrderCard key={order.id||order._id||order.orderNumber} order={order} contact={contact}/>)}</div>;
+  return <div className="orders-list">{orders.map(order=><OrderCard key={order.id||order._id||order.orderNumber} order={order} contact={contact} userId={userId} onOrderChange={onOrderChange}/>)}</div>;
 }
 
-function OrderCard({ order, contact }) {
+function OrderCard({ order, contact, userId, onOrderChange }) {
   const status = order.status || 'placed';
   const normalizedStatus = status;
   const currentIndex = statusOrder.indexOf(normalizedStatus);
   const items = order.items || [];
-  return <article className="order-card"><div className="order-card__head"><div><p className="eyebrow">{order.orderNumber||`Request ${String(order._id||order.id||'').slice(-6).toUpperCase()}`}</p><h2>{items[0]?.product?.title||items[0]?.name||'Custom studio order'}{items.length>1&&` + ${items.length-1} more`}</h2></div><span className={`order-status status-${status}`}>{statusLabels[status]||status.replaceAll('_',' ')}</span></div>{status==='cancelled'?<Alert variant="secondary" className="soft-alert">This request was closed. Contact the studio if you’d like to revisit the design.</Alert>:<div className="order-timeline" aria-label={`Order status: ${statusLabels[status]||status}`} >{statusOrder.map((key,index)=><div className={`${index<=currentIndex?'is-complete':''} ${index===currentIndex?'is-current':''}`} key={key}><i>{index<currentIndex?<Icon name="check" size={12}/>:index+1}</i><span>{statusLabels[key]}</span></div>)}</div>}<div className="order-card__foot"><p><small>Request total</small><strong>{order.total != null?formatCurrency(order.total):'Pending studio review'}</strong></p><p><small>Last updated</small><strong>{order.updatedAt?new Date(order.updatedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}):'Recently'}</strong></p>{contact.phoneHref && <a href={contact.phoneHref} className="text-link">Ask the studio <Icon name="arrow"/></a>}</div></article>;
+  return <article className="order-card"><div className="order-card__head"><div><p className="eyebrow">{order.orderNumber||`Request ${String(order._id||order.id||'').slice(-6).toUpperCase()}`}</p><h2>{items[0]?.product?.title||items[0]?.name||'Custom studio order'}{items.length>1&&` + ${items.length-1} more`}</h2></div><span className={`order-status status-${status}`}>{statusLabels[status]||status.replaceAll('_',' ')}</span></div>{status==='cancelled'?<Alert variant="secondary" className="soft-alert">This request was closed. Contact the studio if you’d like to revisit the design.</Alert>:<div className="order-timeline" aria-label={`Order status: ${statusLabels[status]||status}`} >{statusOrder.map((key,index)=><div className={`${index<=currentIndex?'is-complete':''} ${index===currentIndex?'is-current':''}`} key={key}><i>{index<currentIndex?<Icon name="check" size={12}/>:index+1}</i><span>{statusLabels[key]}</span></div>)}</div>}<OrderPaymentPanel order={order} userId={userId} onOrderChange={onOrderChange}/><div className="order-card__foot"><p><small>Request total</small><strong>{order.total != null?formatCurrency(order.total):'Pending studio review'}</strong></p><p><small>Last updated</small><strong>{order.updatedAt?new Date(order.updatedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}):'Recently'}</strong></p>{status === 'delivered' && <Link to="/account?tab=reviews" className="text-link">Review this piece <Icon name="star" size={15}/></Link>}{status !== 'delivered' && contact.phoneHref && <a href={contact.phoneHref} className="text-link">Ask the studio <Icon name="arrow"/></a>}</div></article>;
 }
 
 function SavedPanel({ products, hasSavedItems, loading, error, retry }) {

@@ -144,6 +144,7 @@ const orderPayload = (media, slug = "pressed-flower-name-plaque") => ({
     state: "Rajasthan",
     postalCode: "302001",
   },
+  policyConsent: { accepted: true, version: "2026-08-21" },
 });
 
 test("custom inquiry reference images consume their owner-scoped upload grants", async () => {

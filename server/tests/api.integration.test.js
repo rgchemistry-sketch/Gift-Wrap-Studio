@@ -39,6 +39,8 @@ const authenticatedBuyer = async () => {
   return { buyer, user: login.body.data.user };
 };
 
+const POLICY_CONSENT = { accepted: true, version: "2026-08-21" };
+
 test("the single-process web app serves the SPA without swallowing API 404s", async (context) => {
   const clientDirectory = await mkdtemp(path.join(tmpdir(), "gift-n-wrap-client-"));
   context.after(() => rm(clientDirectory, { recursive: true, force: true }));
@@ -131,6 +133,33 @@ test("orders, contact messages, and custom briefs require an authenticated accou
     })
     .expect(401);
   assert.equal(inquiry.body.error.code, "UNAUTHORIZED");
+});
+
+test("order creation requires explicit consent to the current policy version", async () => {
+  const { buyer } = await authenticatedBuyer();
+  const basePayload = {
+    items: [{ slug: "pressed-flower-name-plaque", quantity: 1 }],
+    shippingAddress: {
+      recipientName: "Mira Shah",
+      phone: "+91 98765 43210",
+      line1: "12 Garden Road",
+      city: "Jaipur",
+      state: "Rajasthan",
+      postalCode: "302001",
+    },
+  };
+
+  for (const policyConsent of [
+    undefined,
+    { accepted: false, version: "2026-08-21" },
+    { accepted: true, version: "2025-01-01" },
+  ]) {
+    const payload = policyConsent ? { ...basePayload, policyConsent } : basePayload;
+    const response = await buyer.post("/api/orders").send(payload).expect(422);
+    assert.equal(response.body.error.code, "VALIDATION_ERROR");
+    assert.ok(response.body.error.details.some((issue) => issue.field.startsWith("policyConsent")));
+  }
+  assert.equal(memoryStore.count("orders"), 0);
 });
 
 test("protected writes reject a stale client after the signed-in account changes", async () => {
@@ -227,6 +256,7 @@ test("checkout resolves a cart item by its stable product ID after its slug chan
       neededBy: "2026-12-04",
       contactPreference: "WhatsApp",
       note: "Please call before delivery.",
+      policyConsent: POLICY_CONSENT,
     })
     .expect(201);
 
@@ -265,6 +295,7 @@ test("checkout rejects personalization when a product has customization disabled
         },
       ],
       shippingAddress,
+      policyConsent: POLICY_CONSENT,
     })
     .expect(409);
   assert.equal(rejected.body.error.code, "CONFLICT");
@@ -281,6 +312,7 @@ test("checkout rejects personalization when a product has customization disabled
     .send({
       items: [{ slug: "malachite-serving-tray", quantity: 1 }],
       shippingAddress,
+      policyConsent: POLICY_CONSENT,
     })
     .expect(201);
   assert.equal(accepted.body.data.items[0].customization, "");
@@ -315,6 +347,7 @@ test("checkout rechecks customization availability at the final reservation boun
         state: "Rajasthan",
         postalCode: "302001",
       },
+      policyConsent: POLICY_CONSENT,
     })
     .expect(409);
 
@@ -370,6 +403,7 @@ test("demo buyer auth, server-priced first order, and one-time offer work togeth
     },
     couponCode: "FIRST10",
     paymentMethod: "manual_confirmation",
+    policyConsent: POLICY_CONSENT,
   };
 
   const idempotencyKey = "test-first-order-0001";
@@ -384,6 +418,9 @@ test("demo buyer auth, server-priced first order, and one-time offer work togeth
   assert.equal(created.body.data.total, 1808);
   assert.equal(created.body.data.status, "placed");
   assert.equal(created.body.data.paymentMethod, "manual_confirmation");
+  assert.equal(created.body.data.policyConsent.accepted, true);
+  assert.equal(created.body.data.policyConsent.version, "2026-08-21");
+  assert.ok(Date.parse(created.body.data.policyConsent.acceptedAt));
 
   const replay = await buyer
     .post("/api/orders")
@@ -481,6 +518,7 @@ test("FIRST10 cannot be applied to corporate or split bulk quantities", async ()
       items: [{ slug: "pressed-flower-name-plaque", quantity: 1 }],
       shippingAddress: address,
       couponCode: "OLDWELCOME",
+      policyConsent: POLICY_CONSENT,
     })
     .expect(400);
   assert.equal(invalidCode.body.error.code, "WELCOME_OFFER_INVALID");
@@ -490,6 +528,7 @@ test("FIRST10 cannot be applied to corporate or split bulk quantities", async ()
     .send({
       items: [{ productId: "retired-product", slug: "retired-product", quantity: 1 }],
       shippingAddress: address,
+      policyConsent: POLICY_CONSENT,
     })
     .expect(404);
   assert.equal(missingProduct.body.error.details[0].productId, "retired-product");
@@ -500,6 +539,7 @@ test("FIRST10 cannot be applied to corporate or split bulk quantities", async ()
       items: [{ slug: "golden-hour-desk-plaque", quantity: 1 }],
       shippingAddress: address,
       couponCode: "FIRST10",
+      policyConsent: POLICY_CONSENT,
     })
     .expect(400);
   assert.equal(corporate.body.error.code, "WELCOME_OFFER_EXCLUDED");
@@ -513,6 +553,7 @@ test("FIRST10 cannot be applied to corporate or split bulk quantities", async ()
       ],
       shippingAddress: address,
       couponCode: "FIRST10",
+      policyConsent: POLICY_CONSENT,
     })
     .expect(400);
   assert.equal(splitBulk.body.error.code, "WELCOME_OFFER_EXCLUDED");
@@ -531,6 +572,7 @@ test("finite inventory is reserved once across idempotent order retries", async 
       state: "Rajasthan",
       postalCode: "313001",
     },
+    policyConsent: POLICY_CONSENT,
   };
 
   const placed = await buyer

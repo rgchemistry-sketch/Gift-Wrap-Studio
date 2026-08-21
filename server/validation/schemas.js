@@ -7,10 +7,6 @@ import {
   INDIAN_MOBILE_MESSAGE,
   normalizeIndianMobile,
 } from "../../shared/indian-phone.js";
-import {
-  GOOGLE_REVIEW_URL_MESSAGE,
-  normalizeGoogleReviewUrl,
-} from "../../shared/google-review-url.js";
 
 const text = (min, max) => z.string().trim().min(min).max(max);
 const email = z.string().trim().toLowerCase().email().max(254);
@@ -254,6 +250,28 @@ export const updateProductSchema = z
 
 export const idParamsSchema = z.object({ id: text(1, 100) }).strict();
 
+export const reviewParamsSchema = z.object({ id: text(1, 100) }).strict();
+
+export const createReviewSchema = z
+  .object({
+    productId: text(1, 100),
+    rating: integerInput({ min: 1, max: 5 }),
+    comment: text(10, 1_000),
+  })
+  .strict();
+
+export const updateReviewSchema = z
+  .object({
+    rating: integerInput({ min: 1, max: 5 }).optional(),
+    comment: text(10, 1_000).optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, "Provide a rating or comment to update");
+
+export const publicReviewQuerySchema = z
+  .object({ limit: integerInput({ min: 1, max: 24 }).default(12) })
+  .strict();
+
 const relativeOrHttpsUrlOrBlank = z.union([z.literal(""), relativeOrHttpsUrl]);
 const emailOrBlank = z.union([z.literal(""), email]);
 const phoneOrBlank = z.union([z.literal(""), phone]);
@@ -262,13 +280,6 @@ const instagramOrBlank = z
   .trim()
   .max(200)
   .refine((value) => normalizeInstagramProfile(value) !== null, INSTAGRAM_PROFILE_MESSAGE);
-const googleReviewUrlOrBlank = z
-  .string()
-  .trim()
-  .max(1_000)
-  .refine((value) => normalizeGoogleReviewUrl(value) !== null, GOOGLE_REVIEW_URL_MESSAGE)
-  .transform((value) => normalizeGoogleReviewUrl(value));
-
 const leadTimesSettingsSchema = z
   .object({
     ready: text(2, 120).optional(),
@@ -311,7 +322,6 @@ const contactSettingsSchema = z
     email: emailOrBlank.optional(),
     phone: phoneOrBlank.optional(),
     instagram: instagramOrBlank.optional(),
-    googleReviewUrl: googleReviewUrlOrBlank.optional(),
   })
   .strict();
 
@@ -376,6 +386,10 @@ export const createOrderSchema = z
     contactPreference: optionalBlank(z.enum(["WhatsApp", "Phone call", "Email"])).default(""),
     note: z.string().trim().max(1_000).default(""),
     paymentMethod: z.literal("manual_confirmation").default("manual_confirmation"),
+    policyConsent: z.object({
+      accepted: z.literal(true),
+      version: z.literal("2026-08-21"),
+    }).strict(),
   })
   .strict();
 
@@ -398,6 +412,38 @@ export const orderStatusSchema = z
     ),
     undo: z.boolean().default(false),
     note: z.string().trim().max(500).default(""),
+  })
+  .strict();
+
+export const paymentQuoteSchema = z
+  .object({
+    amountPaise: integerInput({ min: 100, max: 1_000_000_000 }),
+    note: z.string().trim().max(500).default(""),
+  })
+  .strict();
+
+export const razorpaySessionSchema = z
+  .object({
+    policyConsent: z.object({
+      accepted: z.literal(true),
+      version: z.literal("2026-08-21"),
+    }).strict(),
+  })
+  .strict();
+
+export const razorpayConfirmSchema = z
+  .object({
+    orderId: text(1, 100),
+    razorpayOrderId: z.string().trim().regex(/^order_[A-Za-z0-9]+$/).max(100),
+    razorpayPaymentId: z.string().trim().regex(/^pay_[A-Za-z0-9]+$/).max(100),
+    razorpaySignature: z.string().trim().regex(/^[a-fA-F0-9]{64}$/),
+  })
+  .strict();
+
+export const razorpayRefundSchema = z
+  .object({
+    amountPaise: integerInput({ min: 100, max: 1_000_000_000 }).optional(),
+    reason: text(3, 500),
   })
   .strict();
 

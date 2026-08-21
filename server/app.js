@@ -18,7 +18,9 @@ import { inquiriesRouter } from "./routes/inquiries.js";
 import { maintenanceRouter } from "./routes/maintenance.js";
 import { offersRouter } from "./routes/offers.js";
 import { ordersRouter } from "./routes/orders.js";
+import { paymentsRouter, razorpayWebhookHandler } from "./routes/payments.js";
 import { productsRouter } from "./routes/products.js";
+import { reviewsRouter } from "./routes/reviews.js";
 import { settingsRouter } from "./routes/settings.js";
 import { uploadsRouter } from "./routes/uploads.js";
 
@@ -54,6 +56,7 @@ app.use(
         scriptSrc: [
           "'self'",
           "https://accounts.google.com",
+          "https://checkout.razorpay.com",
         ],
         styleSrc: ["'self'", "'unsafe-inline'"],
         fontSrc: ["'self'", "data:"],
@@ -68,14 +71,25 @@ app.use(
           "'self'",
           "https://accounts.google.com",
           "https://api.cloudinary.com",
+          "https://api.razorpay.com",
+          "https://checkout.razorpay.com",
         ],
-        frameSrc: ["https://accounts.google.com"],
+        frameSrc: [
+          "https://accounts.google.com",
+          "https://api.razorpay.com",
+          "https://checkout.razorpay.com",
+        ],
         upgradeInsecureRequests: env.isProduction ? [] : null,
       },
     },
   }),
 );
 app.use(compression());
+app.post(
+  "/api/payments/razorpay/webhook",
+  express.raw({ type: "application/json", limit: "256kb" }),
+  razorpayWebhookHandler,
+);
 app.use(requireTrustedOrigin);
 app.use(
   "/api",
@@ -127,9 +141,11 @@ app.get(
 
 app.use("/api/auth", authRouter);
 app.use("/api/products", productsRouter);
+app.use("/api/reviews", reviewsRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/offers", offersRouter);
 app.use("/api/orders", ordersRouter);
+app.use("/api/payments", paymentsRouter);
 app.use("/api/custom-inquiries", inquiriesRouter);
 app.use("/api/contact", contactRouter);
 app.use("/api/uploads", uploadsRouter);

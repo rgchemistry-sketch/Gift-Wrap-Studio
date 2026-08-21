@@ -41,6 +41,10 @@ const pageMetaFor = (pathname) => {
     '/our-story': ['Our story', 'Our story · Gift N Wrap Studio'],
     '/contact': ['Contact', 'Contact the studio · Gift N Wrap Studio'],
     '/care-and-delivery': ['Care and delivery', 'Care and delivery · Gift N Wrap Studio'],
+    '/terms-and-conditions': ['Terms and conditions', 'Terms & Conditions · Gift N Wrap Studio'],
+    '/privacy-policy': ['Privacy policy', 'Privacy Policy · Gift N Wrap Studio'],
+    '/cancellation-and-refund-policy': ['Cancellation and refund policy', 'Cancellation & Refund Policy · Gift N Wrap Studio'],
+    '/shipping-policy': ['Shipping policy', 'Shipping & Delivery Policy · Gift N Wrap Studio'],
     '/account': ['Your account', 'Your account · Gift N Wrap Studio'],
   };
   return routeMeta[pathname] || ['Page', 'Gift N Wrap Studio'];
@@ -450,27 +454,38 @@ function Footer({ settings }) {
           </div>
           <div>
             <p className="footer-heading">Explore</p>
-            <Link to="/shop">Shop all pieces</Link>
-            <Link to="/custom-order">Custom orders</Link>
-            <Link to="/corporate-gifts">Corporate gifts</Link>
-            <Link to="/our-story">Our story</Link>
+            <nav className="footer-links" aria-label="Explore">
+              <Link to="/shop">Shop all pieces</Link>
+              <Link to="/custom-order">Custom orders</Link>
+              <Link to="/corporate-gifts">Corporate gifts</Link>
+              <Link to="/our-story">Our story</Link>
+            </nav>
           </div>
           <div>
             <p className="footer-heading">Helpful</p>
-            <Link to="/care-and-delivery">Care & delivery</Link>
-            <Link to="/contact">Contact the studio</Link>
-            <Link to="/contact#faq">Common questions</Link>
+            <nav className="footer-links" aria-label="Helpful links">
+              <Link to="/care-and-delivery">Care & delivery</Link>
+              <Link to="/contact">Contact the studio</Link>
+              <Link to="/contact#faq">Common questions</Link>
+            </nav>
           </div>
           <div className="footer-contact">
             <p className="footer-heading">Visit & contact</p>
-            {contact.phoneHref && <a href={contact.phoneHref}><Icon name="phone" /> {contact.phoneLabel}</a>}
-            {contact.email && <a href={`mailto:${contact.email}`}><Icon name="mail" /> {contact.email}</a>}
-            <a href="https://maps.app.goo.gl/Tfcr1XpcvsaZqgJ28?g_st=iw" target="_blank" rel="noreferrer"><Icon name="map" /> Open studio location</a>
+            <nav className="footer-links" aria-label="Studio contact links">
+              {contact.phoneHref && <a href={contact.phoneHref}><Icon name="phone" /> {contact.phoneLabel}</a>}
+              {contact.email && <a href={`mailto:${contact.email}`}><Icon name="mail" /> {contact.email}</a>}
+              <a href="https://maps.app.goo.gl/Tfcr1XpcvsaZqgJ28?g_st=iw" target="_blank" rel="noreferrer"><Icon name="map" /> Open studio location</a>
+            </nav>
           </div>
         </div>
         <div className="footer-bottom">
-          <span>© {new Date().getFullYear()} Gift N Wrap Studio</span>
-          <span>Custom orders welcome · PAN India delivery</span>
+          <div><span>© {new Date().getFullYear()} Gift N Wrap Studio</span><span>Custom orders welcome · PAN India delivery</span></div>
+          <nav className="footer-legal" aria-label="Legal and policy links">
+            <Link to="/terms-and-conditions">Terms</Link>
+            <Link to="/privacy-policy">Privacy</Link>
+            <Link to="/cancellation-and-refund-policy">Cancellation & refunds</Link>
+            <Link to="/shipping-policy">Shipping</Link>
+          </nav>
         </div>
       </Container>
     </footer>

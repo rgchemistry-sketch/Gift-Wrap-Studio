@@ -576,7 +576,6 @@
 .social-channel > header { display: grid; grid-template-columns: 2.4rem minmax(0,1fr) auto; align-items: center; gap: .65rem; margin-bottom: 1rem; padding-bottom: .8rem; border-bottom: 1px solid rgba(58,42,34,.1); }
 .social-channel > header > span { display: flex; width: 2.4rem; height: 2.4rem; align-items: center; justify-content: center; color: #fff; border-radius: 50%; background: #222; }
 .social-channel--instagram > header > span { background: radial-gradient(circle at 68% 72%, #ffd36b 0 12%, #dc3a73 34%, #7b3bb8 72%); }
-.social-channel--google > header > span { color: #173f36; background: linear-gradient(135deg, #f2cd79, #fbf6e9); box-shadow: inset 0 0 0 1px rgba(23,63,54,.16); }
 .social-channel > header > div { display: flex; min-width: 0; flex-direction: column; line-height: 1.2; }
 .social-channel > header strong { font-family: Georgia, serif; font-size: .98rem; font-weight: 500; }
 .social-channel > header small { margin-top: .2rem; color: var(--muted); font-size: .63rem; }

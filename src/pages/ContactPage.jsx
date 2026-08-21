@@ -13,7 +13,7 @@ import StorefrontSelect from '../components/StorefrontSelect';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
-import { resolveStudioContact } from '../utils/studio-contact';
+import { DEFAULT_STUDIO_CONTACT, formatPhoneLabel, resolveStudioContact } from '../utils/studio-contact';
 import '../form-experience.css';
 import {
   INDIAN_MOBILE_MESSAGE,
@@ -61,6 +61,9 @@ export default function ContactPage() {
   const { user, sessionOwnerId, requireAuth, refreshSession } = useAuth();
   const { studioSettings, notify } = useShop();
   const contact = resolveStudioContact(studioSettings);
+  const complianceEmail = contact.email || DEFAULT_STUDIO_CONTACT.email;
+  const compliancePhone = contact.phone || DEFAULT_STUDIO_CONTACT.phone;
+  const compliancePhoneLabel = contact.phoneLabel || formatPhoneLabel(compliancePhone);
   const formRef = useRef(null);
   const formOwnerRef = useRef('guest');
   const [form, setForm] = useState(emptyContactForm);
@@ -225,8 +228,12 @@ export default function ContactPage() {
               </a>}
               <a href="https://maps.app.goo.gl/Tfcr1XpcvsaZqgJ28?g_st=iw" target="_blank" rel="noreferrer">
                 <span><Icon name="map" /></span>
-                <p><small>Find the studio</small><strong>Open in Google Maps</strong></p>
+                <p><small>Business address · open in Google Maps</small><strong>Rose County, Kunal Icon Road, Roseland Residency, Pimple Saudagar, Pimpri-Chinchwad, Maharashtra 411027</strong></p>
               </a>
+              <div className="contact-compliance-card">
+                <Icon name="shield" />
+                <p><small>Customer care & grievances</small><strong>Grievance Officer · Proprietor, Gift N Wrap Studio</strong><span><a href={`mailto:${complianceEmail}`}>{complianceEmail}</a> · <a href={`tel:${compliancePhone}`}>{compliancePhoneLabel}</a>. Requests are accepted online at any time and answered during studio working hours. We acknowledge complaints within 48 hours, aim to resolve payment queries within four business days, and other consumer grievances within one month.</span></p>
+              </div>
             </div>
           </Col>
           <Col lg={{ span: 6, offset: 1 }}>

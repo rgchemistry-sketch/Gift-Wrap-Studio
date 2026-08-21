@@ -12,6 +12,10 @@ const collections = {
   uploadGrants: new Map(),
   uploadQuotas: new Map(),
   studioSettings: new Map(),
+  productReviews: new Map(),
+  paymentAttempts: new Map(),
+  razorpayWebhookEvents: new Map(),
+  refundAttempts: new Map(),
 };
 
 const clone = (value) => (value == null ? value : structuredClone(value));

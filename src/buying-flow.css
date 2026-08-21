@@ -261,6 +261,14 @@
 .checkout-page .checkout-summary__note strong,
 .checkout-page .checkout-summary__note small { font-size: .75rem; }
 .checkout-conflict-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin-top: .75rem; }
+.checkout-policy-consent { margin: 0 0 1.2rem; padding: 1rem 1.05rem; border: 1px solid rgba(41,76,64,.18); background: rgba(41,76,64,.055); }
+.checkout-policy-consent .form-check { min-height: 0; padding-left: 1.8rem; }
+.checkout-policy-consent .form-check-input { width: 1.05rem; height: 1.05rem; margin-top: .23rem; border-color: var(--forest); }
+.checkout-policy-consent .form-check-input:checked { border-color: var(--forest); background-color: var(--forest); }
+.checkout-policy-consent .form-check-label { color: var(--ink); font-size: .78rem; line-height: 1.65; }
+.checkout-policy-consent .form-check-label a { color: var(--burgundy); font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
+.checkout-policy-consent > p { display: flex; align-items: flex-start; gap: .35rem; margin: .65rem 0 0 1.8rem; color: var(--muted); font-size: .7rem; line-height: 1.5; }
+.checkout-policy-consent > p .icon { flex: 0 0 auto; margin-top: .12rem; color: var(--forest); }
 
 @media (max-width: 991.98px) {
   .product-page-shell { padding-bottom: calc(5.25rem + env(safe-area-inset-bottom)); }

@@ -207,6 +207,7 @@ export default function CheckoutPage() {
   const [idempotencyConflict, setIdempotencyConflict] = useState(false);
   const [liveCatalogReady, setLiveCatalogReady] = useState(false);
   const [order, setOrder] = useState(null);
+  const [policiesAccepted, setPoliciesAccepted] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState(getCheckoutKey);
   const formRef = useRef(null);
   const promptedForAuthRef = useRef(false);
@@ -239,6 +240,7 @@ export default function CheckoutPage() {
     setCouponRecovery(false);
     setIdempotencyConflict(false);
     setOrder(null);
+    setPoliciesAccepted(false);
     setHydratedDraftOwner(draftOwner);
     setDraftReady(true);
   }, [authLoading, draftOwner, draftReady, draftUserId, hydratedDraftOwner]);
@@ -447,6 +449,7 @@ export default function CheckoutPage() {
         note: form.notes,
         couponCode: applyOffer ? offerCode : undefined,
         paymentMethod: 'manual_confirmation',
+        policyConsent: { accepted: true, version: '2026-08-21' },
       };
       const result = await api.submitOrderRequest(payload, idempotencyKey, user.id);
       const createdOrder = result.data || result.order || result;
@@ -663,6 +666,18 @@ export default function CheckoutPage() {
                 </Row>
               </fieldset>
               {!user && <Alert variant="info" className="soft-alert sign-in-reminder"><Icon name="lock" /> You’ll be asked to log in with a secure email code or an approved provider when you send this request. Your form is saved on this device.</Alert>}
+              <div className="checkout-policy-consent">
+                <Form.Check
+                  id="checkout-policy-consent"
+                  required
+                  checked={policiesAccepted}
+                  onChange={(event) => setPoliciesAccepted(event.target.checked)}
+                  label={<span>I agree to the <Link to="/terms-and-conditions" target="_blank" rel="noreferrer">Terms & Conditions</Link>, <Link to="/privacy-policy" target="_blank" rel="noreferrer">Privacy Policy</Link> and <Link to="/cancellation-and-refund-policy" target="_blank" rel="noreferrer">Cancellation & Refund Policy</Link>. If I choose online payment, I also consent to sharing the information needed for Razorpay to process and protect the transaction.</span>}
+                  feedback="Please review and accept the policies before sending your request."
+                  feedbackType="invalid"
+                />
+                <p><Icon name="shield" size={14} /> We never ask you to send a card number, CVV, UPI PIN or payment OTP.</p>
+              </div>
               <Button type={catalogError ? 'button' : 'submit'} onClick={catalogError ? retryBagCheck : undefined} className="button-burgundy checkout-submit" disabled={submitting || shouldDisableBuyingAction({ catalogError, checkPending: bagCheckPending, needsAttention: bagNeedsAttention, acknowledgementRequired: idempotencyConflict })} aria-describedby="checkout-submit-note">{submitting ? <><Spinner size="sm" /> Sending securely…</> : <>{submitLabel}{!bagCheckPending && !catalogError && !bagNeedsAttention && !idempotencyConflict && <Icon name="arrow" />}</>}</Button>
               <p className="checkout-submit-note" id="checkout-submit-note">By sending, you are requesting a studio review—not completing a purchase or payment.</p>
             </Form>

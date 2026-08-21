@@ -1,0 +1,356 @@
+/* Shared customer/admin Razorpay surfaces. Checkout itself remains Razorpay-hosted. */
+.payment-state {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  min-height: 1.85rem;
+  align-items: center;
+  gap: .42rem;
+  padding: .34rem .68rem;
+  color: #76531f;
+  border: 1px solid rgba(184, 137, 67, .28);
+  border-radius: 999px;
+  background: rgba(255, 246, 227, .78);
+  font-size: .64rem;
+  font-weight: 850;
+  letter-spacing: .035em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.payment-state i {
+  width: .42rem;
+  height: .42rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 .18rem rgba(184, 137, 67, .12);
+  flex: 0 0 auto;
+}
+
+.payment-state.is-paid,
+.payment-state.is-partially_refunded,
+.payment-state.is-refunded {
+  color: #275f4b;
+  border-color: rgba(39, 95, 75, .22);
+  background: rgba(229, 242, 234, .8);
+}
+
+.payment-state.is-failed {
+  color: #8f2938;
+  border-color: rgba(143, 41, 56, .2);
+  background: rgba(250, 231, 233, .86);
+}
+
+.payment-state.is-processing,
+.payment-state.is-authorized,
+.payment-state.is-creating,
+.payment-state.is-created,
+.payment-state.is-refund_pending {
+  color: #4b5d87;
+  border-color: rgba(75, 93, 135, .2);
+  background: rgba(232, 237, 248, .86);
+}
+
+.payment-state.is-processing i,
+.payment-state.is-authorized i,
+.payment-state.is-creating i,
+.payment-state.is-created i,
+.payment-state.is-refund_pending i {
+  animation: payment-status-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes payment-status-pulse {
+  50% { opacity: .35; transform: scale(.75); }
+}
+
+.order-payment {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+  gap: 1rem;
+  margin: 2rem 0 1.5rem;
+  padding: clamp(1.25rem, 3vw, 1.8rem);
+  overflow: hidden;
+  border: 1px solid rgba(109, 31, 53, .18);
+  background:
+    radial-gradient(circle at 100% 0, rgba(223, 190, 125, .2), transparent 32%),
+    linear-gradient(135deg, #fffdf8 0%, #fbf4e8 100%);
+  box-shadow: 0 1rem 2.5rem rgba(64, 42, 31, .07);
+}
+
+.order-payment::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: .28rem;
+  height: 100%;
+  content: '';
+  background: var(--gold);
+}
+
+.order-payment.is-paid::after { background: var(--forest); }
+.order-payment.is-failed::after { background: var(--danger); }
+.order-payment.is-processing::after { background: #687ca7; }
+
+.order-payment__seal {
+  display: flex;
+  width: 3.25rem;
+  height: 3.25rem;
+  align-items: center;
+  justify-content: center;
+  color: var(--ivory);
+  border-radius: 50%;
+  background: var(--burgundy);
+  box-shadow: 0 0 0 .4rem rgba(109, 31, 53, .08);
+}
+
+.order-payment.is-paid .order-payment__seal { background: var(--forest); }
+.order-payment.is-refunded .order-payment__seal { background: #506d64; }
+.order-payment__body { min-width: 0; }
+
+.order-payment__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.order-payment__heading .eyebrow { margin: 0 0 .25rem; }
+.order-payment__heading h3 { margin: 0; font-size: clamp(1.3rem, 2.5vw, 1.65rem); }
+
+.order-payment__quote {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.25rem 0 1rem;
+  padding: 1rem 0;
+  border-top: 1px solid rgba(71, 50, 39, .12);
+  border-bottom: 1px solid rgba(71, 50, 39, .12);
+}
+
+.order-payment__quote p { display: grid; gap: .1rem; margin: 0; }
+.order-payment__quote small { color: var(--muted); font-size: .68rem; font-weight: 750; }
+.order-payment__quote strong {
+  color: var(--burgundy);
+  font-family: var(--font-display), Georgia, serif;
+  font-size: clamp(1.8rem, 4vw, 2.45rem);
+  font-weight: 700;
+  line-height: 1;
+}
+.order-payment.is-paid .order-payment__quote strong { color: var(--forest); }
+.order-payment__quote > span { color: var(--muted); font-size: .66rem; font-weight: 750; text-align: right; }
+
+.order-payment__note {
+  margin: 0 0 .85rem;
+  padding: .72rem .85rem;
+  color: #56473d;
+  border-left: 2px solid var(--gold);
+  background: rgba(255, 255, 255, .55);
+  font-family: var(--font-display), Georgia, serif;
+  font-size: .88rem;
+  line-height: 1.5;
+}
+
+.order-payment__copy { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.62; }
+
+.order-payment__refund {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: .9rem;
+  padding: .75rem .85rem;
+  color: var(--forest);
+  background: rgba(41, 76, 64, .08);
+  font-size: .74rem;
+}
+.order-payment__refund strong { white-space: nowrap; }
+
+.payment-test-label {
+  display: flex;
+  align-items: flex-start;
+  gap: .55rem;
+  margin-top: .9rem;
+  padding: .68rem .75rem;
+  color: #604710;
+  border: 1px dashed rgba(122, 89, 18, .38);
+  background: rgba(255, 244, 207, .62);
+  font-size: .7rem;
+  line-height: 1.45;
+}
+.payment-test-label .icon { margin-top: .08rem; flex: 0 0 auto; }
+
+.order-payment__messages .alert,
+.admin-payment-desk__alert {
+  display: flex;
+  align-items: flex-start;
+  gap: .55rem;
+  margin: .9rem 0 0;
+  padding: .72rem .8rem;
+  border-radius: 0;
+  font-size: .72rem;
+  line-height: 1.5;
+}
+.order-payment__messages .alert .icon,
+.admin-payment-desk__alert .icon { margin-top: .1rem; flex: 0 0 auto; }
+
+.order-payment__consent {
+  margin: 1rem 0 0;
+  padding: .8rem .9rem;
+  color: #554940;
+  border-left: 2px solid var(--burgundy);
+  background: rgba(255, 255, 255, .68);
+  font-size: .73rem;
+  line-height: 1.58;
+}
+.order-payment__consent strong { color: var(--burgundy); }
+.order-payment__consent a { color: var(--burgundy); font-weight: 800; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .14rem; }
+.order-payment__consent a:hover { color: var(--forest); }
+.order-payment__consent a:focus-visible { outline: 2px solid var(--burgundy); outline-offset: 2px; }
+
+.order-payment__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .7rem;
+  margin-top: 1rem;
+}
+.order-payment__actions .btn { display: inline-flex; min-height: 2.75rem; align-items: center; justify-content: center; gap: .5rem; }
+.order-payment__actions .spinner-border { width: .9rem; height: .9rem; }
+
+.order-payment__safety {
+  display: flex;
+  align-items: flex-start;
+  gap: .4rem;
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: .64rem;
+  line-height: 1.5;
+}
+.order-payment__safety .icon { margin-top: .08rem; color: var(--forest); flex: 0 0 auto; }
+
+/* Admin quote and refund controls live inside the complete-order drawer. */
+.admin-payment-desk {
+  padding: 1rem;
+  border: 1px solid rgba(109, 31, 53, .2);
+  background:
+    linear-gradient(145deg, rgba(255, 253, 248, .96), rgba(248, 238, 220, .85)),
+    var(--ivory);
+}
+
+.admin-order-modal__aside > .admin-payment-desk { border-left: .24rem solid var(--burgundy); }
+
+.admin-payment-desk__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-bottom: .9rem;
+}
+.admin-payment-desk__head .eyebrow { margin: 0 0 .22rem; }
+.admin-payment-desk__head h3 { margin: 0; font-size: 1.12rem; }
+
+.admin-payment-quote {
+  display: grid;
+  padding: .9rem;
+  border: 1px solid rgba(41, 76, 64, .16);
+  background: rgba(237, 241, 234, .84);
+}
+.admin-payment-quote > span { display: flex; align-items: center; gap: .4rem; color: var(--forest); font-size: .65rem; font-weight: 850; text-transform: uppercase; }
+.admin-payment-quote > strong { margin-top: .55rem; color: var(--forest); font-family: var(--font-display), Georgia, serif; font-size: 1.7rem; line-height: 1; }
+.admin-payment-quote > small { margin-top: .32rem; color: var(--muted); font-size: .65rem; }
+.admin-payment-quote > p { margin: .65rem 0 0; padding-top: .6rem; color: #51473f; border-top: 1px solid rgba(41, 76, 64, .12); font-size: .72rem; line-height: 1.5; overflow-wrap: anywhere; }
+
+.admin-payment-quote-form,
+.admin-refund-form { display: grid; gap: .82rem; }
+.admin-payment-quote-form > p { margin: 0; color: var(--muted); font-size: .73rem; line-height: 1.55; }
+.admin-payment-quote-form .form-label,
+.admin-refund-form .form-label { margin-bottom: .3rem; color: var(--ink); font-size: .69rem; font-weight: 800; }
+.admin-payment-quote-form .form-label small { color: var(--muted); font-weight: 650; }
+.admin-payment-quote-form .form-control,
+.admin-refund-form .form-control { min-height: 2.55rem; border-color: rgba(71, 50, 39, .2); border-radius: 0; background: rgba(255, 253, 248, .86); font-size: .78rem; }
+.admin-payment-quote-form textarea.form-control,
+.admin-refund-form textarea.form-control { min-height: 4.5rem; resize: vertical; }
+.admin-payment-quote-form .form-control:focus,
+.admin-refund-form .form-control:focus { border-color: var(--burgundy); box-shadow: 0 0 0 .2rem rgba(109, 31, 53, .09); }
+.admin-payment-quote-form > .btn,
+.admin-refund-form > .btn { display: inline-flex; width: 100%; min-height: 2.7rem; align-items: center; justify-content: center; gap: .45rem; }
+
+.admin-money-input { position: relative; }
+.admin-money-input > span { position: absolute; z-index: 1; top: 50%; left: .75rem; color: var(--burgundy); font-size: .82rem; font-weight: 850; transform: translateY(-50%); }
+.admin-money-input .form-control { padding-left: 1.7rem; font-variant-numeric: tabular-nums; }
+
+.admin-payment-field-error { margin: -.35rem 0 0; color: #8f2938; font-size: .68rem; line-height: 1.42; }
+
+.admin-payment-gate {
+  display: flex;
+  align-items: flex-start;
+  gap: .65rem;
+  padding: .82rem;
+  color: var(--muted);
+  border: 1px dashed rgba(71, 50, 39, .23);
+  background: rgba(255, 253, 248, .62);
+}
+.admin-payment-gate > .icon,
+.admin-payment-gate > .spinner-border { margin-top: .08rem; color: var(--forest); flex: 0 0 auto; }
+.admin-payment-gate p,
+.admin-refund-form__intro p { display: grid; gap: .15rem; margin: 0; }
+.admin-payment-gate strong,
+.admin-refund-form__intro strong { color: var(--ink); font-size: .73rem; }
+.admin-payment-gate span,
+.admin-refund-form__intro span { font-size: .67rem; line-height: 1.45; }
+
+.admin-payment-ledger { display: grid; margin: .9rem 0 0; }
+.admin-payment-ledger > div { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .48rem 0; border-bottom: 1px solid rgba(71, 50, 39, .1); }
+.admin-payment-ledger dt { color: var(--muted); font-size: .68rem; }
+.admin-payment-ledger dd { margin: 0; color: var(--ink); font-size: .73rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+
+.admin-refund-form { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(71, 50, 39, .14); }
+.admin-refund-form__intro { display: flex; align-items: flex-start; gap: .58rem; color: var(--muted); }
+.admin-refund-form__intro > .icon { margin-top: .08rem; color: var(--burgundy); flex: 0 0 auto; }
+
+.admin-refund-mode { display: grid; grid-template-columns: 1fr 1fr; padding: .2rem; border: 1px solid rgba(71, 50, 39, .14); background: rgba(71, 50, 39, .045); }
+.admin-refund-mode button { min-height: 2.25rem; padding: .45rem .55rem; color: var(--muted); border: 0; background: transparent; font-size: .68rem; font-weight: 800; }
+.admin-refund-mode button.is-active { color: var(--burgundy); background: #fffdf8; box-shadow: 0 .15rem .6rem rgba(71, 50, 39, .09); }
+.admin-refund-mode button:focus-visible { outline: 2px solid var(--burgundy); outline-offset: 1px; }
+
+.admin-refund-confirm .modal-content { overflow: hidden; border: 0; border-radius: .35rem; box-shadow: 0 1.5rem 5rem rgba(39, 24, 28, .25); }
+.admin-refund-confirm .modal-header { padding: 1.2rem 1.35rem; color: var(--ivory); border: 0; background: var(--burgundy); }
+.admin-refund-confirm .modal-header .eyebrow { margin-bottom: .22rem; color: var(--gold-light); }
+.admin-refund-confirm .modal-title { font-size: 1.45rem; }
+.admin-refund-confirm .btn-close { filter: invert(1); }
+.admin-refund-confirm .modal-body { padding: 1.35rem; background: var(--paper); }
+.admin-refund-confirm__amount { display: grid; padding: 1rem; color: var(--ivory); background: var(--forest); }
+.admin-refund-confirm__amount span { color: rgba(255, 250, 243, .7); font-size: .68rem; }
+.admin-refund-confirm__amount strong { margin: .35rem 0; color: var(--gold-light); font-family: var(--font-display), Georgia, serif; font-size: 2rem; }
+.admin-refund-confirm__amount small { color: rgba(255, 250, 243, .72); font-size: .68rem; }
+.admin-refund-confirm dl { display: grid; margin: 1rem 0; }
+.admin-refund-confirm dl > div { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: .75rem; padding: .6rem 0; border-bottom: 1px solid var(--line); }
+.admin-refund-confirm dt { color: var(--muted); font-size: .7rem; }
+.admin-refund-confirm dd { margin: 0; color: var(--ink); font-size: .76rem; font-weight: 750; overflow-wrap: anywhere; }
+.admin-refund-confirm .alert { display: flex; align-items: flex-start; gap: .5rem; margin: 0; border-radius: 0; font-size: .72rem; line-height: 1.45; }
+.admin-refund-confirm .alert .icon { margin-top: .08rem; flex: 0 0 auto; }
+.admin-refund-confirm .modal-footer { padding: .9rem 1.35rem; background: #fffdf8; }
+.admin-refund-confirm .modal-footer .btn { display: inline-flex; min-height: 2.7rem; align-items: center; gap: .4rem; }
+
+@media (max-width: 767.98px) {
+  .order-payment { grid-template-columns: minmax(0, 1fr); }
+  .order-payment__seal { width: 2.8rem; height: 2.8rem; }
+  .order-payment__heading { flex-direction: column; }
+  .order-payment__actions .btn { width: 100%; }
+}
+
+@media (max-width: 575.98px) {
+  .order-payment { margin-right: -.65rem; margin-left: -.65rem; padding: 1rem; }
+  .order-payment__quote { align-items: flex-start; flex-direction: column; }
+  .order-payment__quote > span { text-align: left; }
+  .admin-payment-desk__head { flex-direction: column; }
+  .admin-refund-confirm .modal-dialog { margin: .65rem; }
+  .admin-refund-confirm .modal-footer { align-items: stretch; flex-direction: column-reverse; }
+  .admin-refund-confirm .modal-footer .btn { width: 100%; justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .payment-state i { animation: none !important; }
+}

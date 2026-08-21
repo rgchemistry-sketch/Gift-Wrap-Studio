@@ -32,7 +32,9 @@ const statusLabels = {
 
 const paymentStatusLabels = {
   pending: "Pending",
+  authorized: "Authorized · awaiting capture",
   paid: "Paid",
+  partially_refunded: "Partially refunded",
   failed: "Failed",
   refunded: "Refunded",
 };
@@ -191,11 +193,25 @@ const makeSeries = (filter) => {
 };
 
 const normalizePaymentStatus = (order) => order.paymentStatus || "pending";
+const orderFinancialValue = (order) => {
+  const quotedPaise = Number(order.paymentQuote?.amountPaise);
+  if (order.paymentMethod === "razorpay" && Number.isSafeInteger(quotedPaise) && quotedPaise >= 0) {
+    return roundMoney(quotedPaise / 100);
+  }
+  if (order.total == null || order.total === "") return null;
+  return roundMoney(Number(order.total || 0));
+};
 const isCancelled = (order) => order.status === "cancelled";
 const isRefunded = (order) => normalizePaymentStatus(order) === "refunded";
 const isFailedPayment = (order) => normalizePaymentStatus(order) === "failed";
+const isAwaitingOnlinePayment = (order) =>
+  order.paymentMethod === "razorpay"
+  && !["paid", "partially_refunded", "refunded"].includes(normalizePaymentStatus(order));
 const isBookedOrder = (order) =>
-  !isCancelled(order) && !isRefunded(order) && !isFailedPayment(order);
+  !isCancelled(order)
+  && !isRefunded(order)
+  && !isFailedPayment(order)
+  && !isAwaitingOnlinePayment(order);
 const orderUnits = (order) =>
   (order.items || []).reduce((total, item) => total + Number(item.quantity || 0), 0);
 
@@ -204,16 +220,16 @@ const summarizeOrders = (orders) => {
   const cancelled = orders.filter(isCancelled);
   const refunded = orders.filter((order) => !isCancelled(order) && isRefunded(order));
   const failed = orders.filter((order) => !isCancelled(order) && isFailedPayment(order));
-  const bookedSales = roundMoney(booked.reduce((total, order) => total + Number(order.total || 0), 0));
+  const bookedSales = roundMoney(booked.reduce((total, order) => total + orderFinancialValue(order), 0));
   const paidSales = roundMoney(
     booked
       .filter((order) => normalizePaymentStatus(order) === "paid")
-      .reduce((total, order) => total + Number(order.total || 0), 0),
+      .reduce((total, order) => total + orderFinancialValue(order), 0),
   );
   const pendingPaymentSales = roundMoney(
     booked
       .filter((order) => normalizePaymentStatus(order) === "pending")
-      .reduce((total, order) => total + Number(order.total || 0), 0),
+      .reduce((total, order) => total + orderFinancialValue(order), 0),
   );
   return {
     bookedSales,
@@ -224,11 +240,11 @@ const summarizeOrders = (orders) => {
     units: booked.reduce((total, order) => total + orderUnits(order), 0),
     averageOrderValue: booked.length ? roundMoney(bookedSales / booked.length) : 0,
     cancelledOrders: cancelled.length,
-    cancelledValue: roundMoney(cancelled.reduce((total, order) => total + Number(order.total || 0), 0)),
+    cancelledValue: roundMoney(cancelled.reduce((total, order) => total + orderFinancialValue(order), 0)),
     refundedOrders: refunded.length,
-    refundedValue: roundMoney(refunded.reduce((total, order) => total + Number(order.total || 0), 0)),
+    refundedValue: roundMoney(refunded.reduce((total, order) => total + orderFinancialValue(order), 0)),
     failedPaymentOrders: failed.length,
-    failedPaymentValue: roundMoney(failed.reduce((total, order) => total + Number(order.total || 0), 0)),
+    failedPaymentValue: roundMoney(failed.reduce((total, order) => total + orderFinancialValue(order), 0)),
   };
 };
 
@@ -295,8 +311,8 @@ const buildStatusRows = (orders, totalBookedSales) => {
       bookedSales: 0,
     };
     row.count += 1;
-    row.orderValue = roundMoney(row.orderValue + Number(order.total || 0));
-    if (isBookedOrder(order)) row.bookedSales = roundMoney(row.bookedSales + Number(order.total || 0));
+    row.orderValue = roundMoney(row.orderValue + orderFinancialValue(order));
+    if (isBookedOrder(order)) row.bookedSales = roundMoney(row.bookedSales + orderFinancialValue(order));
     statuses.set(status, row);
   });
   return [...statuses.values()]
@@ -320,8 +336,8 @@ const buildPaymentRows = (orders, totalBookedSales) => {
       bookedSales: 0,
     };
     row.count += 1;
-    row.orderValue = roundMoney(row.orderValue + Number(order.total || 0));
-    if (isBookedOrder(order)) row.bookedSales = roundMoney(row.bookedSales + Number(order.total || 0));
+    row.orderValue = roundMoney(row.orderValue + orderFinancialValue(order));
+    if (isBookedOrder(order)) row.bookedSales = roundMoney(row.bookedSales + orderFinancialValue(order));
     statuses.set(status, row);
   });
   return [...statuses.values()]
@@ -336,7 +352,7 @@ const fetchOrders = async (mode, from, endExclusive) => {
   if (mode === "mongodb") {
     const orders = await Order.find({ createdAt: { $gte: from, $lt: endExclusive } })
       .select(
-        "orderNumber buyerId buyerName buyerEmail items.productId items.slug items.name items.category items.unitPrice items.quantity subtotal shippingFee discount total couponCode status paymentStatus createdAt",
+        "orderNumber buyerId buyerName buyerEmail items.productId items.slug items.name items.category items.unitPrice items.quantity subtotal shippingFee discount total couponCode status paymentMethod paymentStatus paymentQuote createdAt",
       )
       .sort({ createdAt: 1, _id: 1 })
       .limit(MAX_ANALYTICS_ORDERS + 1)
@@ -367,7 +383,7 @@ const fetchDetailedExportOrders = async (mode, from, endExclusive) => {
           "orderNumber buyerName buyerEmail",
           "items.slug items.name items.category items.unitPrice items.quantity items.customization",
           "shippingAddress subtotal shippingFee discount total couponCode",
-          "neededBy contactPreference note status paymentMethod paymentStatus createdAt",
+          "neededBy contactPreference note status paymentMethod paymentStatus paymentQuote refundedAmountPaise createdAt",
         ].join(" "),
       )
       .sort({ createdAt: 1, _id: 1 })
@@ -424,6 +440,10 @@ const fetchCustomerHistory = async (mode, customerIds) => {
           buyerId: { $in: customerIds },
           status: { $ne: "cancelled" },
           paymentStatus: { $nin: ["refunded", "failed"] },
+          $or: [
+            { paymentMethod: { $ne: "razorpay" } },
+            { paymentStatus: { $in: ["paid", "partially_refunded"] } },
+          ],
         },
       },
       {
@@ -470,7 +490,7 @@ const buildCustomerMetrics = (orders, customerHistory, rangeStart) => {
     row.name = order.buyerName || row.name;
     row.email = order.buyerEmail || row.email;
     const createdAt = asDate(order.createdAt);
-    row.bookedSales = roundMoney(row.bookedSales + Number(order.total || 0));
+    row.bookedSales = roundMoney(row.bookedSales + orderFinancialValue(order));
     row.orders += 1;
     row.units += orderUnits(order);
     if (!row.lastOrderAt || createdAt > row.lastOrderAt) row.lastOrderAt = createdAt;
@@ -515,7 +535,7 @@ const fillSeries = (series, orders, range) => {
   orders.forEach((order) => {
     const row = byPeriod.get(bucketKey(asDate(order.createdAt), range));
     if (!row) return;
-    const value = Number(order.total || 0);
+    const value = orderFinancialValue(order);
     if (isCancelled(order)) {
       row.cancelledOrders += 1;
       row.cancelledValue = roundMoney(row.cancelledValue + value);
@@ -531,6 +551,7 @@ const fillSeries = (series, orders, range) => {
       row.failedPaymentValue = roundMoney(row.failedPaymentValue + value);
       return;
     }
+    if (!isBookedOrder(order)) return;
     row.bookedSales = roundMoney(row.bookedSales + value);
     row.orders += 1;
     row.units += orderUnits(order);
@@ -735,6 +756,7 @@ const orderFinancialBucket = (order) => {
   if (isCancelled(order)) return "Cancelled";
   if (isRefunded(order)) return "Refunded";
   if (isFailedPayment(order)) return "Failed payment";
+  if (isAwaitingOnlinePayment(order)) return "Awaiting online payment";
   const paymentStatus = normalizePaymentStatus(order);
   if (paymentStatus === "paid") return "Booked · Paid";
   if (paymentStatus === "pending") return "Booked · Pending";
@@ -980,7 +1002,7 @@ const normalOrderColumns = [
 ];
 
 const normalOrderRow = (order) => {
-  const total = numberOrBlank(order.total);
+  const total = numberOrBlank(orderFinancialValue(order));
   const bucket = orderFinancialBucket(order);
   const address = order.shippingAddress || {};
   const booked = bucket.startsWith("Booked");
@@ -999,7 +1021,11 @@ const normalOrderRow = (order) => {
     address.country || "",
     statusLabels[order.status] || order.status || "",
     paymentStatusLabels[normalizePaymentStatus(order)] || normalizePaymentStatus(order),
-    order.paymentMethod === "manual_confirmation" ? "Manual confirmation" : order.paymentMethod || "",
+    order.paymentMethod === "manual_confirmation"
+      ? "Manual confirmation"
+      : order.paymentMethod === "razorpay"
+        ? "Razorpay"
+        : order.paymentMethod || "",
     bucket,
     (order.items || []).length,
     (order.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),

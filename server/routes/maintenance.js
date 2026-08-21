@@ -4,6 +4,7 @@ import { env } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { configurationError, unauthorized } from "../lib/errors.js";
 import { runExpiredUploadGrantSweep } from "../services/upload-cleanup.js";
+import { reconcileRazorpayPayments } from "../services/payments.js";
 
 export const maintenanceRouter = Router();
 
@@ -24,6 +25,17 @@ maintenanceRouter.get(
     if (!env.cronSecret) throw configurationError(["CRON_SECRET"]);
     if (!hasCronAuthorization(request)) throw unauthorized("Invalid maintenance credentials");
     const result = await runExpiredUploadGrantSweep({ limit: env.uploadCleanupBatchSize });
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ data: result });
+  }),
+);
+
+maintenanceRouter.get(
+  "/payments/reconcile",
+  asyncHandler(async (request, response) => {
+    if (!env.cronSecret) throw configurationError(["CRON_SECRET"]);
+    if (!hasCronAuthorization(request)) throw unauthorized("Invalid maintenance credentials");
+    const result = await reconcileRazorpayPayments({ limit: env.razorpayReconcileBatchSize });
     response.setHeader("Cache-Control", "no-store");
     response.json({ data: result });
   }),

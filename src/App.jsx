@@ -18,6 +18,10 @@ const CorporatePage = lazy(() => import('./pages/CorporatePage'));
 const StoryPage = lazy(() => import('./pages/StoryPage'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const CarePage = lazy(() => import('./pages/CarePage'));
+const TermsPage = lazy(() => import('./pages/PolicyPage').then((module) => ({ default: module.TermsPage })));
+const PrivacyPage = lazy(() => import('./pages/PolicyPage').then((module) => ({ default: module.PrivacyPage })));
+const RefundPolicyPage = lazy(() => import('./pages/PolicyPage').then((module) => ({ default: module.RefundPolicyPage })));
+const ShippingPolicyPage = lazy(() => import('./pages/PolicyPage').then((module) => ({ default: module.ShippingPolicyPage })));
 const AccountPage = lazy(() => import('./pages/AccountPage'));
 const loadAdminPage = () => import('./pages/AdminPage');
 const AdminPage = lazy(loadAdminPage);
@@ -59,6 +63,10 @@ export default function App() {
                   <Route path="our-story" element={<StoryPage />} />
                   <Route path="contact" element={<ContactPage />} />
                   <Route path="care-and-delivery" element={<CarePage />} />
+                  <Route path="terms-and-conditions" element={<TermsPage />} />
+                  <Route path="privacy-policy" element={<PrivacyPage />} />
+                  <Route path="cancellation-and-refund-policy" element={<RefundPolicyPage />} />
+                  <Route path="shipping-policy" element={<ShippingPolicyPage />} />
                   <Route path="account" element={<AccountPage />} />
                   <Route path="*" element={<NotFoundPage />} />
                 </Route>

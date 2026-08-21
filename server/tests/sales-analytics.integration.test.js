@@ -29,6 +29,8 @@ const seedOrder = ({
   createdAt,
   status = "placed",
   paymentStatus = "pending",
+  paymentMethod = "manual_confirmation",
+  paymentQuote,
   total,
   subtotal = total,
   shippingFee = 0,
@@ -72,7 +74,8 @@ const seedOrder = ({
   neededBy,
   contactPreference,
   note,
-  paymentMethod: "manual_confirmation",
+  paymentMethod,
+  ...(paymentQuote ? { paymentQuote } : {}),
   items: [{
     productId,
     slug: productSlug,
@@ -376,6 +379,51 @@ test("week analysis starts on Monday IST and comparisons never emit infinity", a
   );
   assert.equal(response.body.data.comparison.bookedSales, null);
   assert.equal(response.body.data.products[0].name, "Weekly piece renamed");
+});
+
+test("unpaid Razorpay quotes are not booked and paid quotes use the frozen payable amount", async () => {
+  seedOrder({
+    id: "razorpay-awaiting",
+    buyerId: "buyer-awaiting",
+    buyerName: "Awaiting buyer",
+    buyerEmail: "awaiting@example.test",
+    createdAt: "2026-08-05T06:30:00.000Z",
+    paymentMethod: "razorpay",
+    paymentStatus: "pending",
+    total: 1_000,
+    paymentQuote: { amountPaise: 125_000, currency: "INR" },
+    productId: "rzp-awaiting",
+    productName: "Awaiting payment piece",
+    unitPrice: 1_000,
+  });
+  seedOrder({
+    id: "razorpay-paid",
+    buyerId: "buyer-paid",
+    buyerName: "Paid buyer",
+    buyerEmail: "paid@example.test",
+    createdAt: "2026-08-05T07:30:00.000Z",
+    paymentMethod: "razorpay",
+    paymentStatus: "paid",
+    total: 2_000,
+    paymentQuote: { amountPaise: 230_000, currency: "INR" },
+    productId: "rzp-paid",
+    productName: "Paid piece",
+    unitPrice: 2_000,
+  });
+
+  const admin = await signedIn("admin");
+  const response = await admin
+    .get("/api/admin/analytics")
+    .query({ range: "day", from: "2026-08-05", to: "2026-08-05" })
+    .expect(200);
+
+  assert.equal(response.body.data.kpis.totalOrders, 2);
+  assert.equal(response.body.data.kpis.orders, 1);
+  assert.equal(response.body.data.kpis.bookedSales, 2_300);
+  assert.equal(response.body.data.kpis.paidSales, 2_300);
+  const pendingRow = response.body.data.paymentStatuses.find(({ status }) => status === "pending");
+  assert.equal(pendingRow.orderValue, 1_250);
+  assert.equal(pendingRow.bookedSales, 0);
 });
 
 test("month analysis zero-fills every intersecting calendar month", async () => {
