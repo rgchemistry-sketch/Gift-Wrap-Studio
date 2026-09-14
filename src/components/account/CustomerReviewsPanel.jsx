@@ -147,8 +147,8 @@ export default function CustomerReviewsPanel({ userId }) {
     if (!preserveNotice) setNotice('');
     try {
       const [mineResult, eligibleResult] = await Promise.all([
-        api.getMyReviews(),
-        api.getEligibleReviews(),
+        api.getMyReviews(userId),
+        api.getEligibleReviews(userId),
       ]);
       const minePayload = payload(mineResult);
       const eligiblePayload = payload(eligibleResult);
@@ -159,7 +159,7 @@ export default function CustomerReviewsPanel({ userId }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {

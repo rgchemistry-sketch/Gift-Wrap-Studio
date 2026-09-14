@@ -32,7 +32,7 @@ const hasPersistentDismissal = () => {
   }
 };
 
-export default function OfferPopup() {
+export default function OfferPopup({ paused = false }) {
   const [dismissed, setDismissed] = useState(() => (
     hasSessionFlag(DISMISSED_KEY) || hasPersistentDismissal()
   ));
@@ -50,7 +50,7 @@ export default function OfferPopup() {
   );
   const claimed = Boolean(claimedOfferCode || hasSessionFlag(CLAIMED_KEY));
   const onHomepage = location.pathname === '/';
-  const suppressed = authModalOpen || !onHomepage || user?.role === 'admin';
+  const suppressed = paused || authModalOpen || !onHomepage || user?.role === 'admin';
   const viewer = welcomeOffer?.viewer;
   const viewerMatches = viewer
     ? String(viewer.id || '') === String(user?.id || '')
@@ -58,12 +58,12 @@ export default function OfferPopup() {
 
   useEffect(() => {
     setDelayElapsed(false);
-    if (!onHomepage || !welcomeOffer || !enabled || !eligible || !viewerMatches || dismissed || claimed) {
+    if (suppressed || authLoading || !onHomepage || !welcomeOffer || !enabled || !eligible || !viewerMatches || dismissed || claimed) {
       return undefined;
     }
     const timer = window.setTimeout(() => setDelayElapsed(true), delaySeconds * 1_000);
     return () => window.clearTimeout(timer);
-  }, [claimed, delaySeconds, dismissed, eligible, enabled, onHomepage, viewerMatches, welcomeOffer]);
+  }, [authLoading, claimed, delaySeconds, dismissed, eligible, enabled, onHomepage, suppressed, viewerMatches, welcomeOffer]);
 
   const show = Boolean(
     welcomeOffer

@@ -76,6 +76,22 @@ test("review authoring and eligibility endpoints require authentication", async 
   });
 });
 
+test("private review reads reject a previous account's expected identity", async () => {
+  const product = await firstProduct();
+  const { agent, user } = await loginAs();
+  addOrder({ buyerId: user.id, product });
+  await submitReview(agent, product.id).expect(201);
+
+  for (const path of ["/api/reviews/mine", "/api/reviews/eligible"]) {
+    const stale = await agent.get(path).set("X-Expected-User-Id", `${user.id}-previous`).expect(409);
+    assert.equal(stale.body.error.code, "SESSION_IDENTITY_CHANGED");
+    assert.equal(stale.body.data, undefined);
+    await agent.get(path).set("X-Expected-User-Id", user.id).expect(200);
+  }
+  const mine = await agent.get("/api/reviews/mine").set("X-Expected-User-Id", user.id).expect(200);
+  assert.equal(mine.body.data.reviews.length, 1);
+});
+
 test("only a delivered order owned by the signed-in buyer makes a product eligible", async () => {
   const product = await firstProduct();
   const { agent, user } = await loginAs();

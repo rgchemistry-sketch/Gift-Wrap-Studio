@@ -7,46 +7,8 @@ import Spinner from 'react-bootstrap/Spinner';
 import Icon from './Icon';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
-
-const sdkPromises = new Map();
-
-function loadScript(key, src, attributes = {}) {
-  if (sdkPromises.has(key)) return sdkPromises.get(key);
-  const promise = new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-auth-sdk="${key}"]`);
-    if (existing?.dataset.loaded === 'true') {
-      resolve();
-      return;
-    }
-    const script = existing || document.createElement('script');
-    const loaded = () => {
-      script.dataset.loaded = 'true';
-      resolve();
-    };
-    script.addEventListener('load', loaded, { once: true });
-    script.addEventListener('error', () => {
-      script.remove();
-      reject(new Error(`${key} sign-in could not load.`));
-    }, { once: true });
-    if (!existing) {
-      script.src = src;
-      script.async = true;
-      script.defer = true;
-      script.dataset.authSdk = key;
-      Object.entries(attributes).forEach(([name, value]) => script.setAttribute(name, value));
-      document.head.appendChild(script);
-    }
-  }).catch((error) => {
-    sdkPromises.delete(key);
-    throw error;
-  });
-  sdkPromises.set(key, promise);
-  return promise;
-}
-
-function SocialMark() {
-  return <span className="social-mark social-mark--google" aria-hidden="true">G</span>;
-}
+import { loadAuthScript } from '../utils/auth-sdk';
+import '../auth-loading.css';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -78,9 +40,11 @@ export default function AuthModal() {
     authenticateDemo,
   } = useAuth();
   const { notify } = useShop();
-  const googleButtonRef = useRef(null);
+  const [googleTarget, setGoogleTarget] = useState(null);
   const googleInitializedRef = useRef(false);
+  const acceptsGoogleCredentialRef = useRef(false);
   const authenticateGoogleRef = useRef(authenticateGoogle);
+  const authenticatingRef = useRef(authenticating);
   const authIntentRef = useRef(authIntent);
   const notifyRef = useRef(notify);
   const codeInputRef = useRef(null);
@@ -100,6 +64,8 @@ export default function AuthModal() {
   const [resendSeconds, setResendSeconds] = useState(0);
   const [entrySubmitted, setEntrySubmitted] = useState(false);
   const [touchedFields, setTouchedFields] = useState({ name: false, email: false });
+  const [lastOpenChallenge, setLastOpenChallenge] = useState(emailChallenge);
+  const [lastOpenGoogleBusy, setLastOpenGoogleBusy] = useState(false);
 
   const providers = authStatus.providers || {};
   const emailValid = emailPattern.test(email.trim());
@@ -107,15 +73,11 @@ export default function AuthModal() {
   const googleClientConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
   const googleConfigured = googleClientConfigured && (providers.google || authStatus.error);
   const emailConfigured = providers.email || authStatus.error;
-  const uiBusy = authenticating || Boolean(providerStarting);
-  const providerErrors = Object.entries(sdkErrors).filter(([, message]) => Boolean(message));
-  const googleUnavailableCopy = sdkErrors.google
-    ? 'Unavailable'
-    : authStatus.error
-      ? 'Couldn’t check'
-      : googleClientConfigured
-        ? 'Not configured'
-        : 'Unavailable in this build';
+  const uiBusy = authenticating || Boolean(providerStarting) || !authModalOpen;
+  const activeGoogleBusy = providerStarting === 'google' || authMethod === 'google';
+  const googleBusy = activeGoogleBusy || (!authModalOpen && lastOpenGoogleBusy);
+  const googleReady = !authStatus.loading && googleConfigured && sdkReady.google && !sdkErrors.google;
+  const visibleEmailChallenge = authModalOpen ? emailChallenge : lastOpenChallenge;
 
   const focusActiveInput = useCallback(() => {
     if (emailChallenge) codeInputRef.current?.focus();
@@ -125,9 +87,10 @@ export default function AuthModal() {
 
   useEffect(() => {
     authenticateGoogleRef.current = authenticateGoogle;
+    authenticatingRef.current = authenticating;
     authIntentRef.current = authIntent;
     notifyRef.current = notify;
-  }, [authenticateGoogle, authIntent, notify]);
+  }, [authenticateGoogle, authenticating, authIntent, notify]);
 
   const beginProviderFlow = useCallback((provider) => {
     if (providerBusyRef.current) return 0;
@@ -145,6 +108,7 @@ export default function AuthModal() {
   }, []);
 
   const requestClose = useCallback(() => {
+    acceptsGoogleCredentialRef.current = false;
     providerFlowRef.current += 1;
     providerBusyRef.current = false;
     closeAuth();
@@ -152,6 +116,7 @@ export default function AuthModal() {
 
   const chooseIntent = (intent) => {
     if (uiBusy) return;
+    acceptsGoogleCredentialRef.current = false;
     providerFlowRef.current += 1;
     providerBusyRef.current = false;
     openAuth('', intent);
@@ -171,19 +136,35 @@ export default function AuthModal() {
     if (!authModalOpen) {
       providerFlowRef.current += 1;
       providerBusyRef.current = false;
-      setProviderStarting('');
-      setEmail('');
-      setName('');
-      setCode('');
-      setLocalError('');
-      setResendSeconds(0);
-      cooldownEmailRef.current = '';
-      setEntrySubmitted(false);
-      setTouchedFields({ name: false, email: false });
+      acceptsGoogleCredentialRef.current = false;
     }
   }, [authModalOpen]);
 
   useEffect(() => {
+    if (authModalOpen) {
+      setLastOpenChallenge(emailChallenge);
+      setLastOpenGoogleBusy(activeGoogleBusy);
+    }
+  }, [activeGoogleBusy, authModalOpen, emailChallenge]);
+
+  const resetAfterClose = () => {
+    if (authModalOpen) return;
+    setProviderStarting('');
+    setEmail('');
+    setName('');
+    setCode('');
+    setLocalError('');
+    setResendSeconds(0);
+    setSdkReady({ google: false });
+    cooldownEmailRef.current = '';
+    setEntrySubmitted(false);
+    setTouchedFields({ name: false, email: false });
+    setLastOpenChallenge(null);
+    setLastOpenGoogleBusy(false);
+  };
+
+  useEffect(() => {
+    if (!authModalOpen) return undefined;
     setCode('');
     setLocalError('');
     setEntrySubmitted(false);
@@ -197,26 +178,31 @@ export default function AuthModal() {
   }, [authIntent, authModalOpen, emailChallenge, focusActiveInput]);
 
   useEffect(() => {
-    if (authStatus.loading || !authModalOpen || !googleConfigured || !googleButtonRef.current) return undefined;
+    acceptsGoogleCredentialRef.current = false;
+    if (authStatus.loading || !authModalOpen || emailChallenge || !googleConfigured || !googleTarget) return undefined;
     let active = true;
     let resizeTimer;
     let repaintOnResize;
     let paintedWidth = 0;
-    const markGoogleUnavailable = () => {
+    let stopWatchingButton = () => {};
+    setSdkReady((current) => ({ ...current, google: false }));
+    setSdkErrors((current) => ({ ...current, google: '' }));
+    const markGoogleUnavailable = (message = 'Google sign-in could not load. Please try again.') => {
       if (!active) return;
+      acceptsGoogleCredentialRef.current = false;
       setSdkReady((current) => ({ ...current, google: false }));
-      setSdkErrors((current) => ({ ...current, google: 'Google sign-in could not load.' }));
+      setSdkErrors((current) => ({ ...current, google: message }));
     };
     const renderGoogle = async () => {
       try {
-        await loadScript('google', 'https://accounts.google.com/gsi/client');
-        if (!active || !googleButtonRef.current) return;
-        if (!window.google?.accounts?.id) throw new Error('Google Identity Services was unavailable.');
+        await loadAuthScript('google', 'https://accounts.google.com/gsi/client');
+        if (!active || !googleTarget.isConnected) return;
+        if (!window.google?.accounts?.id) throw new Error('Google sign-in is unavailable. Please try again.');
         if (!googleInitializedRef.current) {
           window.google.accounts.id.initialize({
             client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
             callback: ({ credential }) => {
-              if (!credential) return;
+              if (!credential || !acceptsGoogleCredentialRef.current || authenticatingRef.current) return;
               const flowId = beginProviderFlow('google');
               if (!flowId) return;
               authenticateGoogleRef.current(credential)
@@ -230,18 +216,59 @@ export default function AuthModal() {
           googleInitializedRef.current = true;
         }
         const paintButton = ({ force = false } = {}) => {
-          const target = googleButtonRef.current;
-          if (!active || !target) return false;
-          const availableWidth = Math.floor(target.getBoundingClientRect().width);
+          if (!active || !googleTarget.isConnected) return;
+          const availableWidth = Math.floor(googleTarget.getBoundingClientRect().width);
           const nextWidth = Math.min(400, Math.max(200, availableWidth || 320));
-          if (!force && target.contains(document.activeElement)) return true;
-          if (!force && paintedWidth && Math.abs(nextWidth - paintedWidth) < 2) return true;
+          if (!force && googleTarget.contains(document.activeElement)) return;
+          if (!force && paintedWidth && Math.abs(nextWidth - paintedWidth) < 2) return;
+          stopWatchingButton();
+          acceptsGoogleCredentialRef.current = false;
+          setSdkReady((current) => ({ ...current, google: false }));
+          let settled = false;
+          let frame = null;
+          let timeout;
+          const observer = new MutationObserver(() => checkButton());
+          const clearWatchers = () => {
+            observer.disconnect();
+            window.clearTimeout(timeout);
+            frame?.removeEventListener('load', buttonReady);
+          };
+          const buttonReady = () => {
+            if (settled || !active || !googleTarget.isConnected) return;
+            settled = true;
+            clearWatchers();
+            acceptsGoogleCredentialRef.current = true;
+            setSdkReady((current) => ({ ...current, google: true }));
+            setSdkErrors((current) => ({ ...current, google: '' }));
+          };
+          const checkButton = () => {
+            const button = googleTarget.querySelector('button, [role="button"]');
+            if (button && button.getBoundingClientRect().height > 0) {
+              buttonReady();
+              return;
+            }
+            const nextFrame = googleTarget.querySelector('iframe');
+            if (nextFrame && nextFrame !== frame) {
+              frame?.removeEventListener('load', buttonReady);
+              frame = nextFrame;
+              frame.addEventListener('load', buttonReady, { once: true });
+            }
+          };
+          stopWatchingButton = () => {
+            settled = true;
+            clearWatchers();
+          };
+          timeout = window.setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            clearWatchers();
+            markGoogleUnavailable('Google sign-in took too long. You can retry or use email below.');
+          }, 8_000);
+          observer.observe(googleTarget, { childList: true, subtree: true });
           try {
-            target.replaceChildren();
-            window.google.accounts.id.renderButton(target, {
+            googleTarget.replaceChildren();
+            window.google.accounts.id.renderButton(googleTarget, {
               theme: 'outline',
-              // Google does not expose a direct personalization switch. Its
-              // documented medium size always uses the generic button label.
               size: 'medium',
               shape: 'rectangular',
               text: authIntent === 'signup' ? 'signup_with' : 'continue_with',
@@ -249,31 +276,31 @@ export default function AuthModal() {
               width: nextWidth,
             });
             paintedWidth = nextWidth;
-            return true;
+            checkButton();
           } catch {
+            stopWatchingButton();
             markGoogleUnavailable();
-            return false;
           }
         };
-        if (!paintButton({ force: true })) return;
+        paintButton({ force: true });
         repaintOnResize = () => {
           window.clearTimeout(resizeTimer);
           resizeTimer = window.setTimeout(paintButton, 120);
         };
         window.addEventListener('resize', repaintOnResize);
-        setSdkReady((current) => ({ ...current, google: true }));
-        setSdkErrors((current) => ({ ...current, google: '' }));
-      } catch {
-        markGoogleUnavailable();
+      } catch (error) {
+        markGoogleUnavailable(error.message);
       }
     };
-    renderGoogle();
+    void renderGoogle();
     return () => {
       active = false;
+      acceptsGoogleCredentialRef.current = false;
+      stopWatchingButton();
       window.clearTimeout(resizeTimer);
       if (repaintOnResize) window.removeEventListener('resize', repaintOnResize);
     };
-  }, [authIntent, authModalOpen, authStatus.loading, beginProviderFlow, finishProviderFlow, googleConfigured, sdkRetry]);
+  }, [authIntent, authModalOpen, authStatus.loading, beginProviderFlow, emailChallenge, finishProviderFlow, googleConfigured, googleTarget, sdkRetry]);
 
   useEffect(() => {
     if (!emailChallenge) return undefined;
@@ -371,6 +398,7 @@ export default function AuthModal() {
       show={authModalOpen}
       onHide={requestClose}
       onEntered={focusActiveInput}
+      onExited={resetAfterClose}
       centered
       scrollable
       restoreFocus
@@ -384,7 +412,7 @@ export default function AuthModal() {
         </button>
       </Modal.Header>
       <Modal.Body>
-        {!emailChallenge ? (
+        {!visibleEmailChallenge ? (
           <div className="auth-dialog__entry">
             <div className="auth-modal__topline">
               <div className="auth-modal__brand">
@@ -420,30 +448,35 @@ export default function AuthModal() {
                 <span>{localError || authMessage}</span>
               </Alert>
             )}
-            {authStatus.loading && <Alert variant="info" className="soft-alert auth-service-note" role="status"><Spinner size="sm" /> Checking secure sign-in options…</Alert>}
-            {(authStatus.error || providerErrors.length > 0) && !localError && (
+            {authStatus.error && !localError && (
               <Alert variant="warning" className="soft-alert auth-service-note" role="alert">
-                <Icon name="shield" /> {authStatus.error
-                  ? 'We couldn’t check sign-in availability. You can still request an email code.'
-                  : `${providerErrors.map(([provider]) => provider[0].toUpperCase() + provider.slice(1)).join(', ')} sign-in could not load.`}{' '}
+                <Icon name="shield" /> We couldn’t check sign-in availability. You can still request an email code.{' '}
                 <button type="button" className="plain-link" disabled={uiBusy} onClick={retryProviderSdks}>Retry</button>
               </Alert>
             )}
 
             <div className="social-auth-list" role="group" aria-label="Google sign-in option">
               <div
-                className={`social-auth-button social-auth-button--google ${googleConfigured && !sdkErrors.google ? 'is-ready' : ''} ${authStatus.loading || !googleConfigured || sdkErrors.google || (uiBusy && providerStarting !== 'google' && authMethod !== 'google') ? 'is-disabled' : ''}`}
-                aria-busy={providerStarting === 'google' || authMethod === 'google'}
-                aria-disabled={uiBusy || authStatus.loading || !googleConfigured || Boolean(sdkErrors.google)}
-                inert={uiBusy ? true : undefined}
+                className={`auth-google-slot${googleReady && !googleBusy ? ' is-ready' : ''}`}
               >
-                {authStatus.loading
-                  ? <><SocialMark /><span>Checking Google…</span></>
-                  : googleConfigured && !sdkErrors.google
-                    ? <div className="google-signin-target" ref={googleButtonRef} />
-                    : <><SocialMark /><span>Continue with Google</span><small>{googleUnavailableCopy}</small></>}
-                {googleConfigured && !sdkReady.google && !sdkErrors.google && !authStatus.loading && <span className="social-auth-loading" role="status">Preparing Google…</span>}
-                {(providerStarting === 'google' || authMethod === 'google') && <span className="social-auth-busy" role="status" aria-label="Signing in with Google"><Spinner size="sm" /></span>}
+                <div
+                  className="google-signin-target"
+                  ref={setGoogleTarget}
+                  aria-hidden={!googleReady || googleBusy || (authModalOpen && uiBusy) ? true : undefined}
+                  aria-busy={!googleReady || googleBusy}
+                  inert={!googleReady || uiBusy ? true : undefined}
+                />
+                {googleBusy ? (
+                  <div className="auth-google-status" role="status"><Spinner size="sm" aria-hidden="true" /><span><strong>Signing you in…</strong><small>Verifying your secure account</small></span></div>
+                ) : authStatus.loading ? (
+                  <div className="auth-google-status" role="status"><Spinner size="sm" aria-hidden="true" /><span>Checking sign-in options…</span></div>
+                ) : sdkErrors.google && googleConfigured ? (
+                  <div className="auth-google-status auth-google-status--error" role="status"><span>Google couldn’t load.</span><button type="button" className="plain-link" disabled={uiBusy} onClick={retryProviderSdks}>Retry</button></div>
+                ) : !googleConfigured ? (
+                  <div className="auth-google-status" role="status"><span>Google sign-in is unavailable. Use email below.</span></div>
+                ) : !googleReady ? (
+                  <div className="auth-google-status" role="status"><Spinner size="sm" aria-hidden="true" /><span>Loading Google sign-in…</span></div>
+                ) : null}
               </div>
             </div>
 
@@ -527,15 +560,15 @@ export default function AuthModal() {
             <div className="auth-modal__mark" aria-hidden="true"><Icon name="mail" size={25} /></div>
             <p className="eyebrow">Check your inbox</p>
             <h2 id="auth-dialog-title">One small code, then you’re in.</h2>
-            <p className="muted-copy" id="auth-dialog-description">Enter the 6-digit verification code sent to <strong>{emailChallenge.emailMasked || emailChallenge.email || email}</strong>.</p>
+            <p className="muted-copy" id="auth-dialog-description">Enter the 6-digit verification code sent to <strong>{visibleEmailChallenge.emailMasked || visibleEmailChallenge.email || email}</strong>.</p>
             {(authMessage || localError) && (
               <Alert variant="danger" className="soft-alert auth-otp__alert" role="alert">
                 <Icon name="shield" size={16} />
                 <span>{localError || authMessage}</span>
               </Alert>
             )}
-            {emailChallenge.previewCode && (
-              <Alert variant="info" className="soft-alert auth-preview-code"><strong>Local preview code:</strong> <code>{emailChallenge.previewCode}</code></Alert>
+            {visibleEmailChallenge.previewCode && (
+              <Alert variant="info" className="soft-alert auth-preview-code"><strong>Local preview code:</strong> <code>{visibleEmailChallenge.previewCode}</code></Alert>
             )}
             <Form.Group controlId="account-email-code">
               <Form.Label>Email verification code</Form.Label>
@@ -554,7 +587,7 @@ export default function AuthModal() {
                 aria-describedby="email-code-help"
                 disabled={uiBusy}
               />
-              <Form.Text id="email-code-help">The code expires in {emailChallenge.expiresInMinutes || 10} minutes and works once.</Form.Text>
+              <Form.Text id="email-code-help">The code expires in {visibleEmailChallenge.expiresInMinutes || 10} minutes and works once.</Form.Text>
             </Form.Group>
             <Button type="submit" className="button-burgundy w-100" disabled={uiBusy || code.length !== 6}>
               {authenticating ? <><Spinner size="sm" /> Verifying…</> : 'Verify and continue'}

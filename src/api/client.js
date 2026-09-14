@@ -84,7 +84,8 @@ function request(path, options = {}) {
     });
   }
 
-  const key = `${API_BASE}${path}`;
+  const expectedOwner = new Headers(options.headers || {}).get('X-Expected-User-Id') || '';
+  const key = `${API_BASE}${path}\nowner=${expectedOwner}`;
   const activeRequest = inFlightGetRequests.get(key);
   if (activeRequest) return activeRequest;
 
@@ -463,20 +464,23 @@ export const api = {
     body: payload,
     headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
   }),
-  getBuyerOrders: (params = {}) => {
+  getBuyerOrders: (params = {}, expectedUserId) => {
     const query = searchQuery(params);
-    return request(`/orders/my${query ? `?${query}` : ''}`);
+    return request(`/orders/my${query ? `?${query}` : ''}`, {
+      cache: 'no-store',
+      headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
+    });
   },
 
   // The account page has no pager, so fetch every request rather than stopping at the
   // server's default page and silently hiding older orders.
-  async getAllBuyerOrders() {
+  async getAllBuyerOrders(expectedUserId) {
     const orders = [];
     let page = 1;
     let totalPages;
 
     do {
-      const result = await api.getBuyerOrders({ page, limit: 50 });
+      const result = await api.getBuyerOrders({ page, limit: 50 }, expectedUserId);
       orders.push(...(result.data || result.orders || []));
       totalPages = Number(result.meta?.totalPages || 1);
       page += 1;
@@ -554,8 +558,14 @@ export const api = {
   getWelcomeOffer: () => request('/offers/welcome'),
   getPublicSettings: () => request('/settings'),
   getReviews: () => request('/reviews'),
-  getMyReviews: () => request('/reviews/mine'),
-  getEligibleReviews: () => request('/reviews/eligible'),
+  getMyReviews: (expectedUserId) => request('/reviews/mine', {
+    cache: 'no-store',
+    headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
+  }),
+  getEligibleReviews: (expectedUserId) => request('/reviews/eligible', {
+    cache: 'no-store',
+    headers: expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {},
+  }),
   createReview: (payload, expectedUserId) => request('/reviews', {
     method: 'POST',
     body: payload,

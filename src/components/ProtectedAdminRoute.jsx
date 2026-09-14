@@ -2,14 +2,14 @@ import { Navigate, useLocation } from 'react-router-dom';
 import Button from 'react-bootstrap/Button';
 import Container from 'react-bootstrap/Container';
 import Icon from './Icon';
-import { RouteLoader } from './Feedback';
+import { SessionLoader } from './Feedback';
 import { useAuth } from '../context/AuthContext';
 
 export default function ProtectedAdminRoute({ children }) {
   const { user, loading, openAuth } = useAuth();
   const location = useLocation();
 
-  if (loading) return <RouteLoader />;
+  if (loading) return <SessionLoader workspace />;
   if (!user) {
     return (
       <Container className="access-state page-section">

@@ -59,6 +59,7 @@ reviewsRouter.get(
 reviewsRouter.get(
   "/mine",
   authenticate,
+  requireExpectedUser,
   asyncHandler(async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.json({ data: { reviews: await listOwnProductReviews(request.user.id) } });
@@ -68,6 +69,7 @@ reviewsRouter.get(
 reviewsRouter.get(
   "/eligible",
   authenticate,
+  requireExpectedUser,
   asyncHandler(async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.json({ data: { products: await listEligibleReviewProducts(request.user.id) } });

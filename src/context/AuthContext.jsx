@@ -6,6 +6,7 @@ import {
   saveScopedDraft,
 } from '../utils/scoped-draft';
 import { stripCustomReferenceImages } from '../utils/custom-reference-upload';
+import { createSessionSynchronizer, sameSessionUser } from '../utils/auth-session';
 
 const AuthContext = createContext(null);
 const LEGACY_USER_KEY = 'gnw-user';
@@ -44,7 +45,9 @@ export function AuthProvider({ children }) {
   const [emailChallenge, setEmailChallenge] = useState(null);
   const authGenerationRef = useRef(0);
   const authInFlightRef = useRef(0);
-  const sessionCheckRef = useRef(0);
+  const sessionSynchronizerRef = useRef(null);
+  const initialSessionPendingRef = useRef(true);
+  const signingOutRef = useRef(false);
   const authStatusRequestedRef = useRef(false);
   const pendingAuthActionRef = useRef(null);
   const authChannelRef = useRef(null);
@@ -67,8 +70,10 @@ export function AuthProvider({ children }) {
         );
       }
     }
-    sessionUserRef.current = normalizedUser;
-    setUser(normalizedUser);
+    if (!sameSessionUser(sessionUserRef.current, normalizedUser)) {
+      sessionUserRef.current = normalizedUser;
+      setUser(normalizedUser);
+    }
     setSessionInvalid(false);
     // Older builds cached account PII in localStorage. Sessions now live only in
     // the secure HttpOnly cookie, so remove that legacy copy whenever auth runs.
@@ -78,6 +83,29 @@ export function AuthProvider({ children }) {
       // Secure cookie sessions continue to work when browser storage is blocked.
     }
   }, []);
+
+  useEffect(() => {
+    const synchronizer = createSessionSynchronizer({
+      readSession: () => api.getCurrentUser(),
+      canCheck: () => !authInFlightRef.current && !signingOutRef.current,
+      onResult: (result) => updateUser(userFrom(result)),
+      onError: (error) => {
+        if (initialSessionPendingRef.current || error.status === 401 || error.status === 403) {
+          updateUser(null);
+        }
+        if (initialSessionPendingRef.current && error.status !== 401 && error.status !== 403) {
+          setAuthMessage('We could not verify your saved session. Please sign in again.');
+          setAuthMessageTone('error');
+        }
+      },
+      onSettled: () => {
+        initialSessionPendingRef.current = false;
+        setLoading(false);
+      },
+    });
+    sessionSynchronizerRef.current = synchronizer;
+    return () => synchronizer.invalidate();
+  }, [updateUser]);
 
   const publishAuthChange = useCallback(() => {
     if (!tabIdRef.current) {
@@ -101,11 +129,16 @@ export function AuthProvider({ children }) {
     pendingAuthActionRef.current = null;
     if (!pending) return;
     const nextUserId = String(nextUser?.id || '');
+    const generation = authGenerationRef.current;
+    const stillCurrent = () => generation === authGenerationRef.current
+      && nextUserId === String(sessionUserRef.current?.id || '')
+      && !authInFlightRef.current
+      && !signingOutRef.current;
     if (pending.expectedUserId && pending.expectedUserId !== nextUserId) {
       if (pending.onAccountMismatch) {
         window.setTimeout(() => {
           Promise.resolve()
-            .then(() => pending.onAccountMismatch(nextUser))
+            .then(() => { if (stillCurrent()) return pending.onAccountMismatch(nextUser); })
             .catch(() => {});
         }, 0);
       }
@@ -113,7 +146,7 @@ export function AuthProvider({ children }) {
     }
     window.setTimeout(() => {
       Promise.resolve()
-        .then(() => pending.action(nextUser))
+        .then(() => { if (stillCurrent()) return pending.action(nextUser); })
         // The initiating page owns operation-specific errors and keeps its draft.
         .catch(() => {});
     }, 0);
@@ -145,76 +178,19 @@ export function AuthProvider({ children }) {
     completePendingAuthAction(user);
   }, [completePendingAuthAction, sessionInvalid, user]);
 
-  const synchronizeSession = useCallback(async () => {
-    if (authInFlightRef.current) return;
-    const generation = authGenerationRef.current;
-    const sessionCheck = ++sessionCheckRef.current;
-    try {
-      const result = await api.getCurrentUser();
-      if (
-        generation !== authGenerationRef.current
-        || sessionCheck !== sessionCheckRef.current
-      ) return;
-      const nextUser = userFrom(result);
-      updateUser(nextUser);
-    } catch (error) {
-      if (
-        generation !== authGenerationRef.current
-        || sessionCheck !== sessionCheckRef.current
-      ) return;
-      if (error.status === 401 || error.status === 403) updateUser(null);
-    } finally {
-      if (
-        generation === authGenerationRef.current
-        && sessionCheck === sessionCheckRef.current
-      ) setLoading(false);
-    }
-  }, [updateUser]);
+  const synchronizeSession = useCallback(() => sessionSynchronizerRef.current?.check() || Promise.resolve(), []);
 
   useEffect(() => {
-    let active = true;
-    const generation = authGenerationRef.current;
-    const sessionCheck = ++sessionCheckRef.current;
     try {
       window.localStorage.removeItem(LEGACY_USER_KEY);
     } catch {
       // The HttpOnly session does not depend on local storage.
     }
-    api
-      .getCurrentUser()
-      .then((result) => {
-        if (
-          active
-          && generation === authGenerationRef.current
-          && sessionCheck === sessionCheckRef.current
-        ) {
-          const nextUser = userFrom(result);
-          updateUser(nextUser);
-        }
-      })
-      .catch((error) => {
-        if (
-          !active
-          || generation !== authGenerationRef.current
-          || sessionCheck !== sessionCheckRef.current
-        ) return;
-        updateUser(null);
-        if (error.status !== 401 && error.status !== 403) {
-          setAuthMessage('We could not verify your saved session. Please sign in again.');
-          setAuthMessageTone('error');
-        }
-      })
-      .finally(() => {
-        if (
-          active
-          && generation === authGenerationRef.current
-          && sessionCheck === sessionCheckRef.current
-        ) setLoading(false);
-      });
+    void synchronizeSession();
     return () => {
-      active = false;
+      sessionSynchronizerRef.current.invalidate();
     };
-  }, [updateUser]);
+  }, [synchronizeSession]);
 
   useEffect(() => {
     let channel;
@@ -317,6 +293,7 @@ export function AuthProvider({ children }) {
   }, [openAuth, sessionInvalid, user]);
 
   const closeAuth = useCallback(() => {
+    const interruptedAuthentication = Boolean(authInFlightRef.current);
     authGenerationRef.current += 1;
     authInFlightRef.current = 0;
     localAuthCompletedForRef.current = '';
@@ -327,10 +304,12 @@ export function AuthProvider({ children }) {
     setEmailChallenge(null);
     setAuthMethod('');
     pendingAuthActionRef.current = null;
-  }, []);
+    if (interruptedAuthentication) sessionSynchronizerRef.current.invalidate();
+    if (interruptedAuthentication || initialSessionPendingRef.current) void synchronizeSession();
+  }, [synchronizeSession]);
 
   const runAuthentication = useCallback(async (method, operation, fallbackMessage) => {
-    if (authInFlightRef.current) {
+    if (authInFlightRef.current || signingOutRef.current) {
       const busyError = new Error('Another sign-in is already in progress. Please wait a moment.');
       setAuthMessage(busyError.message);
       setAuthMessageTone('error');
@@ -338,6 +317,7 @@ export function AuthProvider({ children }) {
     }
     const generation = ++authGenerationRef.current;
     authInFlightRef.current = generation;
+    sessionSynchronizerRef.current.invalidate();
     setAuthMessage('');
     setAuthMessageTone('');
     setAuthenticating(true);
@@ -372,10 +352,17 @@ export function AuthProvider({ children }) {
       if (generation === authGenerationRef.current) {
         setAuthenticating(false);
         setAuthMethod('');
+        initialSessionPendingRef.current = false;
         setLoading(false);
+      } else if (!authInFlightRef.current && !signingOutRef.current) {
+        // A closed dialog cannot undo a cookie already set by an in-flight
+        // request. Reconcile it without resuming the canceled protected action.
+        // A check started when the dialog closed may have read the old cookie.
+        sessionSynchronizerRef.current.invalidate();
+        void synchronizeSession();
       }
     }
-  }, [publishAuthChange, updateUser]);
+  }, [publishAuthChange, synchronizeSession, updateUser]);
 
   const authenticateGoogle = useCallback(
     (credential) => runAuthentication(
@@ -387,7 +374,7 @@ export function AuthProvider({ children }) {
   );
 
   const startEmailAuthentication = useCallback(async ({ email, name, intent }) => {
-    if (authInFlightRef.current) {
+    if (authInFlightRef.current || signingOutRef.current) {
       const busyError = new Error('Another sign-in is already in progress. Please wait a moment.');
       setAuthMessage(busyError.message);
       setAuthMessageTone('error');
@@ -424,9 +411,10 @@ export function AuthProvider({ children }) {
         authInFlightRef.current = 0;
         setAuthenticating(false);
         setAuthMethod('');
+        if (initialSessionPendingRef.current) void synchronizeSession();
       }
     }
-  }, []);
+  }, [synchronizeSession]);
 
   const verifyEmailAuthentication = useCallback(async (code) => {
     if (!emailChallenge?.challengeId) throw new Error('Request a new verification code first.');
@@ -453,7 +441,10 @@ export function AuthProvider({ children }) {
   );
 
   const signOut = useCallback(async () => {
+    if (signingOutRef.current) return false;
     const generation = ++authGenerationRef.current;
+    signingOutRef.current = true;
+    sessionSynchronizerRef.current.invalidate();
     authInFlightRef.current = 0;
     localAuthCompletedForRef.current = '';
     setAuthenticating(false);
@@ -474,12 +465,17 @@ export function AuthProvider({ children }) {
       }
       throw error;
     } finally {
+      signingOutRef.current = false;
+      setSigningOut(false);
+      initialSessionPendingRef.current = false;
+      setLoading(false);
       if (generation === authGenerationRef.current) {
-        setSigningOut(false);
-        setLoading(false);
+        sessionSynchronizerRef.current.invalidate();
+      } else {
+        void synchronizeSession();
       }
     }
-  }, [publishAuthChange, updateUser]);
+  }, [publishAuthChange, synchronizeSession, updateUser]);
 
   const authenticatedUser = sessionInvalid ? null : user;
   const sessionOwnerId = String(user?.id || '');

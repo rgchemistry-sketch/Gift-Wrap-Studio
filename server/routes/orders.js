@@ -28,6 +28,7 @@ ordersRouter.post(
 
 ordersRouter.get(
   "/my",
+  requireExpectedUser,
   validate({ query: orderQuerySchema }),
   asyncHandler(async (request, response) => {
     const result = await listBuyerOrders(request.user.id, request.validated.query);

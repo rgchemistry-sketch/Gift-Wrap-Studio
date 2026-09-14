@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
@@ -11,7 +11,8 @@ import Dropdown from 'react-bootstrap/Dropdown';
 import Icon from './Icon';
 import OfferPopup from './OfferPopup';
 import { FloatingWhatsAppButton } from './StorefrontInquiry';
-import { ToastStack } from './Feedback';
+import { RouteLoader, ToastStack } from './Feedback';
+import AuthModal from './AuthModal';
 import { useAuth } from '../context/AuthContext';
 import { useShop } from '../context/ShopContext';
 import { routeScrollIntent } from '../utils/route-scroll';
@@ -27,7 +28,6 @@ const navItems = [
 ];
 
 const CANONICAL_ORIGIN = 'https://www.giftnwrapstudio.com';
-const AuthModal = lazy(() => import('./AuthModal'));
 
 const pageMetaFor = (pathname) => {
   if (pathname === '/') return ['Home', 'Gift N Wrap Studio · Handmade Resin Art'];
@@ -87,7 +87,8 @@ export default function Layout() {
   const navigate = useNavigate();
   const navigationType = useNavigationType();
   const { cartCount, notify, studioSettings } = useShop();
-  const { user, openAuth, signOut, signingOut, authModalOpen } = useAuth();
+  const { user, loading: sessionLoading, authenticating, openAuth, signOut, signingOut } = useAuth();
+  const checkingAccount = !user && (sessionLoading || authenticating);
   const announcement = studioSettings?.announcement || {};
   const contact = resolveStudioContact(studioSettings);
   const floatingWhatsAppPhone = contact.phone || DEFAULT_STUDIO_CONTACT.phone;
@@ -324,7 +325,12 @@ export default function Layout() {
               <button ref={searchToggleRef} className="icon-button" type="button" onClick={() => setSearchOpen((value) => { if (value) setSearchPrompt(false); return !value; })} aria-label={searchOpen ? 'Close product search' : 'Search products'} aria-expanded={searchOpen} aria-controls="header-product-search">
                 <Icon name={searchOpen ? 'close' : 'search'} />
               </button>
-              {user ? (
+              {checkingAccount ? (
+                <div className="account-session-pending d-none d-sm-flex" role="status">
+                  <Icon name="user" size={18} /><span>{authenticating ? 'Signing in…' : 'Your account'}</span>
+                  <i aria-hidden="true" />
+                </div>
+              ) : user ? (
                 <Dropdown align="end" className="account-menu d-none d-sm-block">
                   <Dropdown.Toggle className="account-menu__toggle" aria-label={`Account menu for ${user.name || user.email}`}>
                     {user.avatar ? <img src={user.avatar} alt="" referrerPolicy="no-referrer" /> : <Icon name="user" />}
@@ -383,7 +389,9 @@ export default function Layout() {
         </Offcanvas.Header>
         <Offcanvas.Body>
           <div className="mobile-menu__account" aria-label="Account actions">
-            {user ? (
+            {checkingAccount ? (
+              <div className="mobile-account-pending" role="status"><Icon name="user" /><div><strong>{authenticating ? 'Signing you in…' : 'Checking your account…'}</strong><small>You can keep browsing while we connect.</small></div></div>
+            ) : user ? (
               <button type="button" className="mobile-menu__account-main" onClick={() => { setMenuOpen(false); navigate('/account'); }}>
                 <span className="mobile-menu__account-icon">{user.avatar ? <img src={user.avatar} alt="" referrerPolicy="no-referrer" /> : <Icon name="user" />}</span>
                 <span><strong>My account</strong><small>{user.name || user.email}</small></span>
@@ -425,12 +433,12 @@ export default function Layout() {
       {location.pathname === '/' && <FloatingWhatsAppButton phone={floatingWhatsAppPhone} />}
 
       <main ref={mainContentRef} id="main-content" tabIndex="-1">
-        <Outlet />
+        <Suspense fallback={<RouteLoader />}><Outlet /></Suspense>
       </main>
 
       <Footer settings={studioSettings} />
-      {authModalOpen && <Suspense fallback={null}><AuthModal /></Suspense>}
-      <OfferPopup />
+      <AuthModal />
+      <OfferPopup paused={menuOpen || searchOpen} />
       <ToastStack aboveBuyBar={location.pathname.startsWith('/product/')} />
     </div>
   );

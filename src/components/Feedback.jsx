@@ -3,6 +3,7 @@ import ToastContainer from 'react-bootstrap/ToastContainer';
 import Icon from './Icon';
 import { useShop } from '../context/ShopContext';
 import { isToastActionAvailable } from '../utils/toast-actions';
+import '../session-loading.css';
 
 const toastPresentation = {
   success: {
@@ -165,10 +166,27 @@ export function ToastStack({ aboveBuyBar = false }) {
   );
 }
 
-export function RouteLoader() {
+export function RouteLoader({ label = 'Opening your page…' }) {
   return (
-    <div className="route-loader" role="status" aria-label="Loading page">
-      <span /><span /><span />
+    <div className="page-loading" role="status" aria-live="polite">
+      <Icon name="spark" size={25} />
+      <p>{label}</p>
+      <i className="session-loading__progress" aria-hidden="true" />
+    </div>
+  );
+}
+
+export function SessionLoader({ workspace = false }) {
+  return (
+    <div className="session-loading" role="status" aria-live="polite">
+      <div className="session-loading__card">
+        <div className="session-loading__mark"><Icon name="lock" size={22} /></div>
+        <div>
+          <strong>{workspace ? 'Opening your studio desk…' : 'Checking your secure session…'}</strong>
+          <p>{workspace ? 'Verifying your administrator access.' : 'Your account will be ready in a moment.'}</p>
+          <i className="session-loading__progress" aria-hidden="true" />
+        </div>
+      </div>
     </div>
   );
 }
