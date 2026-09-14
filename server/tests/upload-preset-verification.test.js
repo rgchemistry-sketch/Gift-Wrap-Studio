@@ -12,7 +12,7 @@ process.env.CLOUDINARY_UPLOAD_PRESET = "locked-test-preset";
 process.env.VERIFY_CLOUDINARY_UPLOAD_PRESET = "true";
 delete process.env.MONGODB_URI;
 
-const [{ default: app }, { resetMemoryStore }, uploadRoutes] = await Promise.all([
+const [{ default: app }, { memoryStore, resetMemoryStore }, uploadRoutes] = await Promise.all([
   import("../app.js"),
   import("../lib/memory-store.js"),
   import("../routes/uploads.js"),
@@ -109,4 +109,30 @@ test("a transient upload-preset verification failure can recover on the same ins
     .expect(200);
   assert.ok(recovered.body.data.signature);
   assert.equal(attempts, 2);
+});
+
+test("a stalled preset check times out without reserving an upload and can recover", async (context) => {
+  const originalSetTimeout = globalThis.setTimeout;
+  context.mock.method(globalThis, "setTimeout", (callback, delay, ...args) =>
+    originalSetTimeout(callback, delay === 8_000 ? 20 : delay, ...args),
+  );
+  uploadRoutes.setUploadPresetLoaderForTests(() => new Promise(() => {}));
+  const buyer = await loginBuyer();
+
+  const failed = await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .timeout({ response: 1_000 })
+    .expect(503);
+
+  assert.equal(failed.body.error.code, "UPLOAD_PRESET_UNVERIFIED");
+  assert.equal(memoryStore.count("uploadGrants"), 0);
+  assert.equal(memoryStore.count("uploadQuotas"), 0);
+
+  uploadRoutes.setUploadPresetLoaderForTests(async () => ({ unsigned: false, settings: {} }));
+  await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "custom-inquiries" })
+    .expect(200);
+  assert.equal(memoryStore.count("uploadGrants"), 1);
 });

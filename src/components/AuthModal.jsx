@@ -461,7 +461,9 @@ export default function AuthModal() {
                       setName(event.target.value.slice(0, 100));
                       if (localError) setLocalError('');
                     }}
-                    onBlur={() => setTouchedFields((current) => ({ ...current, name: true }))}
+                    onBlur={() => {
+                      if (name.trim()) setTouchedFields((current) => ({ ...current, name: true }));
+                    }}
                     autoComplete="name"
                     placeholder="How should we address you?"
                     isInvalid={(entrySubmitted || touchedFields.name) && !nameValid}
@@ -492,7 +494,9 @@ export default function AuthModal() {
                       }
                       if (localError) setLocalError('');
                     }}
-                    onBlur={() => setTouchedFields((current) => ({ ...current, email: true }))}
+                    onBlur={() => {
+                      if (email.trim()) setTouchedFields((current) => ({ ...current, email: true }));
+                    }}
                     autoComplete="email"
                     placeholder="you@example.com"
                     isInvalid={(entrySubmitted || touchedFields.email) && !emailValid}

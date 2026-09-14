@@ -16,6 +16,18 @@ const percentageValue = (value) => {
 
 const rangeOptions = new Set(['day', 'week', 'month', 'year']);
 
+export const monthToDateAnalyticsFilter = (now = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: 'Asia/Kolkata',
+  }).formatToParts(now);
+  const date = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const month = `${date.year}-${date.month}`;
+  return { range: 'month', from: `${month}-01`, to: `${month}-${date.day}` };
+};
+
 export const salesExportWorkbookCopy = Object.freeze({
   action: 'Export complete Excel',
   busyAction: 'Building workbook…',

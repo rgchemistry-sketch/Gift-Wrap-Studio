@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import Alert from 'react-bootstrap/Alert';
 import Button from 'react-bootstrap/Button';
 import Spinner from 'react-bootstrap/Spinner';
@@ -7,6 +7,7 @@ import { api } from '../../api/client';
 import Icon from '../Icon';
 import SmartImage from '../SmartImage';
 import { ReviewStars, StarRatingInput } from '../ReviewStars';
+import ReviewText from '../ReviewText';
 import '../../customer-reviews.css';
 
 const payload = (result) => result?.data || result || {};
@@ -28,6 +29,7 @@ const deliveredLabel = (value) => {
 };
 
 function ReviewEditor({ entry, existingReview, expectedUserId, onSaved, onCancel }) {
+  const formRef = useRef(null);
   const inputId = useId().replaceAll(':', '');
   const [rating, setRating] = useState(Number(existingReview?.rating) || 0);
   const [comment, setComment] = useState(existingReview?.comment || existingReview?.text || '');
@@ -35,6 +37,11 @@ function ReviewEditor({ entry, existingReview, expectedUserId, onSaved, onCancel
   const [error, setError] = useState('');
   const isEditing = Boolean(reviewId(existingReview));
   const trimmedComment = comment.trim();
+
+  useEffect(() => {
+    const selectedRating = formRef.current?.querySelector('input[type="radio"]:checked');
+    (selectedRating || formRef.current?.querySelector('input[type="radio"]'))?.focus({ preventScroll: true });
+  }, []);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -64,7 +71,7 @@ function ReviewEditor({ entry, existingReview, expectedUserId, onSaved, onCancel
   };
 
   return (
-    <form className="account-review-editor" onSubmit={submit}>
+    <form ref={formRef} className="account-review-editor" onSubmit={submit}>
       <StarRatingInput
         value={rating}
         onChange={setRating}
@@ -78,7 +85,7 @@ function ReviewEditor({ entry, existingReview, expectedUserId, onSaved, onCancel
           value={comment}
           minLength={10}
           maxLength={1000}
-          rows={4}
+          rows={3}
           required
           disabled={saving}
           onChange={(event) => setComment(event.target.value)}
@@ -131,6 +138,8 @@ export default function CustomerReviewsPanel({ userId }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [composerKey, setComposerKey] = useState('');
+  const triggerRefs = useRef(new Map());
+  const noticeRef = useRef(null);
 
   const load = useCallback(async ({ preserveNotice = false } = {}) => {
     setLoading(true);
@@ -153,6 +162,9 @@ export default function CustomerReviewsPanel({ userId }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (notice) noticeRef.current?.focus({ preventScroll: true });
+  }, [notice]);
 
   const reviewedProductIds = useMemo(() => new Set(reviews.map(productId).filter(Boolean)), [reviews]);
   const availableProducts = eligible.filter((entry) => !reviewedProductIds.has(productId(entry)));
@@ -161,6 +173,14 @@ export default function CustomerReviewsPanel({ userId }) {
     setComposerKey('');
     await load({ preserveNotice: true });
   };
+  const closeEditor = (key) => {
+    setComposerKey('');
+    requestAnimationFrame(() => triggerRefs.current.get(key)?.focus({ preventScroll: true }));
+  };
+  const rememberTrigger = (key) => (element) => {
+    if (element) triggerRefs.current.set(key, element);
+    else triggerRefs.current.delete(key);
+  };
 
   if (loading && !reviews.length && !eligible.length) {
     return <div className="account-loading" role="status"><Spinner /><span>Opening your guestbook…</span></div>;
@@ -168,7 +188,7 @@ export default function CustomerReviewsPanel({ userId }) {
 
   if (error && !reviews.length && !eligible.length) {
     return (
-      <div className="account-empty account-empty--wide" role="alert">
+      <div className="account-empty account-empty--wide account-reviews-empty" role="alert">
         <span><Icon name="star" /></span>
         <div><p className="eyebrow">Your reviews</p><h2>Your guestbook could not be opened.</h2><p>{error}</p><div className="account-empty__actions"><Button type="button" className="button-burgundy" onClick={() => load()}>Try again</Button></div></div>
       </div>
@@ -187,11 +207,11 @@ export default function CustomerReviewsPanel({ userId }) {
   return (
     <div className="account-reviews-panel">
       <header className="account-reviews-panel__head">
-        <div><p className="eyebrow">Delivered-piece guestbook</p><h2>Your reviews</h2><p>Only purchases delivered to your account can be reviewed. You can return to edit your words later.</p></div>
+        <div><p className="eyebrow">Your customer guestbook</p><h2>Your reviews</h2><p>Review your delivered purchases and edit your feedback here.</p></div>
         <span><Icon name="shield" size={16} /> Verified by delivery</span>
       </header>
 
-      {notice && <Alert variant="success" className="soft-alert" role="status">{notice}</Alert>}
+      {notice && <Alert ref={noticeRef} tabIndex={-1} variant="success" className="soft-alert" role="status">{notice}</Alert>}
       {error && <Alert variant="warning" className="soft-alert">{error} <button type="button" className="plain-link" onClick={() => load({ preserveNotice: true })}>Retry</button></Alert>}
 
       {availableProducts.length > 0 && (
@@ -205,8 +225,8 @@ export default function CustomerReviewsPanel({ userId }) {
                 <article className={`account-review-card${open ? ' is-composing' : ''}`} key={key}>
                   <ProductReviewIdentity entry={entry} delivery />
                   {open
-                    ? <ReviewEditor entry={entry} expectedUserId={userId} onSaved={saved} onCancel={() => setComposerKey('')} />
-                    : <><p>Your piece has arrived. Add your own rating and note to the studio guestbook.</p><Button type="button" className="button-burgundy" onClick={() => setComposerKey(key)}>Write a review <Icon name="arrow" size={16} /></Button></>}
+                    ? <ReviewEditor entry={entry} expectedUserId={userId} onSaved={saved} onCancel={() => closeEditor(key)} />
+                    : <><p>Your piece has arrived. How was it?</p><Button ref={rememberTrigger(key)} type="button" className="button-burgundy" onClick={() => setComposerKey(key)}>Write a review <Icon name="arrow" size={16} /></Button></>}
                 </article>
               );
             })}
@@ -225,10 +245,10 @@ export default function CustomerReviewsPanel({ userId }) {
                 <article className={`account-review-card account-review-card--published${open ? ' is-composing' : ''}`} key={key}>
                   <ProductReviewIdentity entry={review} />
                   {open
-                    ? <ReviewEditor entry={review} existingReview={review} expectedUserId={userId} onSaved={saved} onCancel={() => setComposerKey('')} />
+                    ? <ReviewEditor entry={review} existingReview={review} expectedUserId={userId} onSaved={saved} onCancel={() => closeEditor(key)} />
                     : <>
-                      <div className="account-review-card__quote"><ReviewStars rating={review.rating} /><blockquote>{review.comment || review.text}</blockquote></div>
-                      <button type="button" className="plain-link" onClick={() => setComposerKey(key)}>Edit your review <Icon name="arrow" size={14} /></button>
+                      <div className="account-review-card__quote"><ReviewStars rating={review.rating} /><ReviewText text={review.comment || review.text} limit={240} /></div>
+                      <button ref={rememberTrigger(key)} type="button" className="plain-link" onClick={() => setComposerKey(key)}>Edit review <Icon name="arrow" size={14} /></button>
                     </>}
                 </article>
               );

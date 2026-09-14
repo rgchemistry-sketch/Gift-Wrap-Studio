@@ -118,6 +118,10 @@ export const env = Object.freeze({
     min: 1,
     max: 200,
   }),
+  adminUploadSignaturesPerHour: asInteger(process.env.ADMIN_UPLOAD_SIGNATURES_PER_HOUR, 100, {
+    min: 1,
+    max: 500,
+  }),
   uploadMaxBytes: asInteger(process.env.UPLOAD_MAX_BYTES, 8 * 1_024 * 1_024, {
     min: 100 * 1_024,
     max: 25 * 1_024 * 1_024,
@@ -162,3 +166,6 @@ export const authProviderStatus = () => {
 };
 
 export const missingConfig = (...keys) => keys.filter((key) => !env[key]);
+
+export const uploadSignatureLimitForPurpose = (purpose) =>
+  purpose === "products" ? env.adminUploadSignaturesPerHour : env.uploadSignaturesPerHour;

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
-import { env } from "../config/env.js";
+import { env, uploadSignatureLimitForPurpose } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { AppError, configurationError } from "../lib/errors.js";
 import { authenticate, hasAdminAccess, requireAdmin } from "../middleware/auth.js";
@@ -32,10 +32,14 @@ export const uploadsRouter = Router();
 let cloudinaryPromise;
 let uploadPresetVerificationPromise;
 const defaultUploadPresetLoader = (cloudinary) =>
-  cloudinary.api.upload_preset(env.cloudinaryUploadPreset);
+  cloudinary.api.upload_preset(env.cloudinaryUploadPreset, { timeout: providerTimeoutMs });
 let uploadPresetLoader = defaultUploadPresetLoader;
 const defaultUploadResourceLoader = (cloudinary, publicId) =>
-  cloudinary.api.resource(publicId, { resource_type: "image", type: "upload" });
+  cloudinary.api.resource(publicId, {
+    resource_type: "image",
+    type: "upload",
+    timeout: providerTimeoutMs,
+  });
 const defaultRejectedUploadDestroyer = (cloudinary, publicId) =>
   cloudinary.uploader.destroy(publicId, { resource_type: "image", invalidate: true });
 let uploadResourceLoader = defaultUploadResourceLoader;
@@ -120,7 +124,9 @@ const verifyUploadPreset = async (cloudinary) => {
       configureCloudinary(cloudinary);
       let preset;
       try {
-        preset = await uploadPresetLoader(cloudinary);
+        // Cold serverless instances must finish the policy check inside the
+        // browser's request budget, including when the provider stops responding.
+        preset = await withProviderTimeout(() => uploadPresetLoader(cloudinary));
       } catch (error) {
         throw new AppError(
           503,
@@ -267,11 +273,11 @@ const uploadCompletionData = (grant) => ({
 
 const uploadSignatureLimiter = rateLimit({
   windowMs: 60 * 60 * 1_000,
-  limit: env.uploadSignaturesPerHour,
+  limit: (request) => uploadSignatureLimitForPurpose(request.validated.body.purpose),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   skip: () => env.isTest,
-  keyGenerator: (request) => request.user.id,
+  keyGenerator: (request) => `${request.user.id}:${request.validated.body.purpose === "products" ? "products" : "customer"}`,
   store: new DurableRateLimitStore("upload-signatures"),
   passOnStoreError: !env.isProduction,
   handler: rateLimitHandler("Too many upload requests. Please try again later"),
@@ -279,7 +285,10 @@ const uploadSignatureLimiter = rateLimit({
 
 const uploadCompletionLimiter = rateLimit({
   windowMs: 60 * 60 * 1_000,
-  limit: Math.max(30, env.uploadSignaturesPerHour * 3),
+  limit: (request) => Math.max(
+    30,
+    (hasAdminAccess(request.user) ? env.adminUploadSignaturesPerHour : env.uploadSignaturesPerHour) * 3,
+  ),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   skip: () => env.isTest,
@@ -297,9 +306,9 @@ const protectProductUploads = (request, response, next) =>
 uploadsRouter.post(
   "/signature",
   authenticate,
-  uploadSignatureLimiter,
   validate({ body: uploadSignatureSchema }),
   protectProductUploads,
+  uploadSignatureLimiter,
   asyncHandler(async (request, response) => {
     requireCloudinaryConfig();
     const cloudinary = await getCloudinary();

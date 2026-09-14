@@ -1,5 +1,6 @@
 import { normalizeProduct } from '../data/catalog.js';
 import { requestAdminOrderWithFallback } from '../utils/admin-api-compat.js';
+import { supportedImageType } from '../utils/image-file.js';
 
 const API_BASE = (import.meta.env?.VITE_API_URL || '/api').replace(/\/$/, '');
 const DEFAULT_TIMEOUT = 12000;
@@ -103,6 +104,29 @@ const reportUploadProgress = (callback, value) => {
   }
 };
 
+const completeUploadedImage = async (publicId) => {
+  // Completion verifies the same reserved asset and is idempotent. A temporary
+  // provider/network failure must not force a second upload of a large image.
+  const retryableCodes = new Set([
+    'UPLOAD_VERIFICATION_FAILED',
+    'UPLOAD_VERIFICATION_IN_PROGRESS',
+    'TIMEOUT',
+    'NETWORK_ERROR',
+  ]);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await request('/uploads/complete', {
+        method: 'POST',
+        body: { publicId },
+        timeout: 30_000,
+      });
+    } catch (error) {
+      if (attempt === 2 || !retryableCodes.has(error.code)) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+};
+
 const uploadProviderForm = async (uploadUrl, formData, onProgress, signal) => {
   if (typeof onProgress !== 'function' || typeof XMLHttpRequest === 'undefined') {
     reportUploadProgress(onProgress, 0);
@@ -175,7 +199,8 @@ async function uploadImage(file, purpose = 'products', { onProgress } = {}) {
   if (file.size > 8 * 1024 * 1024) {
     throw new ApiError('Images must be 8 MB or smaller.', { code: 'FILE_TOO_LARGE' });
   }
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+  const imageType = supportedImageType(file);
+  if (!imageType) {
     throw new ApiError('Use a JPG, PNG or WebP image.', { code: 'INVALID_FILE_TYPE' });
   }
 
@@ -186,7 +211,10 @@ async function uploadImage(file, purpose = 'products', { onProgress } = {}) {
   const signature = signatureResult.data || signatureResult;
   const reservedPublicId = String(signature.fullPublicId || signature.reservedPublicId || '');
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('file', file.type === imageType ? file : new File([file], file.name, {
+    type: imageType,
+    lastModified: file.lastModified,
+  }));
   formData.append('api_key', signature.apiKey);
   formData.append('timestamp', signature.timestamp);
   formData.append('signature', signature.signature);
@@ -243,12 +271,9 @@ async function uploadImage(file, purpose = 'products', { onProgress } = {}) {
       );
     }
     providerAccepted = true;
+    window.clearTimeout(timeout);
     reportUploadProgress(onProgress, 95);
-    const completionResult = await request('/uploads/complete', {
-      method: 'POST',
-      body: { publicId: returnedPublicId },
-      timeout: 30_000,
-    });
+    const completionResult = await completeUploadedImage(returnedPublicId);
     const completed = completionResult.data || completionResult;
     reportUploadProgress(onProgress, 100);
     return {

@@ -10,6 +10,7 @@ import {
   compactChartLabel,
   hasAnalyticsActivity,
   hasChartRevenue,
+  monthToDateAnalyticsFilter,
   normalizeAnalyticsFilter,
   normalizeSalesAnalytics,
   niceChartMaximum,
@@ -17,6 +18,34 @@ import {
   salesFinancialLabels,
   salesAnalyticsErrorMessage,
 } from './sales-analytics.js';
+
+test('month-to-date snapshot sends an explicit first-of-month to current India date', () => {
+  const filter = monthToDateAnalyticsFilter(new Date('2026-09-14T07:00:00Z'));
+  assert.deepEqual(filter, { range: 'month', from: '2026-09-01', to: '2026-09-14' });
+  assert.equal(analyticsQuery(filter), 'range=month&from=2026-09-01&to=2026-09-14');
+});
+
+test('month-to-date snapshot changes day at India midnight rather than UTC midnight', () => {
+  assert.deepEqual(monthToDateAnalyticsFilter(new Date('2026-09-14T18:29:59.999Z')), {
+    range: 'month', from: '2026-09-01', to: '2026-09-14',
+  });
+  assert.deepEqual(monthToDateAnalyticsFilter(new Date('2026-09-14T18:30:00Z')), {
+    range: 'month', from: '2026-09-01', to: '2026-09-15',
+  });
+});
+
+test('month-to-date snapshot resets on India month and year boundaries', () => {
+  for (const [instant, from, to] of [
+    ['2026-08-31T18:29:59.999Z', '2026-08-01', '2026-08-31'],
+    ['2026-08-31T18:30:00Z', '2026-09-01', '2026-09-01'],
+    ['2026-12-31T18:29:59.999Z', '2026-12-01', '2026-12-31'],
+    ['2026-12-31T18:30:00Z', '2027-01-01', '2027-01-01'],
+    ['2028-02-29T18:29:59.999Z', '2028-02-01', '2028-02-29'],
+    ['2028-02-29T18:30:00Z', '2028-03-01', '2028-03-01'],
+  ]) {
+    assert.deepEqual(monthToDateAnalyticsFilter(new Date(instant)), { range: 'month', from, to }, instant);
+  }
+});
 
 test('analytics filters keep a supported range and only send complete custom dates', () => {
   assert.deepEqual(normalizeAnalyticsFilter({ range: 'week', from: '2026-08-01', to: '2026-08-21' }), {

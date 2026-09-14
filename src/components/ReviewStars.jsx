@@ -8,17 +8,18 @@ export function ReviewStars({ rating, compact = false, className = '' }) {
   return (
     <span
       className={`review-stars${compact ? ' review-stars--compact' : ''}${className ? ` ${className}` : ''}`}
+      role="img"
       aria-label={`${accessibleValue} out of 5 stars`}
     >
       {Array.from({ length: 5 }, (_, index) => (
         <span
           className="review-star-glyph"
-          style={{ '--star-fill': `${Math.max(0, Math.min(1, value - index)) * 100}%` }}
+          style={{ '--star-fill': `${Math.max(0, Math.min(1, value - index)) * 100}%`, '--star-size': compact ? '13px' : '17px' }}
           aria-hidden="true"
           key={index}
         >
           <Icon name="star" size={compact ? 13 : 17} />
-          <span><Icon name="star" size={compact ? 13 : 17} /></span>
+          <span className="review-star-fill"><Icon name="star" size={compact ? 13 : 17} /></span>
         </span>
       ))}
     </span>

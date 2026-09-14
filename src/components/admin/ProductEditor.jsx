@@ -9,13 +9,16 @@ import SmartImage from '../SmartImage';
 import { api } from '../../api/client';
 import { occasions } from '../../data/catalog';
 import { invalidateCatalog } from '../../data/useCatalog';
+import { supportedImageType } from '../../utils/image-file';
 import {
   imageFromReusableUrl,
   imageKey,
   moveProductImage,
   normalizeProductImageUrl,
+  productImagesPayload,
   verifyProductImageUrl,
 } from './product-image-utils';
+import './product-upload.css';
 
 const emptyProduct = {
   name: '',
@@ -51,7 +54,6 @@ const categories = [
 
 const MAX_GALLERY_IMAGES = 10;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not([disabled])',
@@ -84,6 +86,7 @@ const PRODUCT_CLEANUP_QUEUE_KEY = 'gnw-admin-product-upload-cleanup';
 const splitList = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
 const makeSlug = (value) => String(value || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const numericOrNull = (value) => value === '' || value == null ? null : Number(value);
+const uploadFileKey = (file) => `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
 
 const productDraftStorageKey = (product) => `${PRODUCT_DRAFT_KEY}:${String(product?.id || product?._id || 'new')}`;
 
@@ -179,6 +182,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   const focusedErrorRef = useRef('');
   const pendingUploadIdsRef = useRef(new Set(restoredState?.pendingUploadIds || []));
   const pendingRetirementIdsRef = useRef(new Set(restoredState?.pendingRetirementIds || []));
+  const uploadActiveRef = useRef(false);
   const mountedRef = useRef(true);
   const closingRef = useRef(false);
   const [initialDraft, setInitialDraft] = useState(() => toDraft(product));
@@ -191,6 +195,10 @@ export default function ProductEditor({ product, onClose, onSaved }) {
   const [checkingImageUrl, setCheckingImageUrl] = useState(false);
   const [failedImageKeys, setFailedImageKeys] = useState(() => new Set());
   const [uploadStatus, setUploadStatus] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const [failedUploads, setFailedUploads] = useState([]);
+  const [previewAttempts, setPreviewAttempts] = useState({});
+  const [draggingImages, setDraggingImages] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [imageUrl, setImageUrl] = useState(() => restoredState?.imageUrl || '');
@@ -294,6 +302,10 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     setFailedImageKeys(new Set());
     setCheckingImageUrl(false);
     setUploadStatus('');
+    setUploadProgress(null);
+    setFailedUploads([]);
+    setPreviewAttempts({});
+    setDraggingImages(false);
     setSlugTouched(stored?.slugTouched ?? Boolean(product));
     setRestoredDraft(Boolean(stored));
     setDiscardOpen(false);
@@ -461,7 +473,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
           : field === 'imageUrl'
             ? dialogRef.current?.querySelector('.product-image-url .form-control')
             : field === 'images'
-              ? dialogRef.current?.querySelector('.product-image-upload')
+              ? dialogRef.current?.querySelector('.product-upload-failures button:not([disabled]), .product-image-upload:not([disabled])')
               : null;
       const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       target?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
@@ -548,10 +560,9 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     }
   };
 
-  const uploadImages = async (event) => {
-    const files = [...(event.currentTarget.files || [])];
-    event.currentTarget.value = '';
-    if (!files.length) return;
+  const uploadSelectedImages = async (files) => {
+    if (!files.length || busy || uploadActiveRef.current || closingRef.current) return;
+    setDraggingImages(false);
 
     const availableSlots = MAX_GALLERY_IMAGES - draft.images.length;
     if (availableSlots <= 0) {
@@ -565,7 +576,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
         rejected.push(`${file.name}: the file is empty.`);
         return false;
       }
-      if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+      if (!supportedImageType(file)) {
         rejected.push(`${file.name}: use a JPG, PNG or WebP image.`);
         return false;
       }
@@ -588,17 +599,28 @@ export default function ProductEditor({ product, onClose, onSaved }) {
       return;
     }
 
+    uploadActiveRef.current = true;
     setUploading(true);
+    setUploadProgress(null);
+    const attemptedFiles = new Set(validFiles.map(uploadFileKey));
+    setFailedUploads((current) => current.filter(({ file }) => !attemptedFiles.has(uploadFileKey(file))));
     clearFieldError('images');
-    const uploadedImages = [];
+    let uploadedCount = 0;
     const uploadFailures = [];
     try {
       for (let index = 0; index < validFiles.length; index += 1) {
         if (!mountedRef.current || closingRef.current) break;
         const file = validFiles[index];
         setUploadStatus(`Uploading image ${index + 1} of ${validFiles.length}: ${file.name}`);
+        setUploadProgress({ index: index + 1, total: validFiles.length, name: file.name, percent: 0 });
         try {
-          const image = await api.uploadImage(file, 'products');
+          const image = await api.uploadImage(file, 'products', {
+            onProgress: (percent) => {
+              if (mountedRef.current && !closingRef.current) {
+                setUploadProgress({ index: index + 1, total: validFiles.length, name: file.name, percent });
+              }
+            },
+          });
           if (!mountedRef.current || closingRef.current) {
             if (image.publicId) {
               void api.deleteUploadedAsset(image.publicId).catch(() => {
@@ -608,34 +630,49 @@ export default function ProductEditor({ product, onClose, onSaved }) {
             break;
           }
           if (image.publicId) pendingUploadIdsRef.current.add(image.publicId);
-          uploadedImages.push({ ...image, alt: draft.name || 'Gift N Wrap studio piece' });
+          // Persist each completed image while the rest of the batch uploads.
+          // Closing/reloading after one slow file must not lose earlier successes.
+          setDraft((current) => ({
+            ...current,
+            images: [...current.images, { ...image, alt: current.name || 'Gift N Wrap studio piece' }],
+          }));
+          uploadedCount += 1;
         } catch (requestError) {
           if (!mountedRef.current || closingRef.current) break;
-          uploadFailures.push(`${file.name}: ${requestError.message}`);
+          uploadFailures.push({ file, error: requestError.message || 'The image could not be uploaded.' });
         }
       }
 
-      if (!mountedRef.current) return;
-      if (uploadedImages.length) {
-        setDraft((current) => ({
-          ...current,
-          images: [...current.images, ...uploadedImages].slice(0, MAX_GALLERY_IMAGES),
-        }));
-      }
-      const statusParts = [`Uploaded ${uploadedImages.length} of ${validFiles.length} valid ${validFiles.length === 1 ? 'image' : 'images'}.`];
+      if (!mountedRef.current || closingRef.current) return;
+      setFailedUploads((current) => [...current, ...uploadFailures]);
+      const statusParts = [uploadedCount
+        ? `${uploadedCount} ${uploadedCount === 1 ? 'image added' : 'images added'} to the gallery. Save the product to publish your changes.`
+        : 'No images were added. Try the failed uploads again below.'];
       if (rejected.length) statusParts.push(`${rejected.length} invalid ${rejected.length === 1 ? 'file was' : 'files were'} skipped.`);
       if (ignoredForLimit) statusParts.push(`${ignoredForLimit} ${ignoredForLimit === 1 ? 'file was' : 'files were'} skipped because the gallery limit is ${MAX_GALLERY_IMAGES}.`);
       setUploadStatus(statusParts.join(' '));
-      setError([...rejected, ...uploadFailures].join(' '));
-      if (rejected.length || uploadFailures.length) {
+      setError(rejected.join(' '));
+      if (rejected.length) {
         setFieldErrors((current) => ({
           ...current,
-          images: [...rejected, ...uploadFailures].join(' '),
+          images: rejected.join(' '),
         }));
       }
     } finally {
+      uploadActiveRef.current = false;
       if (mountedRef.current) setUploading(false);
     }
+  };
+
+  const uploadImages = (event) => {
+    const files = [...(event.currentTarget.files || [])];
+    event.currentTarget.value = '';
+    void uploadSelectedImages(files);
+  };
+
+  const retryImagePreview = (image) => {
+    const key = imageKey(image);
+    setPreviewAttempts((current) => ({ ...current, [key]: (current[key] || 0) + 1 }));
   };
 
   const addImageFromUrl = async () => {
@@ -701,6 +738,10 @@ export default function ProductEditor({ product, onClose, onSaved }) {
     setFieldErrors({});
     if (!draft.images.length) {
       showFieldError('images', 'Add at least one product image before saving.');
+      return;
+    }
+    if (failedUploads.length) {
+      showFieldError('images', 'Retry or dismiss the failed image uploads before saving this product.');
       return;
     }
     if (failedImageKeys.size) {
@@ -770,7 +811,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
       sku: draft.sku.trim(),
       leadTimeDays: Number(draft.leadTimeDays),
       sortOrder: Number(draft.sortOrder),
-      images: draft.images,
+      images: productImagesPayload(draft.images),
       tags,
       customizationOptions,
       customizationAvailable: draft.customizationAvailable,
@@ -936,6 +977,17 @@ export default function ProductEditor({ product, onClose, onSaved }) {
           <section className="product-form-section">
             <div className="product-form-section__intro"><span>02</span><div><h3>Gallery</h3><p>Lead with a clear, beautifully lit image.</p></div></div>
             <div className={`product-form-section__body product-gallery-editor ${galleryBusy ? 'is-busy' : ''}`} aria-busy={galleryBusy}>
+            <input
+              ref={fileInputRef}
+              id="product-image-upload"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+              multiple
+              hidden
+              onChange={uploadImages}
+              disabled={galleryBusy || draft.images.length >= MAX_GALLERY_IMAGES}
+              aria-label="Choose product images"
+            />
             <div className="product-image-grid">
               {draft.images.map((image, index) => {
                 const key = imageKey(image) || `${image.url}-${index}`;
@@ -944,6 +996,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                   <div className={`product-image-tile ${broken ? 'is-broken' : ''}`} key={key}>
                     <div className="product-image-tile__visual">
                       <SmartImage
+                        key={`${key}-${previewAttempts[key] || 0}`}
                         src={image.url}
                         alt={image.alt || ''}
                         fallbackLabel="Image unavailable"
@@ -968,7 +1021,7 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                              aria-label={`Make image ${index + 1} the product cover`}
                            >Make cover</button>
                         )}
-                      {broken && <span className="product-image-tile__broken">Broken URL</span>}
+                      {broken && <span className="product-image-tile__broken">Preview unavailable</span>}
                     </div>
                     <div className="product-image-tile__details">
                       <div className="product-image-tile__order" aria-label={`Gallery position ${index + 1} of ${draft.images.length}`}>
@@ -986,34 +1039,58 @@ export default function ProductEditor({ product, onClose, onSaved }) {
                           placeholder="Describe the product for screen readers"
                         />
                       </Form.Group>
+                      {broken && (
+                        <button type="button" className="product-image-tile__retry" disabled={galleryBusy} onClick={() => retryImagePreview(image)}>
+                          Retry preview <Icon name="arrow" size={13}/>
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
               })}
-              <label
-                className="product-image-upload"
-                htmlFor="product-image-upload"
-                aria-disabled={galleryBusy || draft.images.length >= MAX_GALLERY_IMAGES}
+              <button
+                type="button"
+                className={`product-image-upload ${draggingImages ? 'is-dragging' : ''}`}
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (!galleryBusy && draft.images.length < MAX_GALLERY_IMAGES) setDraggingImages(true);
+                }}
+                onDragLeave={() => setDraggingImages(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setDraggingImages(false);
+                  void uploadSelectedImages([...event.dataTransfer.files]);
+                }}
+                disabled={galleryBusy || draft.images.length >= MAX_GALLERY_IMAGES}
+                aria-describedby="product-image-upload-help"
               >
-                <input
-                  ref={fileInputRef}
-                  id="product-image-upload"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  multiple
-                  onChange={uploadImages}
-                  disabled={galleryBusy || draft.images.length >= MAX_GALLERY_IMAGES}
-                  aria-label="Upload product images"
-                  aria-describedby="product-image-upload-help"
-                />
                 {uploading ? <Spinner animation="border" size="sm" aria-hidden="true"/> : <Icon name="upload"/>}
-                <strong>{uploading ? 'Uploading…' : draft.images.length >= MAX_GALLERY_IMAGES ? 'Gallery full' : 'Upload images'}</strong>
+                <strong>{uploading ? 'Uploading images…' : draft.images.length >= MAX_GALLERY_IMAGES ? 'Gallery full' : draggingImages ? 'Drop images here' : 'Choose images'}</strong>
+                {!uploading && draft.images.length < MAX_GALLERY_IMAGES && <span>or drag and drop here</span>}
                 <small id="product-image-upload-help">JPG, PNG or WebP · up to 8 MB each · {draft.images.length}/{MAX_GALLERY_IMAGES} used</small>
-              </label>
+              </button>
             </div>
+            {uploading && uploadProgress && (
+              <div className="product-upload-progress">
+                <div><strong>{uploadProgress.percent >= 95 ? 'Verifying image' : 'Uploading image'} {uploadProgress.index} of {uploadProgress.total}</strong><span>{uploadProgress.percent}%</span></div>
+                <progress value={uploadProgress.percent} max="100" aria-label={`Image ${uploadProgress.index} of ${uploadProgress.total}: ${uploadProgress.percent}% complete`}/>
+                <p title={uploadProgress.name}>{uploadProgress.name}</p>
+              </div>
+            )}
+            {failedUploads.length > 0 && (
+              <div className="product-upload-failures" role="region" aria-label="Images that need another upload attempt">
+                <div className="product-upload-failures__head"><strong>{failedUploads.length} {failedUploads.length === 1 ? 'image needs' : 'images need'} another try</strong><Button type="button" size="sm" variant="outline-dark" disabled={galleryBusy || draft.images.length >= MAX_GALLERY_IMAGES} onClick={() => void uploadSelectedImages(failedUploads.map(({ file }) => file))}>Retry failed images</Button></div>
+                <ul>{failedUploads.map(({ file, error: uploadError }, index) => <li key={`${file.name}-${file.size}-${index}`}><div><strong>{file.name}</strong><p>{uploadError}</p></div><button type="button" aria-label={`Dismiss failed upload ${file.name}`} disabled={galleryBusy} onClick={() => {
+                  setFailedUploads((current) => current.filter((_, failureIndex) => failureIndex !== index));
+                  clearFieldError('images');
+                }}><Icon name="close" size={15}/></button></li>)}</ul>
+                <p>Completed images are already in your gallery. Retry or dismiss the failed files before saving.</p>
+              </div>
+            )}
             {(fieldErrors.images || failedImageKeys.size > 0) && (
               <div className="invalid-feedback d-block" role="alert">
-                {fieldErrors.images || 'One or more gallery images could not be loaded. Remove the broken image or add a working URL.'}
+                {fieldErrors.images || 'An image preview could not load. Try “Retry preview”, or replace the image before saving.'}
               </div>
             )}
             {uploadStatus && <Form.Text className="d-block" role="status" aria-live="polite" aria-atomic="true">{uploadStatus}</Form.Text>}

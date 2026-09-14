@@ -1,8 +1,9 @@
+import { supportedImageType } from './image-file.js';
+
 export const CUSTOM_REFERENCE_MAX_BYTES = 8 * 1_024 * 1_024;
 export const CUSTOM_REFERENCE_MAX_FILES = 5;
-export const CUSTOM_REFERENCE_ACCEPT = 'image/jpeg,image/png,image/webp';
+export const CUSTOM_REFERENCE_ACCEPT = 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp';
 
-const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const uuidPattern = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -13,7 +14,7 @@ export const validateCustomReferenceFile = (file) => {
   if (Number(file.size) > CUSTOM_REFERENCE_MAX_BYTES) {
     return 'That image is over 8 MB. Choose a smaller JPG, PNG or WebP file.';
   }
-  if (!allowedImageTypes.has(String(file.type || '').toLowerCase())) {
+  if (!supportedImageType(file)) {
     return 'Choose a JPG, PNG or WebP image.';
   }
   return '';

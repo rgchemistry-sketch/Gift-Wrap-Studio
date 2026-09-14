@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import mongoose from "mongoose";
 import { connectDatabase } from "../config/database.js";
-import { env } from "../config/env.js";
+import { env, uploadSignatureLimitForPurpose } from "../config/env.js";
 import { demoProducts } from "../data/demo-products.js";
 import {
+  AppError,
   badRequest,
   conflict,
   databaseUnavailable,
@@ -2531,12 +2532,15 @@ export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
   const grantExpiresAt = new Date(now + expiresInSeconds * 1_000);
   const windowStartedAt = new Date(Math.floor(now / 3_600_000) * 3_600_000);
   const expiresAt = new Date(windowStartedAt.getTime() + 2 * 3_600_000);
-  const quotaId = `${userId}:${windowStartedAt.toISOString()}`;
+  const quotaLimit = uploadSignatureLimitForPurpose(purpose);
+  // Catalog work has a separate owner allowance; shopping and inquiry uploads
+  // still share the existing customer bucket and cannot consume catalog capacity.
+  const quotaId = `${userId}:${purpose === "products" ? "products:" : ""}${windowStartedAt.toISOString()}`;
 
   if (mode === "mongodb") {
     try {
       await UploadQuota.findOneAndUpdate(
-        { _id: quotaId, count: { $lt: env.uploadSignaturesPerHour } },
+        { _id: quotaId, count: { $lt: quotaLimit } },
         {
           $inc: { count: 1 },
           $setOnInsert: { userId, windowStartedAt, expiresAt },
@@ -2546,7 +2550,7 @@ export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
     } catch (error) {
       if (error?.code === 11000 || error?.code === 11_000) {
         const racedQuota = await UploadQuota.findOneAndUpdate(
-          { _id: quotaId, count: { $lt: env.uploadSignaturesPerHour } },
+          { _id: quotaId, count: { $lt: quotaLimit } },
           { $inc: { count: 1 } },
           { new: true, runValidators: true },
         );
@@ -2568,7 +2572,7 @@ export const reserveUploadGrant = async ({ userId, purpose, publicId }) => {
   }
 
   const existing = memoryStore.get("uploadQuotas", quotaId);
-  if (existing && existing.count >= env.uploadSignaturesPerHour) {
+  if (existing && existing.count >= quotaLimit) {
     throw rateLimited("Your hourly upload limit has been reached. Please try again later");
   }
   if (existing) {
@@ -2714,7 +2718,14 @@ export const claimUploadGrantForVerification = async ({
     }
     return { grant: current, reservationToken: "", alreadyVerified: true };
   }
-  throw conflict("This upload is currently being verified. Please try again");
+  if (current.reservationKind === "verification") {
+    throw new AppError(
+      409,
+      "UPLOAD_VERIFICATION_IN_PROGRESS",
+      "This upload is currently being verified. Please try again",
+    );
+  }
+  throw conflict("This upload is currently in use. Please try again");
 };
 
 export const finalizeUploadGrantVerification = async ({

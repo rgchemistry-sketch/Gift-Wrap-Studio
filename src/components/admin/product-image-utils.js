@@ -20,6 +20,16 @@ export function imageKey(image) {
   return String(image?.publicId || normalizeProductImageUrl(image?.url) || image?.url || '');
 }
 
+export function productImagesPayload(images = []) {
+  // Upload expiry and verification metadata belong to the local draft only.
+  // Product requests use the strict, persistent image contract.
+  return images.map((image) => ({
+    url: image.url,
+    publicId: image.publicId || '',
+    alt: image.alt || '',
+  }));
+}
+
 export function imageFromReusableUrl({ url, initialImages = [], defaultAlt = '' }) {
   const normalizedUrl = normalizeProductImageUrl(url);
   if (!normalizedUrl) return null;

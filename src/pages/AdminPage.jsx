@@ -1522,6 +1522,7 @@ function Requests({ summary, preview, updateInquiryStatus, loading, workingItems
 function RequestBriefModal({ request, onHide }) {
   if (!request) return null;
   const brief = request.description || request.idea || 'No written brief was supplied.';
+  const palette = String(request.palette || '').trim();
   const referenceHref = safeReferenceHref(request.referenceUrl);
   const references = Array.isArray(request.referenceImages) ? request.referenceImages.filter(Boolean) : [];
   const phoneHref = request.phone ? String(request.phone).replace(/[^\d+]/g, '') : '';
@@ -1529,6 +1530,7 @@ function RequestBriefModal({ request, onHide }) {
   const details = [
     ['Piece', request.productType || request.category || 'Custom piece'],
     ['Occasion', request.occasion || 'Not specified'],
+    ...(palette ? [['Colour / theme', palette]] : []),
     ['Budget', request.budget || 'To discuss'],
     ['Needed by', adminDateLabel(request.neededBy)],
     ['Preferred contact', request.contactPreference || 'No preference'],

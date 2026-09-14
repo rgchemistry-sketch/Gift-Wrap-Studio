@@ -24,6 +24,9 @@ test('custom reference files accept supported images and reject unsafe or oversi
   assert.equal(validateCustomReferenceFile({ size: 512, type: 'image/jpeg' }), '');
   assert.equal(validateCustomReferenceFile({ size: 512, type: 'image/png' }), '');
   assert.equal(validateCustomReferenceFile({ size: 512, type: 'image/webp' }), '');
+  assert.equal(validateCustomReferenceFile({ size: 512, type: '', name: 'Camera Photo.JPG' }), '');
+  assert.match(validateCustomReferenceFile({ size: 512, type: '', name: 'drawing.svg' }), /JPG, PNG or WebP/i);
+  assert.match(validateCustomReferenceFile({ size: 512, type: 'image/svg+xml', name: 'drawing.png' }), /JPG, PNG or WebP/i);
   assert.match(validateCustomReferenceFile({ size: 0, type: 'image/jpeg' }), /empty/i);
   assert.match(
     validateCustomReferenceFile({ size: CUSTOM_REFERENCE_MAX_BYTES + 1, type: 'image/jpeg' }),

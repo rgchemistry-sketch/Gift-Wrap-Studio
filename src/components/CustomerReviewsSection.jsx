@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import Icon from './Icon';
 import SmartImage from './SmartImage';
 import { ReviewStars } from './ReviewStars';
+import ReviewText from './ReviewText';
 import '../customer-reviews.css';
 
 const dateLabel = (value) => {
@@ -79,40 +80,38 @@ export default function CustomerReviewsSection() {
     <section className="customer-reviews" aria-labelledby="customer-reviews-title">
       <Container fluid="xl">
         <div className="customer-reviews__frame">
-          <span className="customer-reviews__seal" aria-hidden="true"><Icon name="star" size={30} /></span>
           <header className="customer-reviews__heading">
             <div>
               <p className="eyebrow light-eyebrow">The customer guestbook</p>
-              <h2 id="customer-reviews-title">Made for them.<br /><em>Remembered here.</em></h2>
+              <h2 id="customer-reviews-title">Loved by our customers.</h2>
             </div>
-            <p>Every note comes from a signed-in customer after their piece was delivered. No anonymous ratings, no borrowed words.</p>
+            <p>Real words from customers who have received their handmade pieces.</p>
           </header>
 
           <div className={`customer-reviews__layout${reviews.length > 1 ? ' has-index' : ''}`}>
             <aside className="customer-reviews__score" aria-label={`Average customer rating: ${averageRating.toFixed(1)} out of 5`}>
-              <span className="customer-reviews__score-kicker">Studio average</span>
               <strong>{averageRating.toFixed(1)}</strong>
               <ReviewStars rating={averageRating} />
               <span>{totalReviews.toLocaleString('en-IN')} verified {totalReviews === 1 ? 'review' : 'reviews'}</span>
-              <i aria-hidden="true" />
-              <p><Icon name="shield" size={16} /> Delivered-order verified</p>
+              <p><Icon name="shield" size={15} /> Delivered purchases</p>
             </aside>
 
-            <article className="customer-review-feature" key={activeReview.id || activeReview._id} aria-live="polite">
-              <span className="customer-review-feature__mark" aria-hidden="true">“</span>
-              <div className="customer-review-feature__product">
-                <SmartImage
-                  src={productImage(activeReview)}
-                  alt=""
-                  fallbackLabel={productName(activeReview)}
-                  loading="lazy"
-                  decoding="async"
-                  imageWidth={240}
-                />
-                <span><small>Made & delivered</small><strong>{productName(activeReview)}</strong></span>
+            <article className="customer-review-feature" aria-live="polite" aria-atomic="true">
+              <div className="customer-review-feature__topline">
+                <div className="customer-review-feature__product">
+                  <SmartImage
+                    src={productImage(activeReview)}
+                    alt=""
+                    fallbackLabel={productName(activeReview)}
+                    loading="lazy"
+                    decoding="async"
+                    imageWidth={240}
+                  />
+                  <span><small>Handmade & delivered</small><strong>{productName(activeReview)}</strong></span>
+                </div>
+                <ReviewStars rating={activeReview.rating} />
               </div>
-              <ReviewStars rating={activeReview.rating} />
-              <blockquote>{activeReview.comment || activeReview.text}</blockquote>
+              <ReviewText key={activeReview.id || activeReview._id || activeIndex} text={activeReview.comment || activeReview.text} />
               <footer>
                 <span className="customer-review-feature__initial" aria-hidden="true">{reviewerName(activeReview).trim().charAt(0).toUpperCase() || 'G'}</span>
                 <div><strong>{reviewerName(activeReview)}</strong><span>{dateLabel(activeReview.createdAt || activeReview.reviewedAt)}</span></div>

@@ -10,6 +10,7 @@ import {
   compactChartLabel,
   hasAnalyticsActivity,
   hasChartRevenue,
+  monthToDateAnalyticsFilter,
   normalizeAnalyticsFilter,
   normalizeSalesAnalytics,
   salesExportWorkbookCopy,
@@ -350,7 +351,7 @@ export function SalesOverviewSnapshot({ onAuthorizationFailure, onOpenSales }) {
     setLoading(true);
     setError('');
     try {
-      const result = await api.getAdminSalesAnalytics({ range: 'month' });
+      const result = await api.getAdminSalesAnalytics(monthToDateAnalyticsFilter());
       if (requestId !== requestRef.current) return;
       setAnalytics(normalizeSalesAnalytics(result));
     } catch (requestError) {

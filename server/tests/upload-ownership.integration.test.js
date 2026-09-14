@@ -11,6 +11,7 @@ process.env.CLOUDINARY_CLOUD_NAME = "test-cloud";
 process.env.CLOUDINARY_API_KEY = "test-api-key";
 process.env.CLOUDINARY_API_SECRET = "test-cloudinary-secret-long-enough";
 process.env.CLOUDINARY_UPLOAD_PRESET = "test-locked-preset";
+process.env.ADMIN_UPLOAD_SIGNATURES_PER_HOUR = "25";
 delete process.env.MONGODB_URI;
 
 const [
@@ -279,6 +280,37 @@ test("upload signatures expose a seven-day cart lifetime and a two-hour admin li
   assert.ok(Date.parse(orderGrant.body.data.expiresAt) >= before + 7 * 24 * 60 * 60 * 1_000);
 });
 
+test("catalog uploads use the configured owner allowance independently of customer uploads", async () => {
+  const { agent: admin } = await login("admin");
+  for (let index = 0; index < 25; index += 1) {
+    await admin
+      .post("/api/uploads/signature")
+      .send({ purpose: "products" })
+      .expect(200);
+  }
+  const exhausted = await admin
+    .post("/api/uploads/signature")
+    .send({ purpose: "products" })
+    .expect(429);
+  assert.equal(exhausted.body.error.code, "RATE_LIMITED");
+  assert.equal(memoryStore.count("uploadGrants"), 25);
+
+  await admin
+    .post("/api/uploads/signature")
+    .send({ purpose: "orders" })
+    .expect(200);
+  const { agent: buyer } = await login("buyer");
+  await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "products" })
+    .expect(403);
+  await buyer
+    .post("/api/uploads/signature")
+    .send({ purpose: "orders" })
+    .expect(200);
+  assert.equal(memoryStore.count("uploadGrants"), 27);
+});
+
 test("upload completion accepts an exact 8 MB provider asset and marks its grant verified", async () => {
   const { agent: buyer } = await login("buyer");
   uploadRoutes.setUploadResourceLoaderForTests(async (...args) => {
@@ -365,6 +397,34 @@ test("upload completion recovers a stale verification claim after a serverless i
   const grant = memoryStore.get("uploadGrants", publicId);
   assert.ok(grant.verifiedAt);
   assert.equal(grant.reservationToken, "");
+});
+
+test("an active verification returns a retryable code without fetching or deleting the asset", async () => {
+  const { agent: admin } = await login("admin");
+  const image = await requestProductGrant(admin, { complete: false });
+  let providerReads = 0;
+  uploadRoutes.setUploadResourceLoaderForTests(async (...args) => {
+    providerReads += 1;
+    return providerResource(publicIdFromLoaderArgs(...args));
+  });
+  memoryStore.update("uploadGrants", image.publicId, {
+    reservationToken: "active-verification",
+    reservationKind: "verification",
+    reservedAt: new Date(),
+  });
+
+  const waiting = await admin
+    .post("/api/uploads/complete")
+    .send({ publicId: image.publicId })
+    .expect(409);
+  assert.equal(waiting.body.error.code, "UPLOAD_VERIFICATION_IN_PROGRESS");
+  assert.equal(providerReads, 0);
+  assert.deepEqual(destroyedPublicIds, []);
+  assert.equal(memoryStore.get("uploadGrants", image.publicId).reservationToken, "active-verification");
+
+  await store.releaseUploadGrantReservation("active-verification");
+  await completeUpload(admin, image.publicId);
+  assert.equal(providerReads, 1);
 });
 
 test("upload completion does not report success while cleanup owns the verified asset", async () => {
